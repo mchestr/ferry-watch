@@ -54,8 +54,12 @@
     --warning: 38 85% 60%;
     --warning-soft: 36 45% 12%;
   }
-  * { @apply border-border; }
-  html { -webkit-tap-highlight-color: transparent; }
+  * {
+    @apply border-border;
+  }
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
   body {
     @apply bg-background text-foreground antialiased;
     font-feature-settings: "cv11", "ss01", "ss03";
@@ -63,5 +67,7 @@
 }
 
 @layer utilities {
-  .tabular { font-variant-numeric: tabular-nums; }
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
 }

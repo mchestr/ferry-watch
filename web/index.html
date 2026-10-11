@@ -6,6 +6,21 @@
     <meta name="theme-color" content="#0b4f94" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <title>Ferry Watch</title>
+    <script>
+      // Apply the theme before first paint, so dark mode doesn't flash light. Keep in step with
+      // applyTheme() in src/lib/theme.ts.
+      (function () {
+        var dark = false;
+        try {
+          var stored = localStorage.getItem("theme");
+          dark = stored === "dark" || (stored !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
+        } catch (e) {
+          dark = window.matchMedia ? matchMedia("(prefers-color-scheme: dark)").matches : false;
+        }
+        document.documentElement.classList.toggle("dark", dark);
+        document.documentElement.style.colorScheme = dark ? "dark" : "light";
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

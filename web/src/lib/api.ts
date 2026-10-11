@@ -1,103 +1,194 @@
-export type Vehicle = "standard" | "tall" | "none";
-export type Fare = "cheapest" | "saver" | "prepaid" | "reservation";
+import type { z } from "zod";
+import {
+  ErrorBodySchema,
+  StateSchema,
+  TerminalListSchema,
+  type State,
+  type Terminal,
+  type TripSettings,
+} from "./schema";
 
-export interface TripConfig {
-  id: string;
-  enabled: boolean;
-  date: string;
-  from: string;
-  to: string;
-  adults: number;
-  children: number;
-  infants: number;
-  seniors: number;
-  vehicle: Vehicle;
-  height_ft: number;
-  earliest: string;
-  latest: string;
-  hold: boolean;
-  fare: Fare;
+export const REQUEST_TIMEOUT_MS = 15_000;
+export const SESSION_EXPIRED_MESSAGE = "Your sign-in expired";
+
+export type ApiErrorKind =
+  /** Signed out: the proxy redirected to its login page (an opaque redirect) or answered 401. */
+  | "auth"
+  /** The server answered with an error status. */
+  | "http"
+  /** No response within REQUEST_TIMEOUT_MS. */
+  | "timeout"
+  /** No response at all: offline, DNS, connection refused. */
+  | "network"
+  /** A 2xx response that isn't JSON. */
+  | "format"
+  /** JSON that doesn't match the API contract. */
+  | "schema";
+
+export class ApiError extends Error {
+  override readonly name = "ApiError";
+  readonly kind: ApiErrorKind;
+  readonly status: number | null;
+  /** For a 400: the request field that failed validation, when the server names one. */
+  readonly field: string | null;
+
+  constructor(message: string, kind: ApiErrorKind, details: { status?: number | null; field?: string | null } = {}) {
+    super(message);
+    this.kind = kind;
+    this.status = details.status ?? null;
+    this.field = details.field ?? null;
+  }
 }
 
-export interface Trip extends TripConfig {
-  /** runtime state of the trip's cart (TripConfig.hold is the auto-cart setting) */
-  sailings: Sailing[];
-  last_check: string | null;
-  last_error: string | null;
-  session: { since: number; logged_in: boolean } | null;
-  cart: Hold | null;
-  checking: boolean;
-  booking_link: string;
+export const isAuthError = (error: unknown): boolean => error instanceof ApiError && error.kind === "auth";
+
+export const hasStatus = (error: unknown, status: number): error is ApiError =>
+  error instanceof ApiError && error.status === status;
+
+export function errorMessage(error: unknown): string {
+  return error instanceof Error && error.message ? error.message : "Something went wrong";
 }
 
-export interface Sailing {
-  depart: string;
-  arrive: string;
-  vessel: string;
-  status: string;
-  price: string;
-  in_window?: boolean;
+type Method = "GET" | "POST" | "PATCH" | "DELETE";
+
+interface RequestOptions<T> {
+  method?: Method;
+  /** Sent as JSON. Mutations always send a body (`{}` when there's nothing to say). */
+  body?: unknown;
+  /** Validates the response; nothing reaches the app unparsed. */
+  schema: z.ZodType<T, z.ZodTypeDef, unknown>;
+  /** Cancels the request (TanStack Query passes one). Cancellation rejects with the AbortError, not an ApiError. */
+  signal?: AbortSignal;
+  timeoutMs?: number;
 }
 
-export interface Hold {
-  status: "adding" | "ready" | "failed" | "closed";
-  depart: string;
-  date?: string;
-  fare?: string | null;
-  price?: string | null;
-  at?: number;
-  error?: string | null;
+/** Fetches a JSON endpoint and validates the response. Every failure is an ApiError, except cancellation. */
+export async function request<T>(path: string, options: RequestOptions<T>): Promise<T> {
+  const { method = "GET", body, schema, signal, timeoutMs = REQUEST_TIMEOUT_MS } = options;
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  const forwardAbort = () => {
+    controller.abort();
+  };
+  if (signal?.aborted) controller.abort();
+  else signal?.addEventListener("abort", forwardAbort);
+
+  // A rejected fetch or body read: our timeout, the caller cancelling, or no connection.
+  const failure = (cause: unknown): unknown => {
+    if (timedOut) return new ApiError("The server took too long to respond", "timeout");
+    if (signal?.aborted) return cause;
+    return new ApiError("Can't reach the server", "network");
+  };
+
+  try {
+    const headers: Record<string, string> = { Accept: "application/json" };
+    if (body !== undefined) headers["Content-Type"] = "application/json";
+
+    let res: Response;
+    try {
+      res = await fetch(path, {
+        method,
+        headers,
+        body: body === undefined ? undefined : JSON.stringify(body),
+        cache: "no-store",
+        credentials: "same-origin",
+        // The auth proxy redirects a signed-out session to its login page. Don't follow it: report it.
+        redirect: "manual",
+        signal: controller.signal,
+      });
+    } catch (cause) {
+      throw failure(cause);
+    }
+
+    if (res.type === "opaqueredirect" || res.status === 401) {
+      throw new ApiError(SESSION_EXPIRED_MESSAGE, "auth", { status: res.status === 0 ? null : res.status });
+    }
+
+    let text: string;
+    try {
+      text = await res.text();
+    } catch (cause) {
+      throw failure(cause);
+    }
+
+    if (!res.ok) throw errorFromResponse(res.status, text);
+    if (!isJsonContentType(res.headers.get("Content-Type"))) {
+      throw new ApiError("Unexpected response from the server", "format", { status: res.status });
+    }
+    const json = parseJson(text);
+    if (json === undefined) throw new ApiError("The server sent malformed JSON", "format", { status: res.status });
+
+    const parsed = schema.safeParse(json);
+    if (!parsed.success) {
+      console.error(`${method} ${path}: the response doesn't match the API contract`, parsed.error.issues);
+      throw new ApiError(`Unexpected data from the server (${describeIssues(parsed.error)})`, "schema", {
+        status: res.status,
+      });
+    }
+    return parsed.data;
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", forwardAbort);
+  }
 }
 
-export interface ActivityEvent {
-  ts: number;
-  kind: "info" | "alert" | "cart" | "error";
-  text: string;
-  trip: string | null;
+function errorFromResponse(status: number, text: string): ApiError {
+  const body = ErrorBodySchema.safeParse(parseJson(text));
+  return body.success
+    ? new ApiError(body.data.error, "http", { status, field: body.data.field ?? null })
+    : new ApiError(`HTTP ${status}`, "http", { status });
 }
 
-export interface State {
-  enabled: boolean;
-  interval_seconds: number;
-  trips: Trip[];
-  checking: boolean;
-  next_check: number | null;
-  now: number;
-  events: ActivityEvent[];
-  vnc_url: string;
-  login: boolean;
-  pushover: boolean;
-  max_trips: number;
+function isJsonContentType(value: string | null): boolean {
+  return /^application\/(?:[\w.+-]+\+)?json\b/i.test(value ?? "");
 }
 
-export interface Terminal {
-  label: string;
-  short: string;
-  dests: string[];
+/** The parsed value, or undefined when `text` isn't JSON. */
+export function parseJson(text: string): unknown {
+  try {
+    const value: unknown = JSON.parse(text);
+    return value;
+  } catch {
+    return undefined;
+  }
 }
-export type Terminals = Record<string, Terminal>;
 
-async function request<T>(path: string, body?: unknown): Promise<T> {
-  const res = await fetch(path, {
-    method: body === undefined ? "GET" : "POST",
-    headers: body === undefined ? undefined : { "Content-Type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-    cache: "no-store",
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error((data as { error?: string }).error ?? res.statusText);
-  return data as T;
+/** "trips.0.sailings.2.depart: expected HH:MM (and 1 more)" */
+export function describeIssues(error: z.ZodError): string {
+  const [first, ...rest] = error.issues;
+  if (!first) return "invalid";
+  const where = first.path.length ? `${first.path.join(".")}: ` : "";
+  return `${where}${first.message}${rest.length ? ` (and ${rest.length} more)` : ""}`;
 }
+
+export interface SettingsPatch {
+  enabled?: boolean;
+  interval_seconds?: number;
+}
+
+export type TripPatch = Partial<TripSettings>;
+
+const tripPath = (id: string) => `/api/trips/${encodeURIComponent(id)}`;
+
+/** Every mutation sends JSON and gets the full new State back. */
+const mutation = (method: Exclude<Method, "GET">, path: string, body: object = {}): Promise<State> =>
+  request(path, { method, body, schema: StateSchema });
 
 export const api = {
-  state: () => request<State>("/api/state"),
-  terminals: () => request<Terminals>("/api/terminals"),
-  saveSettings: (patch: { enabled?: boolean; interval_seconds?: number }) => request<State>("/api/settings", patch),
-  addTrip: (trip: Partial<TripConfig>) => request<State>("/api/trips", trip),
-  updateTrip: (id: string, patch: Partial<TripConfig>) => request<State>(`/api/trips/${id}`, patch),
-  deleteTrip: (id: string) => request<State>(`/api/trips/${id}/delete`, {}),
-  releaseCart: (id: string) => request<State>(`/api/trips/${id}/release`, {}),
-  dismissCart: (id: string) => request<State>(`/api/trips/${id}/dismiss`, {}),
-  check: () => request<State>("/api/check", {}),
-  test: () => request<State>("/api/test", {}),
+  state: (signal?: AbortSignal): Promise<State> => request("/api/state", { schema: StateSchema, signal }),
+  terminals: async (signal?: AbortSignal): Promise<Terminal[]> =>
+    (await request("/api/terminals", { schema: TerminalListSchema, signal })).terminals,
+  updateSettings: (patch: SettingsPatch) => mutation("PATCH", "/api/settings", patch),
+  addTrip: (settings: TripSettings) => mutation("POST", "/api/trips", settings),
+  /** Send only the fields that changed. */
+  updateTrip: (id: string, patch: TripPatch) => mutation("PATCH", tripPath(id), patch),
+  removeTrip: (id: string) => mutation("DELETE", tripPath(id)),
+  releaseCart: (id: string, cartId: string) => mutation("POST", `${tripPath(id)}/cart/release`, { cart_id: cartId }),
+  dismissCart: (id: string, cartId: string) => mutation("POST", `${tripPath(id)}/cart/dismiss`, { cart_id: cartId }),
+  checkNow: () => mutation("POST", "/api/check"),
+  testAlert: () => mutation("POST", "/api/alerts/test"),
 };

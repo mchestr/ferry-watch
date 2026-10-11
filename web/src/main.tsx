@@ -1,23 +1,33 @@
 import "@fontsource-variable/inter";
 import "./index.css";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import React from "react";
-import ReactDOM from "react-dom/client";
-import { Toaster } from "sonner";
+import { StrictMode } from "react";
+import { createRoot } from "react-dom/client";
 import App from "./App";
+import { AppToaster } from "./components/AppToaster";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { TooltipProvider } from "./components/ui/tooltip";
+import { isAuthError } from "./lib/api";
 
 const queryClient = new QueryClient({
-  defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: true } },
+  defaultOptions: {
+    queries: { retry: (failures, error) => !isAuthError(error) && failures < 1, refetchOnWindowFocus: true },
+    mutations: { retry: false },
+  },
 });
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
+const root = document.getElementById("root");
+if (!root) throw new Error("index.html is missing #root");
+
+createRoot(root).render(
+  <StrictMode>
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <App />
-        <Toaster position="bottom-center" richColors closeButton />
+        <ErrorBoundary>
+          <App />
+        </ErrorBoundary>
+        <AppToaster />
       </TooltipProvider>
     </QueryClientProvider>
-  </React.StrictMode>,
+  </StrictMode>,
 );
