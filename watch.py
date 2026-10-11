@@ -1,20 +1,21 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["playwright==1.56.0"]
+# dependencies = ["playwright==1.56.0", "aiohttp==3.10.10"]
 # ///
 """BC Ferries reservation watcher.
 
-Drives the bcferries.com booking flow in headless Chromium (the site sits
-behind Queue-it, so plain HTTP doesn't work), finds sailings that can be
-booked, and sends a Pushover notification with a link to the booking page.
+Watches one or more trips on bcferries.com (the site sits behind Queue-it, so it
+drives a real Chromium), sends a Pushover alert when a sailing becomes bookable,
+and can add it to the cart so checkout is a few taps away.
 
-A small web UI on http://localhost:8765 edits the config and shows results.
+A web UI on http://localhost:8765 manages the trips and shows results.
 
     PUSHOVER_TOKEN=... PUSHOVER_USER_KEY=... uv run watch.py
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import random
@@ -26,10 +27,10 @@ import threading
 from collections import deque
 import time
 import traceback
+import uuid
 import urllib.parse
 import urllib.request
 from datetime import datetime
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -43,7 +44,7 @@ UA = (
     "(KHTML, like Gecko) Chrome/141.0 Safari/537.36"
 )
 
-DEFAULT_CONFIG = {
+TRIP_DEFAULTS = {
     "enabled": True,
     "date": "2026-10-12",
     "from": "SWB",
@@ -56,10 +57,16 @@ DEFAULT_CONFIG = {
     "height_ft": 8,  # only used when vehicle == "tall"
     "earliest": "00:00",
     "latest": "23:59",
-    "interval_seconds": 30,
-    "hold": True,  # add the sailing to the cart in a visible browser on this Mac
+    "hold": True,  # add an open sailing to the cart
     "fare": "cheapest",  # cheapest | saver | prepaid | reservation
 }
+TRIP_TYPES = {
+    "enabled": bool, "date": str, "from": str, "to": str, "vehicle": str, "earliest": str, "latest": str,
+    "adults": int, "children": int, "infants": int, "seniors": int, "height_ft": float, "hold": bool, "fare": str,
+}
+# Changing any of these means a new search, so the trip's browser session is reopened.
+SEARCH_KEYS = ("date", "from", "to", "adults", "children", "infants", "seniors", "vehicle", "height_ft")
+MAX_TRIPS = 6
 
 FARE_NAMES = {"saver": "Saver", "prepaid": "Prepaid", "reservation": "Reservation Only"}
 
@@ -68,34 +75,56 @@ PASSENGER_FIELDS = ["adults", "children", "infants", "seniors"]
 
 state_lock = threading.Lock()
 state: dict = {
-    "last_check": None,
-    "last_error": None,
-    "sailings": [],
-    "notified": set(),  # (date, from, to, depart) already pushed
-    "consecutive_errors": 0,
-    "checking": False,
+    "trips": {},  # trip id -> runtime state, see trip_state()
+    "checking": None,  # id of the trip being checked right now
     "next_check": None,  # epoch seconds
-    "events": deque(maxlen=60),  # activity feed: {"ts", "kind", "text"}
-    "session": None,  # {"since", "logged_in"} for the live browser session
-    "hold": None,  # {"status": "adding"|"ready"|"failed"|"closed", "depart", "fare", "price", "at", "error"}
+    "events": deque(maxlen=80),  # activity feed: {"ts", "kind", "text", "trip"}
 }
 wake = threading.Event()
+
+
+def trip_state(tid: str) -> dict:
+    """Runtime state for one trip (call with state_lock held)."""
+    return state["trips"].setdefault(tid, {
+        "sailings": [],
+        "last_check": None,
+        "last_error": None,
+        "consecutive_errors": 0,
+        "notified": set(),  # departures already alerted
+        "session": None,  # {"since", "logged_in"}
+        "hold": None,  # {"status": "adding"|"ready"|"failed"|"closed", "depart", "fare", "price", "at", "error"}
+    })
 
 
 # --------------------------------------------------------------------------
 # config / terminals
 
 
+def new_trip(**kw) -> dict:
+    trip = {"id": uuid.uuid4().hex[:8], **TRIP_DEFAULTS}
+    trip.update({k: TRIP_TYPES[k](v) for k, v in kw.items() if k in TRIP_TYPES})
+    return trip
+
+
 def load_config() -> dict:
-    cfg = dict(DEFAULT_CONFIG)  # fills in keys added since the file was written
-    if CONFIG_PATH.exists():
-        cfg.update(json.loads(CONFIG_PATH.read_text()))
-    cfg.pop("interval_minutes", None)  # replaced by interval_seconds
+    raw = json.loads(CONFIG_PATH.read_text()) if CONFIG_PATH.exists() else {}
+    if "trips" not in raw:
+        # Pre-0.4 config held a single trip at the top level.
+        raw = {"enabled": raw.get("enabled", True), "interval_seconds": raw.get("interval_seconds", 30),
+               "trips": [new_trip(**{k: v for k, v in raw.items() if k != "enabled"})] if raw else [new_trip()]}
+    cfg = {"enabled": bool(raw.get("enabled", True)), "interval_seconds": int(raw.get("interval_seconds", 30))}
+    cfg["trips"] = [{**TRIP_DEFAULTS, **t} for t in raw["trips"]]
     return cfg
 
 
 def save_config(cfg: dict) -> None:
     CONFIG_PATH.write_text(json.dumps(cfg, indent=2) + "\n")
+
+
+def trip_label(t: dict) -> str:
+    """'SWB→TSA Mon Oct 12' for logs, alerts and the activity feed."""
+    day = datetime.strptime(t["date"], "%Y-%m-%d").strftime("%a %b %-d")
+    return f'{terminals()[t["from"]]["short"].split("(")[-1].rstrip(")")} → {terminals()[t["to"]]["short"].split("(")[-1].rstrip(")")}, {day}'
 
 
 _terminals: dict | None = None
@@ -328,75 +357,97 @@ def choose_fare(pg, preference: str) -> tuple[str, str]:
     return pick["name"], pick["price"]
 
 
-TRIP_KEYS = ("date", "from", "to", "adults", "children", "infants", "seniors", "vehicle", "height_ft")
 FARE_SELECTION = "https://www.bcferries.com/fare-selection"
+
+
+def summarize(sailings: list[dict], limit: int = 3) -> str:
+    """'7:00 am ($93.45), 9:00 am ($93.45), 11:00 am ($93.45) +7 more'"""
+    parts = [f'{s["depart"]} ({s["price"]})' if s["price"] else s["depart"] for s in sailings[:limit]]
+    extra = len(sailings) - limit
+    return ", ".join(parts) + (f" +{extra} more" if extra > 0 else "")
 
 
 def have_login() -> bool:
     return bool(os.environ.get("BCF_USER") and os.environ.get("BCF_PASS"))
 
 
-def set_hold(**kw) -> None:
+def in_window(t: dict, s: dict) -> bool:
+    return to_minutes(t["earliest"]) <= to_minutes(s["depart"]) <= to_minutes(t["latest"])
+
+
+def set_hold(tid: str, **kw) -> None:
     with state_lock:
-        state["hold"] = {**(state["hold"] or {}), **kw}
+        ts = trip_state(tid)
+        ts["hold"] = {**(ts["hold"] or {}), **kw}
+
+
+class Session:
+    """One trip's browser context: BC Ferries keeps the search in the session, so each trip needs its own."""
+
+    def __init__(self, ctx, pg, key):
+        self.ctx, self.pg, self.key = ctx, pg, key
+
+    def alive(self) -> bool:
+        try:
+            return not self.pg.is_closed() and self.pg.title() is not None
+        except Exception:  # noqa: BLE001
+            return False
+
+    def close(self) -> None:
+        try:
+            self.ctx.close()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 class Watcher:
-    """Owns one long-lived browser (headed, so it can be watched over VNC).
+    """Owns one long-lived (headed) browser with a session per trip.
 
-    It walks the booking form once, then polls by reloading the fare-selection page,
-    which takes ~3s instead of ~30s. When a sailing opens it's added to the cart on
-    that same page, and polling pauses until the cart is released.
+    Each session walks the booking form once, then is polled by reloading its
+    fare-selection page (~3s). A sailing that opens is added to the cart on that
+    same page, and that trip pauses until its cart is released.
     """
 
     def __init__(self) -> None:
         self.browser = None
-        self.ctx = None
-        self.pg = None
-        self.session_key = None
-        self.release = threading.Event()
+        self.sessions: dict[str, Session] = {}
+        self.release: set[str] = set()
+        self.release_lock = threading.Lock()
 
     # ---- browser/session lifecycle
 
     def ensure_browser(self) -> None:
         if self.browser and self.browser.is_connected():
             return
+        for tid in list(self.sessions):
+            self.close_session(tid)
         size = os.environ.get("BCF_WINDOW_SIZE", "1280,1000")
         self.browser = self.p.chromium.launch(
             headless=os.environ.get("BCF_HEADLESS") == "1",
             args=[f"--window-size={size}", "--window-position=0,0"],
         )
-        self.ctx = self.pg = None
 
-    def close_session(self) -> None:
-        if self.ctx:
-            try:
-                self.ctx.close()
-            except Exception:  # noqa: BLE001
-                pass
-        self.ctx = self.pg = self.session_key = None
+    def close_session(self, tid: str) -> None:
+        if sess := self.sessions.pop(tid, None):
+            sess.close()
         with state_lock:
-            state["session"] = None
+            if tid in state["trips"]:
+                state["trips"][tid]["session"] = None
 
-    def open_session(self, cfg: dict, key) -> None:
-        self.close_session()
-        self.ctx = self.browser.new_context(user_agent=UA, no_viewport=True)
-        self.pg = self.ctx.new_page()
-        self.pg.set_default_timeout(60_000)
-        logged_in = bool(cfg["hold"] and have_login())
+    def open_session(self, t: dict, key) -> Session:
+        self.close_session(t["id"])
+        ctx = self.browser.new_context(user_agent=UA, no_viewport=True)
+        pg = ctx.new_page()
+        pg.set_default_timeout(60_000)
+        sess = self.sessions[t["id"]] = Session(ctx, pg, key)
+        logged_in = bool(t["hold"] and have_login())
         if logged_in:
-            login(self.pg)
-        goto_sailings(self.pg, cfg)
-        self.session_key = key
+            login(pg)
+        goto_sailings(pg, t)
         with state_lock:
-            state["session"] = {"since": time.time(), "logged_in": logged_in}
-        event("info", "Opened a booking session" + (" (logged in)" if logged_in else ""))
-
-    def page_alive(self) -> bool:
-        try:
-            return bool(self.pg) and not self.pg.is_closed() and bool(self.pg.title() is not None)
-        except Exception:  # noqa: BLE001
-            return False
+            trip_state(t["id"])["session"] = {"since": time.time(), "logged_in": logged_in}
+        event("info", "Opened a booking session" + (" (logged in)" if logged_in else ""), t)
+        return sess
 
     # ---- main loop
 
@@ -407,163 +458,177 @@ class Watcher:
             self.p = p
             while True:
                 cfg = load_config()
-                if self.holding():
-                    self.wait_for_release()
-                    continue
-                if cfg["enabled"]:
-                    self.poll(cfg)
-                    if self.holding():
-                        continue  # go straight to waiting on the cart
-                else:
-                    self.close_session()
-                delay = max(15, int(cfg["interval_seconds"])) * random.uniform(0.85, 1.15)
+                active = [t for t in cfg["trips"] if t["enabled"]] if cfg["enabled"] else []
+                for tid in set(self.sessions) - {t["id"] for t in active}:
+                    self.close_session(tid)  # trip removed, paused, or watching off
+                for t in active:
+                    if self.holding(t["id"]):
+                        self.check_hold(t)
+                    else:
+                        self.poll(t)
                 with state_lock:
-                    state["next_check"] = time.time() + delay if cfg["enabled"] else None
-                wake.wait(delay)
-                wake.clear()
+                    for tid in set(state["trips"]) - {t["id"] for t in cfg["trips"]}:
+                        del state["trips"][tid]
+                polling = [t for t in active if not self.holding(t["id"])]
+                delay = max(15, cfg["interval_seconds"]) * random.uniform(0.85, 1.15)
+                deadline = time.time() + delay
+                with state_lock:
+                    state["next_check"] = deadline if polling else None
+                # Sleep until the next check, but look at held carts every few seconds so a release
+                # or a closed checkout window is noticed quickly. Any UI action wakes us immediately.
+                while (left := deadline - time.time()) > 0:
+                    held = [t for t in active if self.holding(t["id"])]
+                    if wake.wait(min(left, 5) if held else left):
+                        wake.clear()
+                        break
+                    for t in held:
+                        self.check_hold(t)
 
-    def holding(self) -> bool:
+    def holding(self, tid: str) -> bool:
         with state_lock:
-            h = state["hold"]
+            h = trip_state(tid)["hold"]
         return bool(h and h["status"] == "ready")
 
-    def wait_for_release(self) -> None:
-        with state_lock:
-            state["next_check"] = None
-        while not self.release.is_set() and self.page_alive():
-            wake.wait(5)
-            wake.clear()
-        if self.release.is_set() and self.page_alive():
+    def check_hold(self, t: dict) -> None:
+        tid = t["id"]
+        sess = self.sessions.get(tid)
+        with self.release_lock:
+            released = tid in self.release
+            self.release.discard(tid)
+        alive = bool(sess and sess.alive())
+        if not released and alive:
+            return
+        if released and alive:
             # Released from the UI: empty the cart so the spot goes back right away.
             try:
-                self.pg.goto("https://www.bcferries.com/abandoned-cart/my-account", timeout=30_000)
+                sess.pg.goto("https://www.bcferries.com/abandoned-cart/my-account", timeout=30_000)
             except Exception:  # noqa: BLE001
                 pass
-        self.release.clear()
-        set_hold(status="closed")
-        event("info", "Cart released, watching resumed")
-        self.close_session()  # the cart lives in this session; a fresh one starts clean
+        set_hold(tid, status="closed")
+        event("info", "Cart released, watching resumed", t)
+        self.close_session(tid)  # the cart lives in this session; a fresh one starts clean
 
-    def poll(self, cfg: dict) -> None:
-        key = tuple(cfg[k] for k in TRIP_KEYS) + (bool(cfg["hold"] and have_login()),)
+    def poll(self, t: dict) -> None:
+        tid = t["id"]
+        key = tuple(t[k] for k in SEARCH_KEYS) + (bool(t["hold"] and have_login()),)
         with state_lock:
-            state["checking"] = True
+            state["checking"] = tid
+        sess = None
         try:
             self.ensure_browser()
-            if self.session_key != key or not self.page_alive():
-                self.open_session(cfg, key)
+            sess = self.sessions.get(tid)
+            if not sess or sess.key != key or not sess.alive():
+                sess = self.open_session(t, key)
             else:
-                self.pg.goto(FARE_SELECTION, wait_until="load", timeout=60_000)
+                sess.pg.goto(FARE_SELECTION, wait_until="load", timeout=60_000)
                 try:
-                    self.pg.wait_for_selector(".p-card", timeout=20_000)
+                    sess.pg.wait_for_selector(".p-card", timeout=20_000)
                 except Exception:  # noqa: BLE001
                     # Session expired, Queue-it, or redirected home: walk the form again.
-                    self.open_session(cfg, key)
-            sailings = [s for c in self.pg.locator(".p-card").all() if (s := parse_card(c))]
+                    sess = self.open_session(t, key)
+            sailings = [s for c in sess.pg.locator(".p-card").all() if (s := parse_card(c))]
             if not sailings:
                 raise RuntimeError("Reached the sailings page but found no sailings")
-            self.process(cfg, sailings)
+            self.process(t, sess, sailings)
         except Exception as e:  # noqa: BLE001
             traceback.print_exc()
-            if self.pg:
-                save_failure(self.pg)
-            self.close_session()
+            if sess:
+                save_failure(sess.pg)
+            self.close_session(tid)
             with state_lock:
-                state["last_error"] = f"{datetime.now():%H:%M:%S} {type(e).__name__}: {e}"
-                state["consecutive_errors"] += 1
-                n = state["consecutive_errors"]
-            event("error", f"Check failed: {type(e).__name__}: {e}"[:200])
+                ts = trip_state(tid)
+                ts["last_error"] = f"{datetime.now():%H:%M:%S} {type(e).__name__}: {e}"
+                ts["consecutive_errors"] += 1
+                n = ts["consecutive_errors"]
+            event("error", f"Check failed: {type(e).__name__}: {e}"[:200], t)
             if n == 3:
-                pushover("⛴ Ferry watcher failing", f"3 checks in a row failed:\n{e}"[:1000])
+                pushover(f"⛴ Ferry watcher failing: {trip_label(t)}", f"3 checks in a row failed:\n{e}"[:1000])
         finally:
             with state_lock:
-                state["checking"] = False
+                state["checking"] = None
 
     # ---- results
 
-    def process(self, cfg: dict, sailings: list[dict]) -> None:
-        key = (cfg["date"], cfg["from"], cfg["to"])
+    def process(self, t: dict, sess: Session, sailings: list[dict]) -> None:
+        tid = t["id"]
         for s in sailings:
-            s["in_window"] = in_window(cfg, s)
+            s["in_window"] = in_window(t, s)
         with state_lock:
-            notified = set(state["notified"])
-            prev = {x["depart"]: x["status"] for x in state["sailings"]}
-        new = [s for s in sailings if s["status"] == "available" and s["in_window"] and key + (s["depart"],) not in notified]
+            ts = trip_state(tid)
+            notified = set(ts["notified"])
+            prev = {x["depart"]: x["status"] for x in ts["sailings"]}
+        new = [s for s in sailings if s["status"] == "available" and s["in_window"] and s["depart"] not in notified]
 
-        held = self.hold(cfg, new[0]) if new and cfg["hold"] else None
+        held = self.hold(t, sess, new[0]) if new and t["hold"] else None
         if new:
-            self.alert(cfg, new, held)
+            self.alert(t, new, held)
 
         gone = [s["depart"] for s in sailings if prev.get(s["depart"]) == "available" and s["status"] != "available"]
         with state_lock:
-            for s in new:
-                state["notified"].add(key + (s["depart"],))
+            ts = trip_state(tid)
+            ts["notified"] |= {s["depart"] for s in new}
             # Forget sailings that sold out again so we re-alert if they reopen.
-            for s in sailings:
-                if s["status"] != "available":
-                    state["notified"].discard(key + (s["depart"],))
-            state.update(sailings=sailings, last_check=datetime.now(), last_error=None, consecutive_errors=0)
+            ts["notified"] -= {s["depart"] for s in sailings if s["status"] != "available"}
+            ts.update(sailings=sailings, last_check=datetime.now(), last_error=None, consecutive_errors=0)
         if gone:
-            event("info", f"Sold out again: {', '.join(gone)}")
+            event("info", f"Sold out again: {', '.join(gone)}", t)
         avail = [s["depart"] for s in sailings if s["status"] == "available" and s["in_window"]]
-        log(f"{cfg['date']} {cfg['from']}->{cfg['to']}: {len(sailings)} sailings, bookable in window: {avail or 'none'}")
+        log(f"{trip_label(t)}: {len(sailings)} sailings, bookable in window: {avail or 'none'}")
 
-    def hold(self, cfg: dict, sailing: dict) -> tuple[str, str] | None:
-        """Add `sailing` to the cart on the already-open fare-selection page."""
-        set_hold(status="adding", depart=sailing["depart"], date=cfg["date"], fare=None, price=None, at=time.time(), error=None)
+    def hold(self, t: dict, sess: Session, sailing: dict) -> tuple[str, str] | None:
+        """Add `sailing` to the cart on the trip's already-open fare-selection page."""
+        tid = t["id"]
+        set_hold(tid, status="adding", depart=sailing["depart"], date=t["date"], fare=None, price=None, at=time.time(), error=None)
         try:
             card = next(
-                (c for c in self.pg.locator(".p-card").all()
+                (c for c in sess.pg.locator(".p-card").all()
                  if (s := parse_card(c)) and s["depart"] == sailing["depart"] and s["status"] == "available"),
                 None,
             )
             if card is None:
                 raise RuntimeError(f'{sailing["depart"]} is no longer bookable')
             card.locator("button:has-text('View fares')").click()
-            fare, price = choose_fare(self.pg, cfg.get("fare", "cheapest"))
-            set_hold(status="ready", fare=fare, price=price, at=time.time())
-            event("cart", f"{sailing['depart']} added to the cart ({fare} {price})")
-            log(f"holding {cfg['date']} {sailing['depart']} ({fare} {price}) in cart")
+            fare, price = choose_fare(sess.pg, t.get("fare", "cheapest"))
+            set_hold(tid, status="ready", fare=fare, price=price, at=time.time())
+            event("cart", f"{sailing['depart']} added to the cart ({fare} {price})", t)
+            log(f"holding {trip_label(t)} {sailing['depart']} ({fare} {price}) in cart")
             try:
-                self.pg.bring_to_front()
+                sess.pg.bring_to_front()
             except Exception:  # noqa: BLE001
                 pass
             mac_notify("Ferry in your cart", f"{sailing['depart']}: finish checkout in the browser window")
             return fare, price
         except Exception as e:  # noqa: BLE001
             traceback.print_exc()
-            save_failure(self.pg)
-            set_hold(status="failed", error=f"{type(e).__name__}: {e}"[:300])
-            event("error", f"Couldn't add {sailing['depart']} to the cart: {e}"[:200])
-            self.close_session()
+            save_failure(sess.pg)
+            set_hold(tid, status="failed", error=f"{type(e).__name__}: {e}"[:300])
+            event("error", f"Couldn't add {sailing['depart']} to the cart: {e}"[:200], t)
+            self.close_session(tid)
             return None
 
-    def alert(self, cfg: dict, new: list[dict], held: tuple[str, str] | None) -> None:
-        t = terminals()
-        day = datetime.strptime(cfg["date"], "%Y-%m-%d").strftime("%a %b %-d")
-        route = f'{t[cfg["from"]]["short"]} → {t[cfg["to"]]["short"]}'
-        times = ", ".join(f'{s["depart"]} ({s["price"]})' if s["price"] else s["depart"] for s in new)
+    def alert(self, t: dict, new: list[dict], held: tuple[str, str] | None) -> None:
+        times = summarize(new, limit=6)
         if held:
             fare, price = held
             others = ", ".join(s["depart"] for s in new[1:])
             where = "Tap to finish checkout" if VNC_URL else "Finish checkout in the browser window"
             pushover(
                 f"🛒 {new[0]['depart']} is in your cart",
-                f"{day} · {route}\n{fare} {price}" + (f"\nAlso bookable: {others}" if others else "")
+                f"{trip_label(t)}\n{fare} {price}" + (f"\nAlso bookable: {others}" if others else "")
                 + f"\n\n{where}. Nothing is booked until you pay.",
-                url=VNC_URL or booking_link(cfg),
+                url=VNC_URL or booking_link(t),
                 url_title="Open checkout" if VNC_URL else "Book on bcferries.com",
                 priority=1,
             )
         else:
-            failed = " (couldn't add it to the cart)" if cfg["hold"] else ""
+            failed = " (couldn't add it to the cart)" if t["hold"] else ""
             pushover(
-                f"⛴ Ferry space: {day}",
-                f"{route}\nBookable: {times}{failed}\n\n{booking_steps(cfg, new[0])}",
-                url=booking_link(cfg),
+                f"⛴ Ferry space: {trip_label(t)}",
+                f"Bookable: {times}{failed}\n\n{booking_steps(t, new[0])}",
+                url=booking_link(t),
                 priority=1,
             )
-        event("alert", f"Bookable: {times} · alert sent")
+        event("alert", f"Bookable: {summarize(new)} · alert sent", t)
 
 
 watcher = Watcher()
@@ -593,10 +658,10 @@ def pushover(title: str, message: str, url: str | None = None, priority: int = 0
     log(f"pushover sent: {title}")
 
 
-def event(kind: str, text: str) -> None:
+def event(kind: str, text: str, trip: dict | None = None) -> None:
     """Record something worth showing in the UI's activity feed (kind: info|alert|cart|error)."""
     with state_lock:
-        state["events"].appendleft({"ts": time.time(), "kind": kind, "text": text})
+        state["events"].appendleft({"ts": time.time(), "kind": kind, "text": text, "trip": trip["id"] if trip else None})
 
 
 def log(msg: str) -> None:
@@ -604,45 +669,43 @@ def log(msg: str) -> None:
 
 
 # --------------------------------------------------------------------------
-# loop
-
-
-def in_window(cfg: dict, s: dict) -> bool:
-    m = to_minutes(s["depart"])
-    return to_minutes(cfg["earliest"]) <= m <= to_minutes(cfg["latest"])
-
-
-# --------------------------------------------------------------------------
 # web UI (static page + JSON API)
 
 # Built React app (web/dist locally, /app/static in the image).
 STATIC_DIR = Path(os.environ.get("BCF_STATIC", HERE / "web" / "dist")).resolve()
-CONFIG_KEYS = {
-    "date": str, "from": str, "to": str, "vehicle": str, "earliest": str, "latest": str,
-    "adults": int, "children": int, "infants": int, "seniors": int,
-    "interval_seconds": int, "height_ft": float, "enabled": bool, "hold": bool, "fare": str,
-}
+config_lock = threading.Lock()
 
 
 def api_state() -> dict:
     cfg = load_config()
     with state_lock:
-        st = {k: v for k, v in state.items() if k != "notified"}
+        trips = []
+        for t in cfg["trips"]:
+            ts = trip_state(t["id"])
+            trips.append({
+                **t,
+                "sailings": ts["sailings"],
+                "last_check": ts["last_check"].isoformat() if ts["last_check"] else None,
+                "last_error": ts["last_error"],
+                "session": ts["session"],
+                "cart": ts["hold"],  # runtime cart state; "hold" is the trip's auto-cart setting
+                "checking": state["checking"] == t["id"],
+                "booking_link": booking_link(t),
+            })
+        events = list(state["events"])[:40]
+        checking, next_check = state["checking"], state["next_check"]
     return {
-        "config": cfg,
-        "checking": st["checking"],
-        "last_check": st["last_check"].isoformat() if st["last_check"] else None,
-        "last_error": st["last_error"],
-        "next_check": st["next_check"],
+        "enabled": cfg["enabled"],
+        "interval_seconds": cfg["interval_seconds"],
+        "trips": trips,
+        "checking": checking is not None,
+        "next_check": next_check,
         "now": time.time(),
-        "sailings": st["sailings"],
-        "booking_link": booking_link(cfg),
-        "hold": st["hold"],
-        "session": st["session"],
-        "events": list(st["events"])[:30],
+        "events": events,
         "vnc_url": VNC_URL,
         "login": have_login(),
         "pushover": bool(os.environ.get("PUSHOVER_TOKEN") and os.environ.get("PUSHOVER_USER_KEY")),
+        "max_trips": MAX_TRIPS,
     }
 
 
@@ -650,108 +713,185 @@ def api_terminals() -> dict:
     return {c: {"label": v["label"], "short": v["short"], "dests": v["dests"]} for c, v in terminals().items()}
 
 
-class Handler(BaseHTTPRequestHandler):
-    def log_message(self, *a):
-        pass
+def clean_trip(trip: dict, body: dict) -> dict:
+    for k, typ in TRIP_TYPES.items():
+        if k in body:
+            trip[k] = typ(body[k])
+    for k in PASSENGER_FIELDS:
+        trip[k] = max(0, min(9, trip[k]))
+    trip["adults"] = max(trip["adults"], 1) if not (trip["children"] or trip["seniors"]) else trip["adults"]
+    dests = terminals().get(trip["from"], {}).get("dests", [])
+    if trip["to"] not in dests and dests:
+        trip["to"] = dests[0]
+    return trip
 
-    def _send(self, code: int, body: bytes, ctype: str) -> None:
-        self.send_response(code)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(body)
 
-    def _json(self, obj, code: int = 200) -> None:
-        self._send(code, json.dumps(obj).encode(), "application/json")
+class ApiError(Exception):
+    pass
 
-    def do_GET(self):
-        if self.path == "/healthz":
-            self._send(200, b"ok", "text/plain")
-        elif self.path == "/api/state":
-            self._json(api_state())
-        elif self.path == "/api/terminals":
-            self._json(api_terminals())
-        elif self.path.startswith("/api/"):
-            self.send_error(404)
-        else:
-            self._static()
 
-    def _static(self):
+def handle_post(parts: list[str], body: dict) -> None:
+    """Apply a UI action. Runs in a worker thread (it may block on config/state locks or Pushover)."""
+    if parts == ["api", "settings"]:
+        with config_lock:
+            cfg = load_config()
+            if "enabled" in body:
+                cfg["enabled"] = bool(body["enabled"])
+                event("info", "Watching resumed" if cfg["enabled"] else "Watching paused")
+            if "interval_seconds" in body:
+                cfg["interval_seconds"] = max(15, int(body["interval_seconds"]))
+            save_config(cfg)
+        wake.set()
+    elif parts == ["api", "trips"]:
+        with config_lock:
+            cfg = load_config()
+            if len(cfg["trips"]) >= MAX_TRIPS:
+                raise ApiError(f"Up to {MAX_TRIPS} trips can be watched at once")
+            trip = clean_trip(new_trip(), body)
+            cfg["trips"].append(trip)
+            save_config(cfg)
+        event("info", "Trip added", trip)
+        wake.set()
+    elif parts[:2] == ["api", "trips"] and len(parts) in (3, 4):
+        tid, action = parts[2], (parts[3] if len(parts) == 4 else "update")
+        with config_lock:
+            cfg = load_config()
+            trip = next((t for t in cfg["trips"] if t["id"] == tid), None)
+            if trip is None:
+                raise ApiError("No such trip")
+            if action == "update":
+                before = {k: trip[k] for k in SEARCH_KEYS + ("earliest", "latest")}
+                clean_trip(trip, body)
+                save_config(cfg)
+                if before != {k: trip[k] for k in SEARCH_KEYS + ("earliest", "latest")}:
+                    with state_lock:
+                        ts = trip_state(tid)
+                        ts["sailings"], ts["notified"] = [], set()
+                if set(body) != {"enabled"}:
+                    event("info", "Trip updated", trip)
+            elif action == "delete":
+                cfg["trips"] = [t for t in cfg["trips"] if t["id"] != tid]
+                save_config(cfg)
+                event("info", f"Trip removed: {trip_label(trip)}")
+            elif action == "release":
+                with watcher.release_lock:
+                    watcher.release.add(tid)
+            elif action == "dismiss":
+                with state_lock:
+                    ts = trip_state(tid)
+                    if ts["hold"] and ts["hold"]["status"] in ("failed", "closed"):
+                        ts["hold"] = None
+            else:
+                raise ApiError(f"Unknown action {action}")
+        wake.set()
+    elif parts == ["api", "check"]:
+        wake.set()
+    elif parts == ["api", "test"]:
+        pushover("⛴ Ferry watch test", "Notifications are working.")
+        event("info", "Test notification sent")
+    else:
+        raise ApiError("Not found")
+
+
+def make_app():
+    from aiohttp import WSMsgType, web
+
+    clients: set = set()
+
+    async def get_state(_req):
+        return web.json_response(await asyncio.to_thread(api_state), headers={"Cache-Control": "no-store"})
+
+    async def get_terminals(_req):
+        return web.json_response(await asyncio.to_thread(api_terminals))
+
+    async def healthz(_req):
+        return web.Response(text="ok")
+
+    async def post(req):
+        body = await req.json() if req.can_read_body else {}
+        try:
+            await asyncio.to_thread(handle_post, req.path.strip("/").split("/"), body)
+        except ApiError as e:
+            return web.json_response({"error": str(e)}, status=400)
+        except Exception as e:  # noqa: BLE001
+            return web.json_response({"error": str(e)}, status=502)
+        return web.json_response(await asyncio.to_thread(api_state))
+
+    async def ws(req):
+        sock = web.WebSocketResponse(heartbeat=25)
+        await sock.prepare(req)
+        clients.add(sock)
+        try:
+            await sock.send_str(json.dumps(await asyncio.to_thread(api_state)))
+            async for msg in sock:  # nothing to receive; keeps the connection open
+                if msg.type == WSMsgType.ERROR:
+                    break
+        finally:
+            clients.discard(sock)
+        return sock
+
+    async def broadcaster(_app):
+        """Push state to every connected browser whenever it changes (checked twice a second)."""
+        last = None
+
+        async def loop():
+            nonlocal last
+            while True:
+                await asyncio.sleep(0.5)
+                if not clients:
+                    last = None
+                    continue
+                st = await asyncio.to_thread(api_state)
+                sig = json.dumps({k: v for k, v in st.items() if k != "now"}, sort_keys=True)
+                if sig == last:
+                    continue
+                last = sig
+                payload = json.dumps(st)
+                for c in list(clients):
+                    try:
+                        await c.send_str(payload)
+                    except Exception:  # noqa: BLE001
+                        clients.discard(c)
+
+        task = asyncio.create_task(loop())
+        yield
+        task.cancel()
+
+    async def static(req):
         """Serve the built frontend; unknown paths fall back to index.html."""
-        rel = urllib.parse.urlparse(self.path).path.lstrip("/") or "index.html"
+        rel = req.match_info.get("path", "") or "index.html"
         f = (STATIC_DIR / rel).resolve()
         if not f.is_file() or STATIC_DIR not in f.parents:
             f = STATIC_DIR / "index.html"
         if not f.is_file():
-            self._send(503, b"frontend not built (cd web && npm run build)", "text/plain")
-            return
-        body = f.read_bytes()
-        self.send_response(200)
-        self.send_header("Content-Type", mimetypes.guess_type(f.name)[0] or "application/octet-stream")
-        self.send_header("Content-Length", str(len(body)))
+            return web.Response(status=503, text="frontend not built (cd web && npm run build)")
         # Vite fingerprints assets, so they can be cached forever; index.html must not be.
-        self.send_header("Cache-Control", "public, max-age=31536000, immutable" if rel.startswith("assets/") else "no-store")
-        self.end_headers()
-        self.wfile.write(body)
+        cache = "public, max-age=31536000, immutable" if rel.startswith("assets/") else "no-store"
+        return web.FileResponse(f, headers={"Cache-Control": cache})
 
-    def do_POST(self):
-        n = int(self.headers.get("Content-Length") or 0)
-        body = json.loads(self.rfile.read(n) or b"{}")
-        if self.path == "/api/config":
-            cfg = load_config()
-            for k, typ in CONFIG_KEYS.items():
-                if k in body:
-                    cfg[k] = typ(body[k])
-            for k in ("adults", "children", "infants", "seniors"):
-                cfg[k] = max(0, min(9, cfg[k]))
-            cfg["interval_seconds"] = max(15, cfg["interval_seconds"])
-            dests = terminals().get(cfg["from"], {}).get("dests", [])
-            if cfg["to"] not in dests and dests:
-                cfg["to"] = dests[0]
-            trip_changed = any(cfg[k] != load_config()[k] for k in CONFIG_KEYS if k not in ("enabled", "interval_seconds", "hold", "fare"))
-            save_config(cfg)
-            if "enabled" in body and len(body) == 1:
-                event("info", "Watching resumed" if cfg["enabled"] else "Watching paused")
-            else:
-                event("info", "Trip settings updated")
-            if trip_changed:
-                with state_lock:
-                    state["sailings"] = []
-            wake.set()
-        elif self.path == "/api/hold/release":
-            watcher.release.set()
-            wake.set()
-        elif self.path == "/api/hold/dismiss":
-            with state_lock:
-                if state["hold"] and state["hold"]["status"] in ("failed", "closed"):
-                    state["hold"] = None
-        elif self.path == "/api/check":
-            wake.set()
-        elif self.path == "/api/test":
-            cfg = load_config()
-            try:
-                pushover("⛴ Ferry watch test", "Notifications are working. Tap to open the booking page.", url=booking_link(cfg))
-                event("info", "Test notification sent")
-            except Exception as e:  # noqa: BLE001
-                self._json({"error": str(e)}, 502)
-                return
-        else:
-            self.send_error(404)
-            return
-        self._json(api_state())
+    app = web.Application()
+    app.cleanup_ctx.append(broadcaster)
+    app.router.add_get("/healthz", healthz)
+    app.router.add_get("/api/state", get_state)
+    app.router.add_get("/api/terminals", get_terminals)
+    app.router.add_get("/api/ws", ws)
+    app.router.add_post("/api/{tail:.*}", post)
+    app.router.add_get("/{path:.*}", static)
+    return app
 
 
 def main() -> None:
-    if not CONFIG_PATH.exists():
-        save_config(DEFAULT_CONFIG)
+    if not CONFIG_PATH.exists() or "trips" not in json.loads(CONFIG_PATH.read_text() or "{}"):
+        save_config(load_config())  # create, or migrate a single-trip config
     if "--once" in sys.argv:
-        print(json.dumps(check(load_config()), indent=2))
+        print(json.dumps(check(load_config()["trips"][0]), indent=2))
         return
     event("info", "Watcher started")
     threading.Thread(target=watcher.run, daemon=True).start()
+    from aiohttp import web
+
     log(f"web UI on http://localhost:{PORT}")
-    ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
+    web.run_app(make_app(), host=HOST, port=PORT, print=None, access_log=None)
 
 
 if __name__ == "__main__":

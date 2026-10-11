@@ -1,7 +1,8 @@
 import * as Collapsible from "@radix-ui/react-collapsible";
 import { Car, ChevronRight, Footprints, Truck } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { api, type Config, type Fare, type Terminals, type Vehicle } from "@/lib/api";
+import { Trash2 } from "lucide-react";
+import { api, type Fare, type Terminals, type TripConfig, type Vehicle } from "@/lib/api";
 import { useStateMutation } from "@/lib/hooks";
 import { Button } from "./ui/button";
 import { Field, Input, Segmented, Stepper } from "./ui/controls";
@@ -9,7 +10,29 @@ import { Select } from "./ui/select";
 import { Sheet } from "./ui/sheet";
 import { Switch } from "./ui/switch";
 
-export const everyLabel = (sec: number) => (sec < 60 ? `${sec} seconds` : sec === 60 ? "1 minute" : `${Math.round(sec / 60)} minutes`);
+type Draft = Omit<TripConfig, "id">;
+
+const tomorrow = () => {
+  const d = new Date(Date.now() + 86400000);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+
+export const NEW_TRIP: Draft = {
+  enabled: true,
+  date: tomorrow(),
+  from: "SWB",
+  to: "TSA",
+  adults: 1,
+  children: 0,
+  infants: 0,
+  seniors: 0,
+  vehicle: "standard",
+  height_ft: 8,
+  earliest: "00:00",
+  latest: "23:59",
+  hold: true,
+  fare: "cheapest",
+};
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -23,27 +46,32 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 export function TripSheet({
   open,
   onOpenChange,
-  config,
+  trip,
   terminals,
   loginConfigured,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
-  config: Config;
+  /** the trip to edit, or null to add a new one */
+  trip: TripConfig | null;
   terminals?: Terminals;
   loginConfigured: boolean;
 }) {
-  const [d, setD] = useState<Config>(config);
+  const config: Draft = trip ?? { ...NEW_TRIP, date: tomorrow() };
+  const [d, setD] = useState<Draft>(config);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [morePax, setMorePax] = useState(false);
   useEffect(() => {
     if (open) {
       setD(config);
+      setConfirmDelete(false);
       setMorePax(config.children + config.infants + config.seniors > 0);
     }
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const save = useStateMutation((c: Config) => api.saveConfig(c), "Saved, checking now…");
-  const set = <K extends keyof Config>(k: K, v: Config[K]) => setD((p) => ({ ...p, [k]: v }));
+  const save = useStateMutation((c: Draft) => (trip ? api.updateTrip(trip.id, c) : api.addTrip(c)), trip ? "Trip saved" : "Trip added, opening a booking session…");
+  const remove = useStateMutation(() => api.deleteTrip(trip!.id), "Trip removed");
+  const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setD((p) => ({ ...p, [k]: v }));
 
   const byLabel = (a: string, b: string) => (terminals?.[a]?.label ?? a).localeCompare(terminals?.[b]?.label ?? b);
   const origins = useMemo(() => Object.keys(terminals ?? {}).filter((c) => terminals![c].dests.length).sort(byLabel), [terminals]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -59,10 +87,20 @@ export function TripSheet({
     <Sheet
       open={open}
       onOpenChange={onOpenChange}
-      title="Edit trip"
-      description="Changes take effect immediately and trigger a fresh check."
+      title={trip ? "Edit trip" : "Add a trip"}
+      description={trip ? "Changes take effect on the next check." : "Watch another route or date alongside your other trips."}
       footer={
         <>
+          {trip && (
+            <Button
+              variant="ghost"
+              className={confirmDelete ? "mr-auto text-danger hover:bg-danger-soft" : "mr-auto text-muted-foreground"}
+              onClick={() => (confirmDelete ? remove.mutate(undefined, { onSuccess: () => onOpenChange(false) }) : setConfirmDelete(true))}
+              disabled={remove.isPending}
+            >
+              <Trash2 /> {confirmDelete ? "Confirm remove" : "Remove"}
+            </Button>
+          )}
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
@@ -70,7 +108,7 @@ export function TripSheet({
             onClick={() => save.mutate(d, { onSuccess: () => onOpenChange(false) })}
             disabled={save.isPending}
           >
-            Save &amp; check
+            {trip ? "Save" : "Add trip"}
           </Button>
         </>
       }
@@ -176,17 +214,6 @@ export function TripSheet({
           )}
         </Section>
 
-        <Section title="Checks">
-          <Field label="Check every" hint="Checks reload the open sailings page, about 3 seconds each.">
-            <Select
-              value={String(d.interval_seconds)}
-              onValueChange={(v) => set("interval_seconds", Number(v))}
-              options={[...new Set([15, 30, 60, 120, 300, d.interval_seconds])]
-                .sort((a, b) => a - b)
-                .map((sec) => ({ value: String(sec), label: everyLabel(sec), hint: sec < 30 ? "Fastest, but busier on BC Ferries' site" : undefined }))}
-            />
-          </Field>
-        </Section>
       </div>
     </Sheet>
   );

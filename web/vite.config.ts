@@ -7,6 +7,6 @@ export default defineConfig({
   resolve: { alias: { "@": path.resolve(__dirname, "src") } },
   server: {
     // `npm run dev` talks to a watcher running locally (./run.sh).
-    proxy: { "/api": "http://localhost:8765" },
+    proxy: { "/api": { target: "http://localhost:8765", ws: true } },
   },
 });

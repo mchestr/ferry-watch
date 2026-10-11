@@ -1,12 +1,12 @@
-import { Bell, BellOff, Check, Globe, KeyRound, Loader2, MonitorPlay, RefreshCw, Send, ShoppingCart, X } from "lucide-react";
+import { Bell, BellOff, Check, Globe, KeyRound, Loader2, MonitorPlay, RefreshCw, Send, X } from "lucide-react";
 import { api, type State } from "@/lib/api";
 import { useNow, useStateMutation } from "@/lib/hooks";
 import { ago, clock, cn } from "@/lib/utils";
-import { everyLabel } from "./TripSheet";
 import { Button, LinkButton } from "./ui/button";
 import { Card, CardHeader, CardTitle } from "./ui/card";
+import { Select } from "./ui/select";
 
-const FARES: Record<string, string> = { cheapest: "cheapest fare", saver: "Saver", prepaid: "Prepaid", reservation: "Reservation Only" };
+export const everyLabel = (sec: number) => (sec < 60 ? `${sec} seconds` : sec === 60 ? "1 minute" : `${Math.round(sec / 60)} minutes`);
 
 function Ring({ fraction, children }: { fraction: number; children: React.ReactNode }) {
   const r = 34;
@@ -51,54 +51,66 @@ export function WatcherCard({ state, skew }: { state: State; skew: number }) {
   const now = useNow();
   const check = useStateMutation(() => api.check(), "Checking now…");
   const test = useStateMutation(() => api.test(), "Test notification sent");
-  const c = state.config;
+  const interval = useStateMutation((s: number) => api.saveSettings({ interval_seconds: s }), (s) => `Checking every ${everyLabel(s)}`);
 
-  const interval = c.interval_seconds;
+  const active = state.enabled ? state.trips.filter((t) => t.enabled) : [];
+  const polling = active.filter((t) => t.cart?.status !== "ready");
+  const sessions = state.trips.filter((t) => t.session).length;
   const left = state.next_check ? Math.max(0, Math.round(state.next_check - (now / 1000 - skew))) : 0;
-  const lastMs = state.last_check ? new Date(state.last_check).getTime() : null;
+  const lastMs = Math.max(0, ...state.trips.map((t) => (t.last_check ? new Date(t.last_check).getTime() : 0)));
 
-  const holding = state.hold?.status === "ready";
   let center: React.ReactNode;
-  if (holding) center = <ShoppingCart className="size-6 text-primary" />;
-  else if (state.checking) center = <Loader2 className="size-6 animate-spin text-primary" />;
-  else if (!c.enabled) center = <span className="text-xs font-semibold text-muted-foreground">Paused</span>;
-  else
+  let line: string;
+  if (state.checking) {
+    center = <Loader2 className="size-6 animate-spin text-primary" />;
+    line = "Checking now";
+  } else if (!polling.length) {
+    center = <span className="text-xs font-semibold text-muted-foreground">Paused</span>;
+    line = !state.enabled ? "Watching is off" : active.length ? "Waiting on held carts" : "No trips being watched";
+  } else {
     center = (
       <div className="text-center leading-none">
         <div className="tabular text-lg font-bold">{`${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`}</div>
         <div className="mt-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">next</div>
       </div>
     );
+    line = state.next_check ? `Next check at ${clock((state.next_check + skew) * 1000)}` : "Starting up";
+  }
 
   return (
     <Card>
       <CardHeader>
         <CardTitle>Watcher</CardTitle>
-        <Button variant="outline" size="sm" onClick={() => check.mutate(undefined)} disabled={state.checking || check.isPending || holding}>
+        <Button variant="outline" size="sm" onClick={() => check.mutate(undefined)} disabled={state.checking || check.isPending || !polling.length}>
           <RefreshCw className={cn(state.checking && "animate-spin")} /> Check now
         </Button>
       </CardHeader>
       <div className="flex items-center gap-4 px-5 pb-4">
-        <Ring fraction={holding || state.checking ? 1 : c.enabled && interval ? 1 - left / interval : 0}>{center}</Ring>
+        <Ring fraction={state.checking || !polling.length ? (state.checking ? 1 : 0) : 1 - left / state.interval_seconds}>{center}</Ring>
         <div className="min-w-0 space-y-1 text-sm">
-          <div className="font-medium">
-            {holding ? "Paused while your cart is held" : state.checking ? "Checking now" : c.enabled && state.next_check ? `Next check at ${clock((state.next_check + skew) * 1000)}` : c.enabled ? "Starting up" : "Automatic checks paused"}
+          <div className="font-medium">{line}</div>
+          <div className="text-muted-foreground">
+            {polling.length} of {state.trips.length} trip{state.trips.length === 1 ? "" : "s"} active
           </div>
-          <div className="text-muted-foreground">Every {everyLabel(c.interval_seconds)}</div>
           <div className="text-muted-foreground">{lastMs ? `Updated ${ago(lastMs, now)}` : "Not checked yet"}</div>
         </div>
       </div>
+      <div className="border-t px-5 py-3">
+        <div className="mb-1.5 text-[13px] font-medium text-foreground/80">Check every</div>
+        <Select
+          value={String(state.interval_seconds)}
+          onValueChange={(v) => interval.mutate(Number(v))}
+          options={[...new Set([15, 30, 60, 120, 300, state.interval_seconds])]
+            .sort((a, b) => a - b)
+            .map((sec) => ({ value: String(sec), label: everyLabel(sec), hint: sec < 30 ? "Fastest, but busier on BC Ferries' site" : undefined }))}
+        />
+        <p className="mt-1.5 text-xs text-muted-foreground">Each trip reloads its open sailings page, about 3 seconds per trip.</p>
+      </div>
       <div className="border-t px-5 py-2">
         <ul className="divide-y divide-border/70">
-          <Row
-            ok={!!state.session}
-            icon={<Globe />}
-            label="Live booking session"
-            detail={state.session ? `Open since ${clock((state.session.since + skew) * 1000)}${state.session.logged_in ? ", logged in" : ""}` : "Opens on the next check"}
-          />
+          <Row ok={sessions > 0} icon={<Globe />} label="Booking sessions" detail={sessions ? `${sessions} open in the live browser` : "Open on the next check"} />
           <Row ok={state.pushover} icon={state.pushover ? <Bell /> : <BellOff />} label="Pushover alerts" detail={state.pushover ? "Phone alerts with a booking link" : "Not configured"} />
-          <Row ok={state.login} icon={<KeyRound />} label="BC Ferries login" detail={state.login ? "Used only to fill the cart" : "Not configured"} />
-          <Row ok={c.hold && state.login} icon={<ShoppingCart />} label="Auto-cart" detail={c.hold ? `Holds the ${FARES[c.fare] ?? c.fare}` : "Off"} />
+          <Row ok={state.login} icon={<KeyRound />} label="BC Ferries login" detail={state.login ? "Used only for auto-cart" : "Not configured, auto-cart off"} />
         </ul>
       </div>
       <div className="flex gap-2 border-t px-5 py-3">

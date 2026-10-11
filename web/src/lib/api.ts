@@ -1,7 +1,8 @@
 export type Vehicle = "standard" | "tall" | "none";
 export type Fare = "cheapest" | "saver" | "prepaid" | "reservation";
 
-export interface Config {
+export interface TripConfig {
+  id: string;
   enabled: boolean;
   date: string;
   from: string;
@@ -14,9 +15,19 @@ export interface Config {
   height_ft: number;
   earliest: string;
   latest: string;
-  interval_seconds: number;
   hold: boolean;
   fare: Fare;
+}
+
+export interface Trip extends TripConfig {
+  /** runtime state of the trip's cart (TripConfig.hold is the auto-cart setting) */
+  sailings: Sailing[];
+  last_check: string | null;
+  last_error: string | null;
+  session: { since: number; logged_in: boolean } | null;
+  cart: Hold | null;
+  checking: boolean;
+  booking_link: string;
 }
 
 export interface Sailing {
@@ -42,23 +53,21 @@ export interface ActivityEvent {
   ts: number;
   kind: "info" | "alert" | "cart" | "error";
   text: string;
+  trip: string | null;
 }
 
 export interface State {
-  config: Config;
+  enabled: boolean;
+  interval_seconds: number;
+  trips: Trip[];
   checking: boolean;
-  last_check: string | null;
-  last_error: string | null;
   next_check: number | null;
   now: number;
-  sailings: Sailing[];
-  booking_link: string;
-  hold: Hold | null;
-  session: { since: number; logged_in: boolean } | null;
   events: ActivityEvent[];
   vnc_url: string;
   login: boolean;
   pushover: boolean;
+  max_trips: number;
 }
 
 export interface Terminal {
@@ -83,9 +92,12 @@ async function request<T>(path: string, body?: unknown): Promise<T> {
 export const api = {
   state: () => request<State>("/api/state"),
   terminals: () => request<Terminals>("/api/terminals"),
-  saveConfig: (patch: Partial<Config>) => request<State>("/api/config", patch),
+  saveSettings: (patch: { enabled?: boolean; interval_seconds?: number }) => request<State>("/api/settings", patch),
+  addTrip: (trip: Partial<TripConfig>) => request<State>("/api/trips", trip),
+  updateTrip: (id: string, patch: Partial<TripConfig>) => request<State>(`/api/trips/${id}`, patch),
+  deleteTrip: (id: string) => request<State>(`/api/trips/${id}/delete`, {}),
+  releaseCart: (id: string) => request<State>(`/api/trips/${id}/release`, {}),
+  dismissCart: (id: string) => request<State>(`/api/trips/${id}/dismiss`, {}),
   check: () => request<State>("/api/check", {}),
   test: () => request<State>("/api/test", {}),
-  dismissHold: () => request<State>("/api/hold/dismiss", {}),
-  releaseHold: () => request<State>("/api/hold/release", {}),
 };

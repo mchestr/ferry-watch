@@ -1,19 +1,18 @@
 import * as Tabs from "@radix-ui/react-tabs";
 import { Ship } from "lucide-react";
 import { useState } from "react";
-import type { Sailing, State } from "@/lib/api";
+import type { Sailing, Trip } from "@/lib/api";
 import { cn, duration } from "@/lib/utils";
 import { Badge } from "./ui/badge";
-import { Card, CardHeader, CardTitle } from "./ui/card";
 
-type Filter = "window" | "all" | "bookable";
+type Filter = "all" | "window" | "bookable";
 
 function SailingRow({ s }: { s: Sailing }) {
   const ok = s.status === "available";
   const out = s.in_window === false;
   return (
-    <li className={cn("grid grid-cols-[76px_minmax(0,1fr)_auto] items-center gap-3 rounded-xl px-3 py-3 sm:grid-cols-[96px_minmax(0,1fr)_auto] sm:gap-4", ok && !out && "bg-success-soft", out && "opacity-50")}>
-      <div className="tabular text-[15px] font-bold tracking-tight sm:text-[17px]">{s.depart}</div>
+    <li className={cn("grid grid-cols-[72px_minmax(0,1fr)_auto] items-center gap-3 rounded-xl px-3 py-2.5 sm:grid-cols-[92px_minmax(0,1fr)_auto] sm:gap-4", ok && !out && "bg-success-soft", out && "opacity-50")}>
+      <div className="tabular text-[15px] font-bold tracking-tight sm:text-base">{s.depart}</div>
       <div className="min-w-0">
         <div className="truncate text-sm font-medium">{s.vessel}</div>
         <div className="tabular truncate text-xs text-muted-foreground">
@@ -36,9 +35,9 @@ function SailingRow({ s }: { s: Sailing }) {
   );
 }
 
-export function SailingsCard({ state }: { state: State }) {
+export function SailingsList({ trip }: { trip: Trip }) {
   const [filter, setFilter] = useState<Filter>("all");
-  const all = state.sailings;
+  const all = trip.sailings;
   const lists: Record<Filter, Sailing[]> = {
     all,
     window: all.filter((s) => s.in_window !== false),
@@ -47,14 +46,11 @@ export function SailingsCard({ state }: { state: State }) {
   const shown = lists[filter];
 
   return (
-    <Card>
-      <CardHeader className="flex-wrap">
-        <div>
-          <CardTitle>Sailings</CardTitle>
-          <p className="text-[13px] text-muted-foreground">
-            {all.length ? `${lists.bookable.length} of ${all.length} bookable` : "Results appear after the first check"}
-          </p>
-        </div>
+    <div className="border-t">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-5 pb-2 pt-4 sm:px-6">
+        <span className="text-[13px] font-medium text-muted-foreground">
+          {lists.bookable.length} of {all.length} bookable
+        </span>
         <Tabs.Root value={filter} onValueChange={(v) => setFilter(v as Filter)}>
           <Tabs.List className="inline-flex rounded-lg border bg-muted p-0.5 text-[13px]">
             {(
@@ -67,7 +63,7 @@ export function SailingsCard({ state }: { state: State }) {
               <Tabs.Trigger
                 key={v}
                 value={v}
-                className="h-7 rounded-md px-3 font-medium text-muted-foreground data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-sm"
+                className="h-7 rounded-md px-2.5 font-medium text-muted-foreground data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-sm sm:px-3"
               >
                 {l}
                 <span className="tabular ml-1.5 text-xs text-muted-foreground">{lists[v].length}</span>
@@ -75,21 +71,21 @@ export function SailingsCard({ state }: { state: State }) {
             ))}
           </Tabs.List>
         </Tabs.Root>
-      </CardHeader>
-      <div className="px-2 pb-2 sm:px-3 sm:pb-3">
+      </div>
+      <div className="px-2 pb-3 sm:px-3">
         {shown.length ? (
-          <ul className="divide-y divide-border/70 [&>li.bg-success-soft]:border-transparent">
+          <ul className="divide-y divide-border/70">
             {shown.map((s) => (
               <SailingRow key={s.depart} s={s} />
             ))}
           </ul>
         ) : (
-          <div className="flex flex-col items-center gap-2 px-6 py-12 text-center text-sm text-muted-foreground">
-            <Ship className="size-8 text-muted-foreground/50" />
-            {state.checking && !all.length ? "Fetching sailings from BC Ferries…" : filter === "bookable" ? "Nothing bookable yet. You'll get an alert when that changes." : "No sailings to show"}
+          <div className="flex flex-col items-center gap-2 px-6 py-8 text-center text-sm text-muted-foreground">
+            <Ship className="size-7 text-muted-foreground/50" />
+            {filter === "bookable" ? "Nothing bookable yet. You'll get an alert when that changes." : "No sailings to show"}
           </div>
         )}
       </div>
-    </Card>
+    </div>
   );
 }

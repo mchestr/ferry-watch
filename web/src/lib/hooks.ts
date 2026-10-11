@@ -3,14 +3,57 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { api, type State } from "./api";
 
-export function useAppState() {
+export function useAppState(live: boolean) {
   return useQuery({
     queryKey: ["state"],
     queryFn: api.state,
-    // Poll fast while a check is running so results appear as soon as they land.
-    refetchInterval: (q) => (q.state.data?.checking ? 1500 : 4000),
+    // The WebSocket pushes every change; poll only while it's disconnected.
+    refetchInterval: live ? false : 5000,
     refetchIntervalInBackground: false,
   });
+}
+
+/** Keeps the ["state"] query current from the server's WebSocket push. Returns whether it's connected. */
+export function useLiveUpdates() {
+  const qc = useQueryClient();
+  const [live, setLive] = useState(false);
+  useEffect(() => {
+    let ws: WebSocket | null = null;
+    let retry = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let stopped = false;
+    const connect = () => {
+      ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/api/ws`);
+      ws.onopen = () => {
+        retry = 0;
+        setLive(true);
+      };
+      ws.onmessage = (e) => qc.setQueryData(["state"], JSON.parse(e.data) as State);
+      ws.onclose = () => {
+        setLive(false);
+        if (!stopped) timer = setTimeout(connect, Math.min(15000, 1000 * 2 ** retry++));
+      };
+      ws.onerror = () => ws?.close();
+    };
+    connect();
+    // Phones suspend sockets in the background; reconnect straight away on return.
+    const onVisible = () => {
+      if (document.visibilityState === "visible" && ws?.readyState !== WebSocket.OPEN) {
+        clearTimeout(timer);
+        retry = 0;
+        ws?.close();
+        connect();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+      ws?.close();
+    };
+  }, [qc]);
+  return live;
 }
 
 export function useTerminals() {

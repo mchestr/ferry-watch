@@ -15,7 +15,7 @@ RUN apt-get update \
     && chmod 1777 /tmp/.X11-unix \
     && ln -s /usr/share/novnc /opt/web/vnc \
     && chown pwuser:pwuser /config \
-    && pip install --no-cache-dir --break-system-packages playwright==1.56.0
+    && pip install --no-cache-dir --break-system-packages playwright==1.56.0 aiohttp==3.10.10
 
 WORKDIR /app
 COPY watch.py entrypoint.sh ./

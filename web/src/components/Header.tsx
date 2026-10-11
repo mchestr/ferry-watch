@@ -1,13 +1,14 @@
 import { Monitor, Moon, Sun } from "lucide-react";
 import { api, type State } from "@/lib/api";
 import { useStateMutation, useTheme } from "@/lib/hooks";
+import { cn } from "@/lib/utils";
 import { Button } from "./ui/button";
 import { Switch } from "./ui/switch";
 import { Tooltip } from "./ui/tooltip";
 
-export function Header({ state }: { state?: State }) {
+export function Header({ state, live }: { state?: State; live: boolean }) {
   const [theme, setTheme] = useTheme();
-  const toggle = useStateMutation((enabled: boolean) => api.saveConfig({ enabled }), (on) => (on ? "Watching resumed" : "Watching paused"));
+  const toggle = useStateMutation((enabled: boolean) => api.saveSettings({ enabled }), (on) => (on ? "Watching resumed" : "Watching paused"));
   const next = theme === "system" ? "light" : theme === "light" ? "dark" : "system";
   const ThemeIcon = theme === "system" ? Monitor : theme === "light" ? Sun : Moon;
 
@@ -17,12 +18,23 @@ export function Header({ state }: { state?: State }) {
         <div className="flex items-center gap-2.5">
           <img src="/favicon.svg" alt="" className="size-8" />
           <span className="text-[17px] font-bold tracking-tight">Ferry Watch</span>
+          <Tooltip content={live ? "Updates arrive in real time" : "Reconnecting, falling back to polling"}>
+            <span
+              className={cn(
+                "ml-1 hidden items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide sm:inline-flex",
+                live ? "bg-success-soft text-success" : "bg-warning-soft text-warning",
+              )}
+            >
+              <span className={cn("size-1.5 rounded-full", live ? "bg-success animate-pulse-ring" : "bg-warning")} />
+              {live ? "Live" : "Reconnecting"}
+            </span>
+          </Tooltip>
         </div>
         <div className="flex items-center gap-2">
           {state && (
             <label className="flex h-9 cursor-pointer items-center gap-2.5 rounded-full border bg-card pl-3.5 pr-1.5 text-[13px] font-medium shadow-sm">
-              {state.config.enabled ? "Watching" : "Paused"}
-              <Switch checked={state.config.enabled} onCheckedChange={(v) => toggle.mutate(v)} disabled={toggle.isPending} />
+              {state.enabled ? "Watching" : "Paused"}
+              <Switch checked={state.enabled} onCheckedChange={(v) => toggle.mutate(v)} disabled={toggle.isPending} />
             </label>
           )}
           <Tooltip content={`Theme: ${theme}`}>

@@ -13,17 +13,22 @@ To work on the frontend, keep `./run.sh` running and start the Vite dev server
 with `cd web && npm run dev`. It proxies `/api` to the watcher. The stack is
 React, TypeScript, Vite, Tailwind, Radix UI and TanStack Query.
 
-Edit the date, route, passengers, vehicle and time window in the web UI. The
-settings are stored in `config.json`. You get one alert for each sailing that
+Add up to six trips in the web UI, each with its own route, date, passengers,
+vehicle, time window and auto-cart setting. The trips are stored in
+`config.json`. The page gets updates over a WebSocket (`/api/ws`) and falls
+back to polling if the socket drops. You get one alert for each sailing that
 becomes bookable. If that sailing sells out and reopens, you get alerted again.
 After 3 failed checks in a row you also get a notification. The page from the
 last failure is saved to `last-error.png`.
 
 The site is behind Queue-it, so the watcher drives a real Chromium. It keeps one
-browser open: it walks the booking form once, then polls by reloading the
-`/fare-selection` page, about 3 seconds per check, every 30 seconds by default.
+browser open with a separate session for each trip, because BC Ferries keeps the
+search in the session. Each session walks the booking form once. After that the
+watcher polls by reloading that trip's `/fare-selection` page, about 3 seconds
+per trip, every 30 seconds by default.
 When a sailing in your window opens and auto-cart is on, that same page picks
-the fare straight away. Polling pauses until you release the cart from the UI.
+the fare straight away. That trip pauses until you release the cart from the UI,
+and the other trips keep checking.
 Releasing also empties the BC Ferries cart.
 
 The link in the notification opens the booking form with the route and date
