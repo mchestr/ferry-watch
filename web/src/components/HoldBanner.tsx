@@ -1,4 +1,4 @@
-import { AlertTriangle, Loader2, MonitorSmartphone, ShoppingCart, X } from "lucide-react";
+import { AlertTriangle, Loader2, MonitorSmartphone, RotateCcw, ShoppingCart, X } from "lucide-react";
 import { api, type State } from "@/lib/api";
 import { useStateMutation } from "@/lib/hooks";
 import { cn } from "@/lib/utils";
@@ -6,6 +6,7 @@ import { Button, LinkButton } from "./ui/button";
 
 export function HoldBanner({ state }: { state: State }) {
   const dismiss = useStateMutation(() => api.dismissHold());
+  const release = useStateMutation(() => api.releaseHold(), "Cart released, watching resumes");
   const h = state.hold;
   if (!h || h.status === "closed") return null;
 
@@ -31,17 +32,24 @@ export function HoldBanner({ state }: { state: State }) {
             {h.status === "adding" && "Logging in to BC Ferries and selecting your fare."}
             {h.status === "ready" && (
               <>
-                {h.fare} {h.price} · Finish checkout in the {state.vnc_url ? "checkout browser" : "browser window on the host"}. Nothing is booked until you pay.
+                {h.fare} {h.price} · Finish checkout in the {state.vnc_url ? "checkout browser" : "browser window on the host"}. Nothing is booked until you pay. Checks are paused until you release the cart.
               </>
             )}
             {failed && h.error}
           </p>
         </div>
       </div>
-      {h.status === "ready" && state.vnc_url && (
-        <LinkButton size="lg" href={state.vnc_url} target="_blank" rel="noopener" className="w-full sm:w-auto">
-          <MonitorSmartphone /> Open checkout
-        </LinkButton>
+      {h.status === "ready" && (
+        <div className="flex w-full flex-col-reverse gap-2 sm:w-auto sm:flex-row">
+          <Button variant="outline" size="lg" onClick={() => release.mutate(undefined)} disabled={release.isPending}>
+            <RotateCcw /> Release &amp; resume
+          </Button>
+          {state.vnc_url && (
+            <LinkButton size="lg" href={state.vnc_url} target="_blank" rel="noopener">
+              <MonitorSmartphone /> Open checkout
+            </LinkButton>
+          )}
+        </div>
       )}
       {failed && (
         <Button variant="ghost" size="sm" onClick={() => dismiss.mutate(undefined)} className="self-end sm:self-auto">

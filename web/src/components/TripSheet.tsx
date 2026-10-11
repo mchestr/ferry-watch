@@ -9,6 +9,8 @@ import { Select } from "./ui/select";
 import { Sheet } from "./ui/sheet";
 import { Switch } from "./ui/switch";
 
+export const everyLabel = (sec: number) => (sec < 60 ? `${sec} seconds` : sec === 60 ? "1 minute" : `${Math.round(sec / 60)} minutes`);
+
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="space-y-4">
@@ -175,11 +177,13 @@ export function TripSheet({
         </Section>
 
         <Section title="Checks">
-          <Field label="Check every">
+          <Field label="Check every" hint="Checks reload the open sailings page, about 3 seconds each.">
             <Select
-              value={String(d.interval_minutes)}
-              onValueChange={(v) => set("interval_minutes", Number(v))}
-              options={[2, 5, 10, 15, 30, ...(([2, 5, 10, 15, 30].includes(d.interval_minutes) ? [] : [d.interval_minutes]))].map((m) => ({ value: String(m), label: `${m} minutes` }))}
+              value={String(d.interval_seconds)}
+              onValueChange={(v) => set("interval_seconds", Number(v))}
+              options={[...new Set([15, 30, 60, 120, 300, d.interval_seconds])]
+                .sort((a, b) => a - b)
+                .map((sec) => ({ value: String(sec), label: everyLabel(sec), hint: sec < 30 ? "Fastest, but busier on BC Ferries' site" : undefined }))}
             />
           </Field>
         </Section>

@@ -56,7 +56,7 @@ DEFAULT_CONFIG = {
     "height_ft": 8,  # only used when vehicle == "tall"
     "earliest": "00:00",
     "latest": "23:59",
-    "interval_minutes": 5,
+    "interval_seconds": 30,
     "hold": True,  # add the sailing to the cart in a visible browser on this Mac
     "fare": "cheapest",  # cheapest | saver | prepaid | reservation
 }
@@ -76,6 +76,7 @@ state: dict = {
     "checking": False,
     "next_check": None,  # epoch seconds
     "events": deque(maxlen=60),  # activity feed: {"ts", "kind", "text"}
+    "session": None,  # {"since", "logged_in"} for the live browser session
     "hold": None,  # {"status": "adding"|"ready"|"failed"|"closed", "depart", "fare", "price", "at", "error"}
 }
 wake = threading.Event()
@@ -89,6 +90,7 @@ def load_config() -> dict:
     cfg = dict(DEFAULT_CONFIG)  # fills in keys added since the file was written
     if CONFIG_PATH.exists():
         cfg.update(json.loads(CONFIG_PATH.read_text()))
+    cfg.pop("interval_minutes", None)  # replaced by interval_seconds
     return cfg
 
 
@@ -326,74 +328,245 @@ def choose_fare(pg, preference: str) -> tuple[str, str]:
     return pick["name"], pick["price"]
 
 
-def hold_worker(cfg: dict, sailing: dict) -> None:
-    """Add `sailing` to the cart in a visible browser, then leave it open for checkout."""
-    from playwright.sync_api import sync_playwright
+TRIP_KEYS = ("date", "from", "to", "adults", "children", "infants", "seniors", "vehicle", "height_ft")
+FARE_SELECTION = "https://www.bcferries.com/fare-selection"
 
-    def set_hold(**kw):
-        with state_lock:
-            state["hold"] = {**(state["hold"] or {}), **kw}
 
-    set_hold(status="adding", depart=sailing["depart"], date=cfg["date"], fare=None, price=None, at=time.time(), error=None)
-    with sync_playwright() as p:
+def have_login() -> bool:
+    return bool(os.environ.get("BCF_USER") and os.environ.get("BCF_PASS"))
+
+
+def set_hold(**kw) -> None:
+    with state_lock:
+        state["hold"] = {**(state["hold"] or {}), **kw}
+
+
+class Watcher:
+    """Owns one long-lived browser (headed, so it can be watched over VNC).
+
+    It walks the booking form once, then polls by reloading the fare-selection page,
+    which takes ~3s instead of ~30s. When a sailing opens it's added to the cart on
+    that same page, and polling pauses until the cart is released.
+    """
+
+    def __init__(self) -> None:
+        self.browser = None
+        self.ctx = None
+        self.pg = None
+        self.session_key = None
+        self.release = threading.Event()
+
+    # ---- browser/session lifecycle
+
+    def ensure_browser(self) -> None:
+        if self.browser and self.browser.is_connected():
+            return
         size = os.environ.get("BCF_WINDOW_SIZE", "1280,1000")
-        browser = p.chromium.launch(headless=False, args=[f"--window-size={size}", "--window-position=0,0"])
-        pg = browser.new_page(user_agent=UA, no_viewport=True)
-        pg.set_default_timeout(60_000)
+        self.browser = self.p.chromium.launch(
+            headless=os.environ.get("BCF_HEADLESS") == "1",
+            args=[f"--window-size={size}", "--window-position=0,0"],
+        )
+        self.ctx = self.pg = None
+
+    def close_session(self) -> None:
+        if self.ctx:
+            try:
+                self.ctx.close()
+            except Exception:  # noqa: BLE001
+                pass
+        self.ctx = self.pg = self.session_key = None
+        with state_lock:
+            state["session"] = None
+
+    def open_session(self, cfg: dict, key) -> None:
+        self.close_session()
+        self.ctx = self.browser.new_context(user_agent=UA, no_viewport=True)
+        self.pg = self.ctx.new_page()
+        self.pg.set_default_timeout(60_000)
+        logged_in = bool(cfg["hold"] and have_login())
+        if logged_in:
+            login(self.pg)
+        goto_sailings(self.pg, cfg)
+        self.session_key = key
+        with state_lock:
+            state["session"] = {"since": time.time(), "logged_in": logged_in}
+        event("info", "Opened a booking session" + (" (logged in)" if logged_in else ""))
+
+    def page_alive(self) -> bool:
         try:
-            if os.environ.get("BCF_USER") and os.environ.get("BCF_PASS"):
-                login(pg)
-            goto_sailings(pg, cfg)
+            return bool(self.pg) and not self.pg.is_closed() and bool(self.pg.title() is not None)
+        except Exception:  # noqa: BLE001
+            return False
+
+    # ---- main loop
+
+    def run(self) -> None:
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as p:
+            self.p = p
+            while True:
+                cfg = load_config()
+                if self.holding():
+                    self.wait_for_release()
+                    continue
+                if cfg["enabled"]:
+                    self.poll(cfg)
+                    if self.holding():
+                        continue  # go straight to waiting on the cart
+                else:
+                    self.close_session()
+                delay = max(15, int(cfg["interval_seconds"])) * random.uniform(0.85, 1.15)
+                with state_lock:
+                    state["next_check"] = time.time() + delay if cfg["enabled"] else None
+                wake.wait(delay)
+                wake.clear()
+
+    def holding(self) -> bool:
+        with state_lock:
+            h = state["hold"]
+        return bool(h and h["status"] == "ready")
+
+    def wait_for_release(self) -> None:
+        with state_lock:
+            state["next_check"] = None
+        while not self.release.is_set() and self.page_alive():
+            wake.wait(5)
+            wake.clear()
+        if self.release.is_set() and self.page_alive():
+            # Released from the UI: empty the cart so the spot goes back right away.
+            try:
+                self.pg.goto("https://www.bcferries.com/abandoned-cart/my-account", timeout=30_000)
+            except Exception:  # noqa: BLE001
+                pass
+        self.release.clear()
+        set_hold(status="closed")
+        event("info", "Cart released, watching resumed")
+        self.close_session()  # the cart lives in this session; a fresh one starts clean
+
+    def poll(self, cfg: dict) -> None:
+        key = tuple(cfg[k] for k in TRIP_KEYS) + (bool(cfg["hold"] and have_login()),)
+        with state_lock:
+            state["checking"] = True
+        try:
+            self.ensure_browser()
+            if self.session_key != key or not self.page_alive():
+                self.open_session(cfg, key)
+            else:
+                self.pg.goto(FARE_SELECTION, wait_until="load", timeout=60_000)
+                try:
+                    self.pg.wait_for_selector(".p-card", timeout=20_000)
+                except Exception:  # noqa: BLE001
+                    # Session expired, Queue-it, or redirected home: walk the form again.
+                    self.open_session(cfg, key)
+            sailings = [s for c in self.pg.locator(".p-card").all() if (s := parse_card(c))]
+            if not sailings:
+                raise RuntimeError("Reached the sailings page but found no sailings")
+            self.process(cfg, sailings)
+        except Exception as e:  # noqa: BLE001
+            traceback.print_exc()
+            if self.pg:
+                save_failure(self.pg)
+            self.close_session()
+            with state_lock:
+                state["last_error"] = f"{datetime.now():%H:%M:%S} {type(e).__name__}: {e}"
+                state["consecutive_errors"] += 1
+                n = state["consecutive_errors"]
+            event("error", f"Check failed: {type(e).__name__}: {e}"[:200])
+            if n == 3:
+                pushover("⛴ Ferry watcher failing", f"3 checks in a row failed:\n{e}"[:1000])
+        finally:
+            with state_lock:
+                state["checking"] = False
+
+    # ---- results
+
+    def process(self, cfg: dict, sailings: list[dict]) -> None:
+        key = (cfg["date"], cfg["from"], cfg["to"])
+        for s in sailings:
+            s["in_window"] = in_window(cfg, s)
+        with state_lock:
+            notified = set(state["notified"])
+            prev = {x["depart"]: x["status"] for x in state["sailings"]}
+        new = [s for s in sailings if s["status"] == "available" and s["in_window"] and key + (s["depart"],) not in notified]
+
+        held = self.hold(cfg, new[0]) if new and cfg["hold"] else None
+        if new:
+            self.alert(cfg, new, held)
+
+        gone = [s["depart"] for s in sailings if prev.get(s["depart"]) == "available" and s["status"] != "available"]
+        with state_lock:
+            for s in new:
+                state["notified"].add(key + (s["depart"],))
+            # Forget sailings that sold out again so we re-alert if they reopen.
+            for s in sailings:
+                if s["status"] != "available":
+                    state["notified"].discard(key + (s["depart"],))
+            state.update(sailings=sailings, last_check=datetime.now(), last_error=None, consecutive_errors=0)
+        if gone:
+            event("info", f"Sold out again: {', '.join(gone)}")
+        avail = [s["depart"] for s in sailings if s["status"] == "available" and s["in_window"]]
+        log(f"{cfg['date']} {cfg['from']}->{cfg['to']}: {len(sailings)} sailings, bookable in window: {avail or 'none'}")
+
+    def hold(self, cfg: dict, sailing: dict) -> tuple[str, str] | None:
+        """Add `sailing` to the cart on the already-open fare-selection page."""
+        set_hold(status="adding", depart=sailing["depart"], date=cfg["date"], fare=None, price=None, at=time.time(), error=None)
+        try:
             card = next(
-                (c for c in pg.locator(".p-card").all()
+                (c for c in self.pg.locator(".p-card").all()
                  if (s := parse_card(c)) and s["depart"] == sailing["depart"] and s["status"] == "available"),
                 None,
             )
             if card is None:
                 raise RuntimeError(f'{sailing["depart"]} is no longer bookable')
             card.locator("button:has-text('View fares')").click()
-            fare, price = choose_fare(pg, cfg.get("fare", "cheapest"))
+            fare, price = choose_fare(self.pg, cfg.get("fare", "cheapest"))
             set_hold(status="ready", fare=fare, price=price, at=time.time())
             event("cart", f"{sailing['depart']} added to the cart ({fare} {price})")
-            pg.bring_to_front()
-            day = datetime.strptime(cfg["date"], "%Y-%m-%d").strftime("%a %b %-d")
-            log(f"holding {day} {sailing['depart']} ({fare} {price}) in cart")
-            mac_notify("Ferry in your cart", f"{day} {sailing['depart']}: finish checkout in the browser window")
-            where = "Tap to open the checkout browser" if VNC_URL else "Finish checkout in the browser window on your Mac"
-            pushover(
-                f"🛒 In your cart: {sailing['depart']}",
-                f"{day} {sailing['depart']}, {fare} {price}.\n{where}. Booking isn't confirmed until you pay.",
-                url=VNC_URL or None,
-                url_title="Open checkout",
-                priority=1,
-            )
-            # Keep the window (and the cart's session) alive until it's closed, at most 3 hours.
-            pg.wait_for_event("close", timeout=3 * 3600 * 1000)
-            set_hold(status="closed")
-        except Exception as e:  # noqa: BLE001
-            if browser.is_connected() and not pg.is_closed():
-                save_failure(pg)
-                traceback.print_exc()
-                set_hold(status="failed", error=f"{type(e).__name__}: {e}"[:300])
-                event("error", f"Couldn't add {sailing['depart']} to the cart: {e}"[:200])
-                pushover("⛴ Couldn't add to cart", f"{sailing['depart']}: {e}"[:500] + "\nBook it on your phone instead.")
-            else:
-                set_hold(status="closed")
-        finally:
+            log(f"holding {cfg['date']} {sailing['depart']} ({fare} {price}) in cart")
             try:
-                browser.close()
+                self.pg.bring_to_front()
             except Exception:  # noqa: BLE001
                 pass
+            mac_notify("Ferry in your cart", f"{sailing['depart']}: finish checkout in the browser window")
+            return fare, price
+        except Exception as e:  # noqa: BLE001
+            traceback.print_exc()
+            save_failure(self.pg)
+            set_hold(status="failed", error=f"{type(e).__name__}: {e}"[:300])
+            event("error", f"Couldn't add {sailing['depart']} to the cart: {e}"[:200])
+            self.close_session()
+            return None
+
+    def alert(self, cfg: dict, new: list[dict], held: tuple[str, str] | None) -> None:
+        t = terminals()
+        day = datetime.strptime(cfg["date"], "%Y-%m-%d").strftime("%a %b %-d")
+        route = f'{t[cfg["from"]]["short"]} → {t[cfg["to"]]["short"]}'
+        times = ", ".join(f'{s["depart"]} ({s["price"]})' if s["price"] else s["depart"] for s in new)
+        if held:
+            fare, price = held
+            others = ", ".join(s["depart"] for s in new[1:])
+            where = "Tap to finish checkout" if VNC_URL else "Finish checkout in the browser window"
+            pushover(
+                f"🛒 {new[0]['depart']} is in your cart",
+                f"{day} · {route}\n{fare} {price}" + (f"\nAlso bookable: {others}" if others else "")
+                + f"\n\n{where}. Nothing is booked until you pay.",
+                url=VNC_URL or booking_link(cfg),
+                url_title="Open checkout" if VNC_URL else "Book on bcferries.com",
+                priority=1,
+            )
+        else:
+            failed = " (couldn't add it to the cart)" if cfg["hold"] else ""
+            pushover(
+                f"⛴ Ferry space: {day}",
+                f"{route}\nBookable: {times}{failed}\n\n{booking_steps(cfg, new[0])}",
+                url=booking_link(cfg),
+                priority=1,
+            )
+        event("alert", f"Bookable: {times} · alert sent")
 
 
-def maybe_hold(cfg: dict, sailing: dict) -> None:
-    if not cfg.get("hold"):
-        return
-    with state_lock:
-        h = state["hold"]
-        if h and h["status"] in ("adding", "ready"):
-            return  # one cart window at a time
-    threading.Thread(target=hold_worker, args=(cfg, sailing), daemon=True).start()
+watcher = Watcher()
 
 
 def mac_notify(title: str, message: str) -> None:
@@ -439,73 +612,6 @@ def in_window(cfg: dict, s: dict) -> bool:
     return to_minutes(cfg["earliest"]) <= m <= to_minutes(cfg["latest"])
 
 
-def run_once() -> None:
-    cfg = load_config()
-    with state_lock:
-        state["checking"] = True
-    try:
-        sailings = check(cfg)
-        for s in sailings:
-            s["in_window"] = in_window(cfg, s)
-        t = terminals()
-        new = [
-            s
-            for s in sailings
-            if s["status"] == "available"
-            and s["in_window"]
-            and (cfg["date"], cfg["from"], cfg["to"], s["depart"]) not in state["notified"]
-        ]
-        if new:
-            day = datetime.strptime(cfg["date"], "%Y-%m-%d").strftime("%a %b %-d")
-            times = ", ".join(f'{s["depart"]} ({s["price"]})' if s["price"] else s["depart"] for s in new)
-            pushover(
-                f"⛴ Ferry space: {day}",
-                f'{t[cfg["from"]]["short"]} → {t[cfg["to"]]["short"]}\nBookable: {times}\n\n{booking_steps(cfg, new[0])}',
-                url=booking_link(cfg),
-                priority=1,
-            )
-            event("alert", f"Bookable: {times} · alert sent")
-            maybe_hold(cfg, new[0])
-        with state_lock:
-            prev = {x["depart"]: x["status"] for x in state["sailings"]}
-            for s in new:
-                state["notified"].add((cfg["date"], cfg["from"], cfg["to"], s["depart"]))
-            # Forget sailings that sold out again so we re-alert if they reopen.
-            for s in sailings:
-                if s["status"] != "available":
-                    state["notified"].discard((cfg["date"], cfg["from"], cfg["to"], s["depart"]))
-            gone = [s["depart"] for s in sailings if prev.get(s["depart"]) == "available" and s["status"] != "available"]
-            state.update(sailings=sailings, last_check=datetime.now(), last_error=None, consecutive_errors=0)
-        if gone:
-            event("info", f"Sold out again: {', '.join(gone)}")
-        avail = [s["depart"] for s in sailings if s["status"] == "available" and s["in_window"]]
-        log(f"{cfg['date']} {cfg['from']}->{cfg['to']}: {len(sailings)} sailings, bookable in window: {avail or 'none'}")
-    except Exception as e:  # noqa: BLE001
-        traceback.print_exc()
-        with state_lock:
-            state["last_error"] = f"{datetime.now():%H:%M:%S} {type(e).__name__}: {e}"
-            state["consecutive_errors"] += 1
-            n = state["consecutive_errors"]
-        event("error", f"Check failed: {type(e).__name__}: {e}"[:200])
-        if n == 3:
-            pushover("⛴ Ferry watcher failing", f"3 checks in a row failed:\n{e}"[:1000])
-    finally:
-        with state_lock:
-            state["checking"] = False
-
-
-def loop() -> None:
-    while True:
-        cfg = load_config()
-        if cfg["enabled"]:
-            run_once()
-        delay = max(1.0, float(cfg["interval_minutes"])) * 60 * random.uniform(0.85, 1.15)
-        with state_lock:
-            state["next_check"] = time.time() + delay if cfg["enabled"] else None
-        wake.wait(delay)
-        wake.clear()
-
-
 # --------------------------------------------------------------------------
 # web UI (static page + JSON API)
 
@@ -514,7 +620,7 @@ STATIC_DIR = Path(os.environ.get("BCF_STATIC", HERE / "web" / "dist")).resolve()
 CONFIG_KEYS = {
     "date": str, "from": str, "to": str, "vehicle": str, "earliest": str, "latest": str,
     "adults": int, "children": int, "infants": int, "seniors": int,
-    "interval_minutes": int, "height_ft": float, "enabled": bool, "hold": bool, "fare": str,
+    "interval_seconds": int, "height_ft": float, "enabled": bool, "hold": bool, "fare": str,
 }
 
 
@@ -532,9 +638,10 @@ def api_state() -> dict:
         "sailings": st["sailings"],
         "booking_link": booking_link(cfg),
         "hold": st["hold"],
+        "session": st["session"],
         "events": list(st["events"])[:30],
         "vnc_url": VNC_URL,
-        "login": bool(os.environ.get("BCF_USER") and os.environ.get("BCF_PASS")),
+        "login": have_login(),
         "pushover": bool(os.environ.get("PUSHOVER_TOKEN") and os.environ.get("PUSHOVER_USER_KEY")),
     }
 
@@ -598,11 +705,11 @@ class Handler(BaseHTTPRequestHandler):
                     cfg[k] = typ(body[k])
             for k in ("adults", "children", "infants", "seniors"):
                 cfg[k] = max(0, min(9, cfg[k]))
-            cfg["interval_minutes"] = max(1, cfg["interval_minutes"])
+            cfg["interval_seconds"] = max(15, cfg["interval_seconds"])
             dests = terminals().get(cfg["from"], {}).get("dests", [])
             if cfg["to"] not in dests and dests:
                 cfg["to"] = dests[0]
-            trip_changed = any(cfg[k] != load_config()[k] for k in CONFIG_KEYS if k not in ("enabled", "interval_minutes", "hold", "fare"))
+            trip_changed = any(cfg[k] != load_config()[k] for k in CONFIG_KEYS if k not in ("enabled", "interval_seconds", "hold", "fare"))
             save_config(cfg)
             if "enabled" in body and len(body) == 1:
                 event("info", "Watching resumed" if cfg["enabled"] else "Watching paused")
@@ -611,6 +718,9 @@ class Handler(BaseHTTPRequestHandler):
             if trip_changed:
                 with state_lock:
                     state["sailings"] = []
+            wake.set()
+        elif self.path == "/api/hold/release":
+            watcher.release.set()
             wake.set()
         elif self.path == "/api/hold/dismiss":
             with state_lock:
@@ -636,11 +746,10 @@ def main() -> None:
     if not CONFIG_PATH.exists():
         save_config(DEFAULT_CONFIG)
     if "--once" in sys.argv:
-        run_once()
-        print(json.dumps(state["sailings"], indent=2))
+        print(json.dumps(check(load_config()), indent=2))
         return
     event("info", "Watcher started")
-    threading.Thread(target=loop, daemon=True).start()
+    threading.Thread(target=watcher.run, daemon=True).start()
     log(f"web UI on http://localhost:{PORT}")
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
 

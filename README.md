@@ -19,21 +19,25 @@ becomes bookable. If that sailing sells out and reopens, you get alerted again.
 After 3 failed checks in a row you also get a notification. The page from the
 last failure is saved to `last-error.png`.
 
-The site is behind Queue-it, so each check drives the booking flow in headless
-Chromium. That takes about 10 seconds.
+The site is behind Queue-it, so the watcher drives a real Chromium. It keeps one
+browser open: it walks the booking form once, then polls by reloading the
+`/fare-selection` page, about 3 seconds per check, every 30 seconds by default.
+When a sailing in your window opens and auto-cart is on, that same page picks
+the fare straight away. Polling pauses until you release the cart from the UI.
+Releasing also empties the BC Ferries cart.
 
 The link in the notification opens the booking form with the route and date
 already filled in. The notification then lists the remaining taps for your
 trip. BC Ferries needs a security (CSRF) token from your own browser for each
 step, so a link can't skip ahead.
 
-## Cart on this Mac
+## Auto-cart
 
-When "Add to cart on this Mac" is on (Advanced), a sailing that opens up also
-gets added to the cart in a visible Chromium window. The window logs in with
-the `Bcferries` item from 1Password, picks the fare you chose, and stops at
-the review page. A second Pushover alert tells you when it's ready. Finish
-checkout in that window. Nothing is booked until you pay.
+When auto-cart is on, the watcher's browser is logged in with your BC Ferries
+account. A sailing that opens up goes straight into the cart with the fare you
+chose, and the browser stops at the review page. The Pushover alert tells you
+it's in the cart. Finish checkout in that browser window (or over noVNC in the
+cluster). Nothing is booked until you pay.
 
 The cart stays with that browser window, not your account. You can't pick it
 up on your phone or in another browser, and closing the window abandons it.

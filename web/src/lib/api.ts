@@ -14,7 +14,7 @@ export interface Config {
   height_ft: number;
   earliest: string;
   latest: string;
-  interval_minutes: number;
+  interval_seconds: number;
   hold: boolean;
   fare: Fare;
 }
@@ -54,6 +54,7 @@ export interface State {
   sailings: Sailing[];
   booking_link: string;
   hold: Hold | null;
+  session: { since: number; logged_in: boolean } | null;
   events: ActivityEvent[];
   vnc_url: string;
   login: boolean;
@@ -86,4 +87,5 @@ export const api = {
   check: () => request<State>("/api/check", {}),
   test: () => request<State>("/api/test", {}),
   dismissHold: () => request<State>("/api/hold/dismiss", {}),
+  releaseHold: () => request<State>("/api/hold/release", {}),
 };

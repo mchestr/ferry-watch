@@ -1,8 +1,9 @@
-import { Bell, BellOff, Check, KeyRound, Loader2, RefreshCw, Send, ShoppingCart, X } from "lucide-react";
+import { Bell, BellOff, Check, Globe, KeyRound, Loader2, MonitorPlay, RefreshCw, Send, ShoppingCart, X } from "lucide-react";
 import { api, type State } from "@/lib/api";
 import { useNow, useStateMutation } from "@/lib/hooks";
 import { ago, clock, cn } from "@/lib/utils";
-import { Button } from "./ui/button";
+import { everyLabel } from "./TripSheet";
+import { Button, LinkButton } from "./ui/button";
 import { Card, CardHeader, CardTitle } from "./ui/card";
 
 const FARES: Record<string, string> = { cheapest: "cheapest fare", saver: "Saver", prepaid: "Prepaid", reservation: "Reservation Only" };
@@ -52,12 +53,14 @@ export function WatcherCard({ state, skew }: { state: State; skew: number }) {
   const test = useStateMutation(() => api.test(), "Test notification sent");
   const c = state.config;
 
-  const interval = c.interval_minutes * 60;
+  const interval = c.interval_seconds;
   const left = state.next_check ? Math.max(0, Math.round(state.next_check - (now / 1000 - skew))) : 0;
   const lastMs = state.last_check ? new Date(state.last_check).getTime() : null;
 
+  const holding = state.hold?.status === "ready";
   let center: React.ReactNode;
-  if (state.checking) center = <Loader2 className="size-6 animate-spin text-primary" />;
+  if (holding) center = <ShoppingCart className="size-6 text-primary" />;
+  else if (state.checking) center = <Loader2 className="size-6 animate-spin text-primary" />;
   else if (!c.enabled) center = <span className="text-xs font-semibold text-muted-foreground">Paused</span>;
   else
     center = (
@@ -71,30 +74,41 @@ export function WatcherCard({ state, skew }: { state: State; skew: number }) {
     <Card>
       <CardHeader>
         <CardTitle>Watcher</CardTitle>
-        <Button variant="outline" size="sm" onClick={() => check.mutate(undefined)} disabled={state.checking || check.isPending}>
+        <Button variant="outline" size="sm" onClick={() => check.mutate(undefined)} disabled={state.checking || check.isPending || holding}>
           <RefreshCw className={cn(state.checking && "animate-spin")} /> Check now
         </Button>
       </CardHeader>
       <div className="flex items-center gap-4 px-5 pb-4">
-        <Ring fraction={state.checking ? 1 : c.enabled && interval ? 1 - left / interval : 0}>{center}</Ring>
+        <Ring fraction={holding || state.checking ? 1 : c.enabled && interval ? 1 - left / interval : 0}>{center}</Ring>
         <div className="min-w-0 space-y-1 text-sm">
           <div className="font-medium">
-            {state.checking ? "Checking now" : c.enabled && state.next_check ? `Next check at ${clock((state.next_check + skew) * 1000)}` : c.enabled ? "Starting up" : "Automatic checks paused"}
+            {holding ? "Paused while your cart is held" : state.checking ? "Checking now" : c.enabled && state.next_check ? `Next check at ${clock((state.next_check + skew) * 1000)}` : c.enabled ? "Starting up" : "Automatic checks paused"}
           </div>
-          <div className="text-muted-foreground">Every {c.interval_minutes} min</div>
+          <div className="text-muted-foreground">Every {everyLabel(c.interval_seconds)}</div>
           <div className="text-muted-foreground">{lastMs ? `Updated ${ago(lastMs, now)}` : "Not checked yet"}</div>
         </div>
       </div>
       <div className="border-t px-5 py-2">
         <ul className="divide-y divide-border/70">
+          <Row
+            ok={!!state.session}
+            icon={<Globe />}
+            label="Live booking session"
+            detail={state.session ? `Open since ${clock((state.session.since + skew) * 1000)}${state.session.logged_in ? ", logged in" : ""}` : "Opens on the next check"}
+          />
           <Row ok={state.pushover} icon={state.pushover ? <Bell /> : <BellOff />} label="Pushover alerts" detail={state.pushover ? "Phone alerts with a booking link" : "Not configured"} />
           <Row ok={state.login} icon={<KeyRound />} label="BC Ferries login" detail={state.login ? "Used only to fill the cart" : "Not configured"} />
           <Row ok={c.hold && state.login} icon={<ShoppingCart />} label="Auto-cart" detail={c.hold ? `Holds the ${FARES[c.fare] ?? c.fare}` : "Off"} />
         </ul>
       </div>
-      <div className="border-t px-5 py-3">
-        <Button variant="ghost" size="sm" className="w-full" onClick={() => test.mutate(undefined)} disabled={test.isPending || !state.pushover}>
-          <Send /> Send test notification
+      <div className="flex gap-2 border-t px-5 py-3">
+        {state.vnc_url && (
+          <LinkButton variant="ghost" size="sm" className="flex-1" href={state.vnc_url} target="_blank" rel="noopener">
+            <MonitorPlay /> Live browser
+          </LinkButton>
+        )}
+        <Button variant="ghost" size="sm" className="flex-1" onClick={() => test.mutate(undefined)} disabled={test.isPending || !state.pushover}>
+          <Send /> Test alert
         </Button>
       </div>
     </Card>
