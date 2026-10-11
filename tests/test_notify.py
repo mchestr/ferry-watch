@@ -16,6 +16,7 @@ from ferry_watch.notify import (
     PushoverNotifier,
     bookable_message,
     booking_steps,
+    cart_expired_message,
     cart_message,
     summarize,
 )
@@ -149,3 +150,42 @@ async def test_pushover_errors_are_reported() -> None:
         with pytest.raises(NotifyError, match="400"):
             await notifier.send(Message("Title", "Body"))
     await server.close()
+
+
+async def test_pushover_trims_fields_to_its_limits() -> None:
+    received: list[dict[str, str]] = []
+    server = await pushover_server(200, received)
+    async with aiohttp.ClientSession() as http:
+        notifier = PushoverNotifier(http, "tok", "user", url=str(server.make_url("/1/messages.json")))
+        await notifier.send(Message("T" * 300, "word " * 400, url="https://book", url_title="U" * 150))
+    await server.close()
+    (form,) = received
+    assert len(form["title"]) == 250
+    assert len(form["message"]) <= 1024
+    assert form["message"].endswith("word…")  # cut between words
+    assert len(form["url_title"]) == 100
+
+
+async def test_pushover_errors_quote_pushover_but_never_our_secrets() -> None:
+    async def handler(request: web.Request) -> web.Response:
+        form = {k: str(v) for k, v in (await request.post()).items()}
+        reply = {"status": 0, "errors": [f"user key {form['user']} is invalid"], "token": form["token"]}
+        return web.json_response(reply, status=400)
+
+    app = web.Application()
+    app.router.add_post("/1/messages.json", handler)
+    server = TestServer(app)
+    await server.start_server()
+    async with aiohttp.ClientSession() as http:
+        notifier = PushoverNotifier(http, "secret-token", "secret-user", url=str(server.make_url("/1/messages.json")))
+        with pytest.raises(NotifyError) as exc:
+            await notifier.send(Message("Title", "Body"))
+    await server.close()
+    assert str(exc.value) == "Pushover returned 400: user key [redacted] is invalid"
+
+
+def test_cart_expired_message() -> None:
+    message = cart_expired_message(TRIP, "Swartz Bay → Tsawwassen", time(9, 0), 60)
+    assert message.title == "⛴ Released the 9:00 am cart"
+    assert "held for 60 minutes" in message.body
+    assert not message.high_priority

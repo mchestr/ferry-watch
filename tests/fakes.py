@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 from dataclasses import dataclass, field
 from datetime import time
 from pathlib import Path
@@ -51,14 +53,20 @@ class FakeSession:
 
     async def login(self, credentials: Credentials) -> None:
         self.calls.append("login")
-        if self.site.login_error:
-            raise self.site.login_error
+        self.site.logging_in += 1
+        self.site.most_logging_in = max(self.site.most_logging_in, self.site.logging_in)
+        try:
+            await asyncio.sleep(0.01)  # a login takes a moment; long enough for another to overlap it
+            if self.site.login_error:
+                raise self.site.login_error
+        finally:
+            self.site.logging_in -= 1
         self.logged_in = True
         self.logged_in_as = credentials.username
 
     async def search(self, trip: Trip) -> list[Sailing]:
         self.calls.append("search")
-        self.site.on_search(trip)
+        await self.site.on_search(trip)
         return self.site.results()
 
     async def refresh(self) -> list[Sailing]:
@@ -71,7 +79,7 @@ class FakeSession:
     async def add_to_cart(self, depart: time, preference: FarePreference) -> Fare:
         self.calls.append(f"cart {depart:%H:%M}")
         self.preferences.append(preference)
-        self.site.on_cart()
+        await self.site.on_cart()
         if self.site.cart_error:
             raise self.site.cart_error
         return Fare("Saver", "$93.45", selectable=True)
@@ -110,6 +118,8 @@ class FakeSite:
     sessions: list[FakeSession] = field(default_factory=list)
     search_hook: Any = None
     cart_hook: Any = None
+    logging_in: int = 0  # logins in progress right now
+    most_logging_in: int = 0
 
     async def new_session(self, name: str) -> FakeSession:
         session = FakeSession(self, name)
@@ -121,13 +131,18 @@ class FakeSite:
             raise self.error
         return list(self.sailings)
 
-    def on_search(self, trip: Trip) -> None:
+    async def on_search(self, trip: Trip) -> None:
+        """Runs `search_hook` while "on the page"; an async hook can hold the search up (e.g. a queue)."""
         if self.search_hook:
-            self.search_hook(trip)
+            result = self.search_hook(trip)
+            if inspect.isawaitable(result):
+                await result
 
-    def on_cart(self) -> None:
+    async def on_cart(self) -> None:
         if self.cart_hook:
-            self.cart_hook()
+            result = self.cart_hook()
+            if inspect.isawaitable(result):
+                await result
 
     @property
     def session(self) -> FakeSession:

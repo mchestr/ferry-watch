@@ -230,6 +230,15 @@ async def test_cart_actions_need_the_right_cart(client: TestClient, services: Se
     assert runtime.cart is None
 
 
+async def test_a_held_cart_shows_when_its_released(client: TestClient, services: Services) -> None:
+    trip = await add_trip(client)
+    services.state.trip(trip["id"]).cart = Cart(
+        CartStatus.READY, clock_time(9), fare=Fare("Saver", "$93.45", selectable=True), expires_at=2_000_000_000.0
+    )
+    state = await (await client.get("/api/state")).json()
+    assert state["trips"][0]["cart"]["expires_at"] == 2_000_000_000.0
+
+
 async def test_cross_site_requests_are_refused(client: TestClient) -> None:
     resp = await client.post("/api/check", json={}, headers={"Origin": "https://evil.example"})
     assert resp.status == 403
@@ -312,6 +321,8 @@ async def test_frontend_is_served_with_a_strict_csp(
     )
     (static / "assets" / "app-1234.js").write_text("console.log(1)")
     (static / "favicon.svg").write_text("<svg/>")
+    (static / "manifest.webmanifest").write_text("{}")
+    (static / "icon-192.png").write_bytes(b"\x89PNG")
     client = await aiohttp_client(build_app(services, static_dir=static))
 
     index = await client.get("/")
@@ -327,5 +338,7 @@ async def test_frontend_is_served_with_a_strict_csp(
     assert asset.status == 200
     assert asset.headers["Cache-Control"] == "public, max-age=31536000, immutable"
     assert (await client.get("/favicon.svg")).status == 200
+    assert (await client.get("/manifest.webmanifest")).content_type == "application/manifest+json"
+    assert (await client.get("/icon-192.png")).content_type == "image/png"
     assert (await client.get("/assets/../index.html")).status in (403, 404)
     assert (await client.get("/nope")).status == 404

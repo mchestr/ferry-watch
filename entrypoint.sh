@@ -16,11 +16,13 @@ if [[ ! -w "${HOME:-/nonexistent}" ]]; then
   mkdir -p "$HOME"
 fi
 
+# -publicIP: no UDP streaming here, so don't look up the pod's public IP on the internet at startup.
 Xvnc "$DISPLAY" \
   -geometry "${SCREEN_WIDTH:-1280}x${SCREEN_HEIGHT:-1000}" -depth 24 \
   -websocketPort 6080 -interface 0.0.0.0 -httpd /opt/vnc-web \
   -DisableBasicAuth -SecurityTypes None -sslOnly 0 \
   -AlwaysShared -AcceptSetDesktopSize -FrameRate 30 \
+  -publicIP 127.0.0.1 \
   -Log '*:stderr:10' &
 
 for _ in $(seq 100); do

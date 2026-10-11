@@ -60,3 +60,12 @@ def test_from_env() -> None:
 def test_invalid(env: dict[str, str]) -> None:
     with pytest.raises(SettingsError):
         Settings.from_env(env)
+
+
+def test_cart_hold_time() -> None:
+    assert Settings.from_env({}).cart_hold_minutes == 60
+    assert Settings.from_env({"BCF_CART_HOLD_MINUTES": "0"}).cart_hold_minutes == 0  # hold until released
+    with pytest.raises(SettingsError):
+        Settings.from_env({"BCF_CART_HOLD_MINUTES": "-5"})
+    with pytest.raises(SettingsError):
+        Settings.from_env({"BCF_CART_HOLD_MINUTES": "soon"})

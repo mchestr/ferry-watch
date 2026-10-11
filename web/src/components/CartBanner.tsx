@@ -1,14 +1,45 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Loader2, MonitorSmartphone, RotateCcw, ShoppingCart, X } from "lucide-react";
+import { AlertTriangle, Loader2, MonitorSmartphone, RotateCcw, ShoppingCart, Timer, X } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { api, hasStatus } from "@/lib/api";
-import { useStateMutation } from "@/lib/hooks";
+import { useNow, useStateMutation } from "@/lib/hooks";
 import type { Trip } from "@/lib/schema";
 import { STATE_KEY } from "@/lib/state";
-import { clock, serverToClientMs, timeLabel } from "@/lib/time";
+import { clock, countdown, serverNow, serverToClientMs, timeLabel } from "@/lib/time";
 import { cn } from "@/lib/utils";
 import { Button, LinkButton } from "./ui/button";
+
+/** Under this many seconds left, the countdown turns to a warning. */
+export const CART_EXPIRY_WARNING_S = 120;
+
+/** How long the cart is still held. Ticks every second, so it's kept apart from the rest of the banner. */
+function CartCountdown({ expiresAt, skew }: { expiresAt: number; skew: number }) {
+  const now = useNow(1000);
+  const remaining = expiresAt - serverNow(skew, now);
+  const until = clock(serverToClientMs(expiresAt, skew));
+  return (
+    <p
+      className={cn(
+        "flex items-center gap-1.5 text-sm font-medium",
+        remaining < CART_EXPIRY_WARNING_S ? "text-warning" : "text-foreground",
+      )}
+    >
+      <Timer aria-hidden className="size-4 shrink-0" />
+      {remaining > 0 ? (
+        <span>
+          {/* A timer is never announced on its own, so this doesn't chatter every second. */}
+          <span role="timer" className="tabular">
+            {countdown(remaining)}
+          </span>{" "}
+          left to check out · held until {until}
+        </span>
+      ) : (
+        <span>Time's up: your cart is being released.</span>
+      )}
+    </p>
+  );
+}
 
 export function CartBanner({ trip, checkoutUrl, skew }: { trip: Trip; checkoutUrl: string | null; skew: number }) {
   const qc = useQueryClient();
@@ -75,6 +106,7 @@ export function CartBanner({ trip, checkoutUrl, skew }: { trip: Trip; checkoutUr
           {cart.status === "adding" && <p className="text-sm text-muted-foreground">Selecting your fare.</p>}
           {cart.status === "ready" && (
             <>
+              {cart.expires_at !== null && <CartCountdown expiresAt={cart.expires_at} skew={skew} />}
               <p className="text-sm text-muted-foreground">
                 {fare && `${fare} · `}
                 Added at {clock(serverToClientMs(cart.since, skew))}. Finish checkout in the{" "}
@@ -89,7 +121,7 @@ export function CartBanner({ trip, checkoutUrl, skew }: { trip: Trip; checkoutUr
         </div>
       </div>
       {cart.status === "ready" && (
-        <div className="flex w-full flex-col-reverse gap-2 sm:w-auto sm:flex-row">
+        <div className="flex w-full flex-col-reverse gap-2 sm:w-auto sm:shrink-0 sm:flex-row">
           <Button variant="outline" onClick={startRelease} disabled={releasing}>
             {releasing ? (
               <>

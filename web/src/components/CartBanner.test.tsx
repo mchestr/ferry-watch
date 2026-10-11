@@ -3,7 +3,7 @@ import { act, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import type { State } from "@/lib/schema";
 import { STATE_KEY, fetchSnapshot, writeState } from "@/lib/state";
-import { makeCart, makeState, makeTrip } from "@/test/fixtures";
+import { NOW_S, makeCart, makeState, makeTrip } from "@/test/fixtures";
 import { createTestQueryClient, jsonResponse, mockFetch, renderWithProviders } from "@/test/render";
 import { CartBanner } from "./CartBanner";
 
@@ -39,6 +39,17 @@ describe("CartBanner", () => {
     const checkout = screen.getByRole("link", { name: "Open checkout" });
     expect(checkout).toHaveAttribute("href", "https://ferry.example/vnc/vnc.html");
     expect(checkout).toHaveAttribute("rel", "noopener noreferrer");
+  });
+
+  it("counts down to when a held cart is handed back", () => {
+    renderBanner(withCart(1, { status: "ready", expires_at: NOW_S + 45 * 60 }));
+    expect(screen.getByRole("timer")).toHaveTextContent(/45:00|44:59/);
+    expect(screen.getByText(/left to check out · held until/)).toBeInTheDocument();
+  });
+
+  it("shows no countdown for a cart held until released", () => {
+    renderBanner(withCart(1, { status: "ready", expires_at: null }));
+    expect(screen.queryByRole("timer")).not.toBeInTheDocument();
   });
 
   it("says 'Releasing…' until a pushed state no longer has that cart", async () => {

@@ -5,9 +5,11 @@ one opens it sends a Pushover alert, and can put the sailing in your BC Ferries 
 away. You finish checkout in that same browser, from any device, through a built-in remote viewer.
 
 - Watch up to six trips at once (route, date, travellers, vehicle, departure window).
-- Each trip re-checks every 30 seconds by default; a check takes about 3 seconds.
+- Each trip re-checks every 30 seconds by default, on its own schedule (up to three at once, so
+  one stuck in BC Ferries' queue doesn't hold up the others); a check takes about 3 seconds.
 - Auto-cart: an opened sailing in your window goes into the cart within seconds, with the fare
-  you prefer. The trip pauses until you release the cart.
+  you prefer. The trip pauses until you release the cart, close the checkout window, or the hold
+  time (an hour by default) runs out and the spot is handed back.
 - A web dashboard with live updates over a WebSocket, usable on a phone.
 
 ## How it works
@@ -62,6 +64,7 @@ Environment variables:
 | `BCF_USER`, `BCF_PASS` | (none) | Your BC Ferries login. Needed for auto-cart, so saved cards are available at checkout |
 | `PUSHOVER_TOKEN`, `PUSHOVER_USER_KEY` | (none) | Pushover alerts. Without them, alerts only go to the log |
 | `BCF_VNC_URL` | (none) | The remote viewer's address, linked from cart alerts |
+| `BCF_CART_HOLD_MINUTES` | `60` | How long a cart nobody checks out is held before it's handed back. `0` holds it until released |
 | `BCF_HEADLESS` | (off) | `1` runs Chromium without a window (local development) |
 | `BCF_DEBUG_DIR` | `$TMPDIR/ferry-watch` | Screenshots of failed checks, newest 20 kept. Empty disables them |
 | `SCREEN_WIDTH`, `SCREEN_HEIGHT` | `1280`, `1000` | Initial size of the virtual screen (the viewer resizes it) |

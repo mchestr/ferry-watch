@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -16,6 +17,11 @@ from .models import Fare, Sailing, Trip, Vehicle, format_time
 log = logging.getLogger(__name__)
 
 PUSHOVER_URL = "https://api.pushover.net/1/messages.json"
+# Pushover's field limits (https://pushover.net/api#limits).
+_MAX_TITLE = 250
+_MAX_MESSAGE = 1024
+_MAX_URL_TITLE = 100
+_WORD_SLACK = 32  # how far back from a cut to look for a space
 
 
 class NotifyError(Exception):
@@ -59,21 +65,55 @@ class PushoverNotifier:
         form = {
             "token": self._token,
             "user": self._user_key,
-            "title": message.title,
-            "message": message.body,
+            "title": truncate(message.title, _MAX_TITLE),
+            "message": truncate(message.body, _MAX_MESSAGE),
             "priority": "1" if message.high_priority else "0",
         }
         if message.url:
             form["url"] = message.url
-            form["url_title"] = message.url_title or "Open"
+            form["url_title"] = truncate(message.url_title or "Open", _MAX_URL_TITLE)
         try:
             async with self._http.post(self._url, data=form, timeout=aiohttp.ClientTimeout(total=20)) as resp:
-                if resp.status != 200:
-                    detail = await resp.text()
-                    raise NotifyError(f"Pushover returned {resp.status}: {detail[:200]}")
+                status = resp.status
+                detail = "" if status == 200 else await resp.text(errors="replace")
         except (aiohttp.ClientError, TimeoutError) as e:
-            raise NotifyError(f"Couldn't reach Pushover: {e}") from e
+            raise NotifyError(f"Couldn't reach Pushover: {one_line(str(e)) or type(e).__name__}") from e
+        if status != 200:
+            raise NotifyError(f"Pushover returned {status}: {self._reason(detail)}")
         log.info("Sent alert: %s", message.title)
+
+    def _reason(self, body: str) -> str:
+        """Pushover's own explanation when it gives one ("user identifier is invalid"), never our secrets."""
+        try:
+            reply = json.loads(body)
+        except ValueError:
+            reply = None
+        errors = reply.get("errors") if isinstance(reply, dict) else None
+        reasons = [e for e in errors if isinstance(e, str)] if isinstance(errors, list) else []
+        text = "; ".join(reasons) or body
+        for secret in (self._token, self._user_key):
+            text = text.replace(secret, "[redacted]")
+        return one_line(text) or "(empty response)"
+
+
+def truncate(text: str, limit: int) -> str:
+    """`text` if it fits in `limit` characters, otherwise its start plus "…", cut between words when one is close.
+
+    Pushover refuses a message with an over-long field outright, so an alert would be lost rather than shortened.
+    """
+    if len(text) <= limit:
+        return text
+    cut = text[: limit - 1]
+    if not text[limit - 1].isspace():
+        boundary = max(cut.rfind(" "), cut.rfind("\n"))
+        if boundary > 0 and len(cut) - boundary <= _WORD_SLACK:
+            cut = cut[:boundary]
+    return cut.rstrip() + "…"
+
+
+def one_line(text: str, limit: int = 200) -> str:
+    """Whitespace collapsed and cut to `limit`: error messages go in log lines and a small UI notice."""
+    return truncate(" ".join(text.split()), limit)
 
 
 class LogNotifier:
@@ -216,6 +256,14 @@ def cart_lost_message(trip: Trip, route: str, depart: time) -> Message:
         body=f"{trip_title(trip, route)}\nThe browser holding it closed unexpectedly. "
         "It'll be added again if it's still open.",
         high_priority=True,
+    )
+
+
+def cart_expired_message(trip: Trip, route: str, depart: time, minutes: int) -> Message:
+    return Message(
+        title=f"⛴ Released the {format_time(depart)} cart",
+        body=f"{trip_title(trip, route)}\nIt was held for {minutes} minutes without checking out, so it went back. "
+        "Watching resumed.",
     )
 
 
