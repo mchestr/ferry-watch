@@ -1,0 +1,6 @@
+.git
+web/node_modules
+web/dist
+config.json
+last-error.png
+watch.log

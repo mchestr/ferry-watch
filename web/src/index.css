@@ -1,0 +1,67 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 216 33% 97%;
+    --foreground: 218 45% 12%;
+    --card: 0 0% 100%;
+    --card-foreground: 218 45% 12%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 218 45% 12%;
+    --primary: 211 86% 31%;
+    --primary-foreground: 0 0% 100%;
+    --muted: 214 32% 95%;
+    --muted-foreground: 216 15% 45%;
+    --accent: 211 80% 95%;
+    --accent-foreground: 211 86% 28%;
+    --border: 214 28% 90%;
+    --input: 214 28% 86%;
+    --ring: 211 86% 40%;
+    --success: 158 75% 29%;
+    --success-foreground: 0 0% 100%;
+    --success-soft: 152 55% 94%;
+    --danger: 4 63% 46%;
+    --danger-foreground: 0 0% 100%;
+    --danger-soft: 4 80% 96%;
+    --warning: 33 92% 33%;
+    --warning-soft: 40 90% 94%;
+    --radius: 0.75rem;
+  }
+  .dark {
+    --background: 218 40% 6%;
+    --foreground: 214 30% 93%;
+    --card: 218 34% 9%;
+    --card-foreground: 214 30% 93%;
+    --popover: 218 34% 10%;
+    --popover-foreground: 214 30% 93%;
+    --primary: 210 85% 62%;
+    --primary-foreground: 218 60% 8%;
+    --muted: 218 28% 14%;
+    --muted-foreground: 215 16% 62%;
+    --accent: 214 50% 16%;
+    --accent-foreground: 210 85% 75%;
+    --border: 218 26% 17%;
+    --input: 218 24% 22%;
+    --ring: 210 85% 62%;
+    --success: 157 58% 50%;
+    --success-foreground: 160 80% 6%;
+    --success-soft: 160 45% 11%;
+    --danger: 4 85% 68%;
+    --danger-foreground: 4 80% 8%;
+    --danger-soft: 4 45% 13%;
+    --warning: 38 85% 60%;
+    --warning-soft: 36 45% 12%;
+  }
+  * { @apply border-border; }
+  html { -webkit-tap-highlight-color: transparent; }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "cv11", "ss01", "ss03";
+  }
+}
+
+@layer utilities {
+  .tabular { font-variant-numeric: tabular-nums; }
+}

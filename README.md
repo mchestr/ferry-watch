@@ -4,9 +4,14 @@ Watches bcferries.com for bookable sailings and sends a Pushover notification
 with a link to the booking page.
 
 ```sh
+(cd web && npm ci && npm run build)   # build the React frontend once
 ./run.sh            # web UI + watcher on http://localhost:8765 (creds from 1Password)
 ./run.sh --once     # single check, prints JSON
 ```
+
+To work on the frontend, keep `./run.sh` running and start the Vite dev server
+with `cd web && npm run dev`. It proxies `/api` to the watcher. The stack is
+React, TypeScript, Vite, Tailwind, Radix UI and TanStack Query.
 
 Edit the date, route, passengers, vehicle and time window in the web UI. The
 settings are stored in `config.json`. You get one alert for each sailing that

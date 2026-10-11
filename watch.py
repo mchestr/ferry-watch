@@ -21,7 +21,9 @@ import random
 import re
 import subprocess
 import sys
+import mimetypes
 import threading
+from collections import deque
 import time
 import traceback
 import urllib.parse
@@ -73,6 +75,7 @@ state: dict = {
     "consecutive_errors": 0,
     "checking": False,
     "next_check": None,  # epoch seconds
+    "events": deque(maxlen=60),  # activity feed: {"ts", "kind", "text"}
     "hold": None,  # {"status": "adding"|"ready"|"failed"|"closed", "depart", "fare", "price", "at", "error"}
 }
 wake = threading.Event()
@@ -351,6 +354,7 @@ def hold_worker(cfg: dict, sailing: dict) -> None:
             card.locator("button:has-text('View fares')").click()
             fare, price = choose_fare(pg, cfg.get("fare", "cheapest"))
             set_hold(status="ready", fare=fare, price=price, at=time.time())
+            event("cart", f"{sailing['depart']} added to the cart ({fare} {price})")
             pg.bring_to_front()
             day = datetime.strptime(cfg["date"], "%Y-%m-%d").strftime("%a %b %-d")
             log(f"holding {day} {sailing['depart']} ({fare} {price}) in cart")
@@ -371,6 +375,7 @@ def hold_worker(cfg: dict, sailing: dict) -> None:
                 save_failure(pg)
                 traceback.print_exc()
                 set_hold(status="failed", error=f"{type(e).__name__}: {e}"[:300])
+                event("error", f"Couldn't add {sailing['depart']} to the cart: {e}"[:200])
                 pushover("⛴ Couldn't add to cart", f"{sailing['depart']}: {e}"[:500] + "\nBook it on your phone instead.")
             else:
                 set_hold(status="closed")
@@ -415,6 +420,12 @@ def pushover(title: str, message: str, url: str | None = None, priority: int = 0
     log(f"pushover sent: {title}")
 
 
+def event(kind: str, text: str) -> None:
+    """Record something worth showing in the UI's activity feed (kind: info|alert|cart|error)."""
+    with state_lock:
+        state["events"].appendleft({"ts": time.time(), "kind": kind, "text": text})
+
+
 def log(msg: str) -> None:
     print(f"{datetime.now():%Y-%m-%d %H:%M:%S} {msg}", flush=True)
 
@@ -453,15 +464,20 @@ def run_once() -> None:
                 url=booking_link(cfg),
                 priority=1,
             )
+            event("alert", f"Bookable: {times} · alert sent")
             maybe_hold(cfg, new[0])
         with state_lock:
+            prev = {x["depart"]: x["status"] for x in state["sailings"]}
             for s in new:
                 state["notified"].add((cfg["date"], cfg["from"], cfg["to"], s["depart"]))
             # Forget sailings that sold out again so we re-alert if they reopen.
             for s in sailings:
                 if s["status"] != "available":
                     state["notified"].discard((cfg["date"], cfg["from"], cfg["to"], s["depart"]))
+            gone = [s["depart"] for s in sailings if prev.get(s["depart"]) == "available" and s["status"] != "available"]
             state.update(sailings=sailings, last_check=datetime.now(), last_error=None, consecutive_errors=0)
+        if gone:
+            event("info", f"Sold out again: {', '.join(gone)}")
         avail = [s["depart"] for s in sailings if s["status"] == "available" and s["in_window"]]
         log(f"{cfg['date']} {cfg['from']}->{cfg['to']}: {len(sailings)} sailings, bookable in window: {avail or 'none'}")
     except Exception as e:  # noqa: BLE001
@@ -470,6 +486,7 @@ def run_once() -> None:
             state["last_error"] = f"{datetime.now():%H:%M:%S} {type(e).__name__}: {e}"
             state["consecutive_errors"] += 1
             n = state["consecutive_errors"]
+        event("error", f"Check failed: {type(e).__name__}: {e}"[:200])
         if n == 3:
             pushover("⛴ Ferry watcher failing", f"3 checks in a row failed:\n{e}"[:1000])
     finally:
@@ -492,7 +509,8 @@ def loop() -> None:
 # --------------------------------------------------------------------------
 # web UI (static page + JSON API)
 
-UI_PATH = HERE / "ui.html"
+# Built React app (web/dist locally, /app/static in the image).
+STATIC_DIR = Path(os.environ.get("BCF_STATIC", HERE / "web" / "dist")).resolve()
 CONFIG_KEYS = {
     "date": str, "from": str, "to": str, "vehicle": str, "earliest": str, "latest": str,
     "adults": int, "children": int, "infants": int, "seniors": int,
@@ -514,6 +532,7 @@ def api_state() -> dict:
         "sailings": st["sailings"],
         "booking_link": booking_link(cfg),
         "hold": st["hold"],
+        "events": list(st["events"])[:30],
         "vnc_url": VNC_URL,
         "login": bool(os.environ.get("BCF_USER") and os.environ.get("BCF_PASS")),
         "pushover": bool(os.environ.get("PUSHOVER_TOKEN") and os.environ.get("PUSHOVER_USER_KEY")),
@@ -540,16 +559,34 @@ class Handler(BaseHTTPRequestHandler):
         self._send(code, json.dumps(obj).encode(), "application/json")
 
     def do_GET(self):
-        if self.path == "/":
-            self._send(200, UI_PATH.read_bytes(), "text/html; charset=utf-8")
-        elif self.path == "/healthz":
+        if self.path == "/healthz":
             self._send(200, b"ok", "text/plain")
         elif self.path == "/api/state":
             self._json(api_state())
         elif self.path == "/api/terminals":
             self._json(api_terminals())
-        else:
+        elif self.path.startswith("/api/"):
             self.send_error(404)
+        else:
+            self._static()
+
+    def _static(self):
+        """Serve the built frontend; unknown paths fall back to index.html."""
+        rel = urllib.parse.urlparse(self.path).path.lstrip("/") or "index.html"
+        f = (STATIC_DIR / rel).resolve()
+        if not f.is_file() or STATIC_DIR not in f.parents:
+            f = STATIC_DIR / "index.html"
+        if not f.is_file():
+            self._send(503, b"frontend not built (cd web && npm run build)", "text/plain")
+            return
+        body = f.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", mimetypes.guess_type(f.name)[0] or "application/octet-stream")
+        self.send_header("Content-Length", str(len(body)))
+        # Vite fingerprints assets, so they can be cached forever; index.html must not be.
+        self.send_header("Cache-Control", "public, max-age=31536000, immutable" if rel.startswith("assets/") else "no-store")
+        self.end_headers()
+        self.wfile.write(body)
 
     def do_POST(self):
         n = int(self.headers.get("Content-Length") or 0)
@@ -567,6 +604,10 @@ class Handler(BaseHTTPRequestHandler):
                 cfg["to"] = dests[0]
             trip_changed = any(cfg[k] != load_config()[k] for k in CONFIG_KEYS if k not in ("enabled", "interval_minutes", "hold", "fare"))
             save_config(cfg)
+            if "enabled" in body and len(body) == 1:
+                event("info", "Watching resumed" if cfg["enabled"] else "Watching paused")
+            else:
+                event("info", "Trip settings updated")
             if trip_changed:
                 with state_lock:
                     state["sailings"] = []
@@ -581,6 +622,7 @@ class Handler(BaseHTTPRequestHandler):
             cfg = load_config()
             try:
                 pushover("⛴ Ferry watch test", "Notifications are working. Tap to open the booking page.", url=booking_link(cfg))
+                event("info", "Test notification sent")
             except Exception as e:  # noqa: BLE001
                 self._json({"error": str(e)}, 502)
                 return
@@ -597,6 +639,7 @@ def main() -> None:
         run_once()
         print(json.dumps(state["sailings"], indent=2))
         return
+    event("info", "Watcher started")
     threading.Thread(target=loop, daemon=True).start()
     log(f"web UI on http://localhost:{PORT}")
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
