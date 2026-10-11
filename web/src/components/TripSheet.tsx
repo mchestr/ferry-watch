@@ -1,220 +1,580 @@
 import * as Collapsible from "@radix-ui/react-collapsible";
-import { Car, ChevronRight, Footprints, Truck } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
-import { Trash2 } from "lucide-react";
-import { api, type Fare, type Terminals, type TripConfig, type Vehicle } from "@/lib/api";
-import { useStateMutation } from "@/lib/hooks";
+import { useIsMutating } from "@tanstack/react-query";
+import { Car, ChevronRight, Footprints, Loader2, Trash2, Truck } from "lucide-react";
+import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { toast } from "sonner";
+import { api, errorMessage, hasStatus } from "@/lib/api";
+import { useRemoveTrip, useStateMutation, useTerminals } from "@/lib/hooks";
+import type { Fare, State, Terminal, Trip, TripSettings, Vehicle } from "@/lib/schema";
+import { destinations, origins } from "@/lib/terminals";
+import { todayInPacific } from "@/lib/time";
+import {
+  DRAFT_FIELDS,
+  MAX_PASSENGERS,
+  changedSettings,
+  draftFieldFor,
+  draftFromSettings,
+  inlineErrorField,
+  newTripSettings,
+  pickSettings,
+  settingsFromDraft,
+  validateDraft,
+  type DraftField,
+  type TripDraft,
+} from "@/lib/trip-form";
+import { RemoveTripDialog } from "./RemoveTripDialog";
 import { Button } from "./ui/button";
-import { Field, Input, Segmented, Stepper } from "./ui/controls";
-import { Select } from "./ui/select";
-import { Sheet } from "./ui/sheet";
+import { ChoiceGroup, Field, Input, Stepper, type Choice } from "./ui/controls";
+import { Select, type Option } from "./ui/select";
+import { Sheet, SheetBody, SheetFooter, SheetHeader } from "./ui/sheet";
 import { Switch } from "./ui/switch";
 
-type Draft = Omit<TripConfig, "id">;
+export type SheetMode = { kind: "closed" } | { kind: "adding" } | { kind: "editing"; tripId: string };
+type OpenMode = Exclude<SheetMode, { kind: "closed" }>;
 
-const tomorrow = () => {
-  const d = new Date(Date.now() + 86400000);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-};
+/** Every request the sheet makes carries this key, so the sheet knows when one is in flight. */
+const SHEET_MUTATION = ["trip-sheet"] as const;
 
-export const NEW_TRIP: Draft = {
-  enabled: true,
-  date: tomorrow(),
-  from: "SWB",
-  to: "TSA",
-  adults: 1,
-  children: 0,
-  infants: 0,
-  seniors: 0,
-  vehicle: "standard",
-  height_ft: 8,
-  earliest: "00:00",
-  latest: "23:59",
-  hold: true,
-  fare: "cheapest",
-};
+const modeKey = (mode: OpenMode) => (mode.kind === "editing" ? `trip:${mode.tripId}` : "new");
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+const VEHICLES: readonly Choice<Vehicle>[] = [
+  { value: "standard", label: "Car / SUV", icon: <Car aria-hidden /> },
+  { value: "tall", label: "Over 7 ft", icon: <Truck aria-hidden /> },
+  { value: "none", label: "Walk-on", icon: <Footprints aria-hidden /> },
+];
+
+const FARES: Option[] = [
+  { value: "cheapest", label: "Cheapest available" },
+  { value: "saver", label: "Saver", hint: "Pay in full, lowest price, strict changes" },
+  { value: "prepaid", label: "Prepaid", hint: "Pay in full, flexible until the day before" },
+  { value: "reservation", label: "Reservation Only", hint: "$20 non-refundable fee, rest paid at the terminal" },
+];
+const isFare = (value: string): value is Fare => FARES.some((f) => f.value === value);
+
+const PASSENGERS = [
+  { key: "children", label: "Children", hint: "5 to 11", singular: "child", plural: "children" },
+  { key: "infants", label: "Infants", hint: "0 to 4", singular: "infant", plural: "infants" },
+  { key: "seniors", label: "BC seniors", hint: "65+, BC residents", singular: "senior", plural: "seniors" },
+] as const;
+
+type SaveRequest =
+  | { kind: "add"; settings: TripSettings }
+  | { kind: "update"; id: string; patch: Partial<TripSettings> };
+
+/**
+ * The add/edit trip panel. `mode` says what's open; while the sheet animates closed it keeps
+ * showing the last trip, and each open starts a fresh form.
+ */
+export function TripSheet({ mode, onClose, state }: { mode: SheetMode; onClose: () => void; state: State }) {
+  const [lastOpen, setLastOpen] = useState<OpenMode | null>(null);
+  if (mode.kind !== "closed" && (lastOpen === null || modeKey(lastOpen) !== modeKey(mode))) setLastOpen(mode);
+  const shown = mode.kind === "closed" ? lastOpen : mode;
+  const busy = useIsMutating({ mutationKey: SHEET_MUTATION }) > 0;
+
+  return (
+    <Sheet
+      open={mode.kind !== "closed"}
+      onOpenChange={(open) => {
+        if (!open && !busy) onClose();
+      }}
+    >
+      {shown && (
+        // The content unmounts once the sheet has closed, and the key changes with the trip, so the
+        // draft is always built fresh on mount.
+        <TripForm
+          key={modeKey(shown)}
+          mode={shown}
+          open={mode.kind !== "closed"}
+          trip={shown.kind === "editing" ? state.trips.find((t) => t.id === shown.tripId) : undefined}
+          state={state}
+          busy={busy}
+          onClose={onClose}
+        />
+      )}
+    </Sheet>
+  );
+}
+
+function Section({ title, headingId, children }: { title: string; headingId?: string; children: ReactNode }) {
   return (
     <section className="space-y-4">
-      <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{title}</h3>
+      <h3 id={headingId} className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+        {title}
+      </h3>
       {children}
     </section>
   );
 }
 
-export function TripSheet({
+function terminalOptions(list: Terminal[], current: string, fallbackLabel: string): Option[] {
+  const options = list.map((t) => ({ value: t.code, label: t.label }));
+  return current && !options.some((o) => o.value === current)
+    ? [{ value: current, label: fallbackLabel }, ...options]
+    : options;
+}
+
+function TripForm({
+  mode,
   open,
-  onOpenChange,
   trip,
-  terminals,
-  loginConfigured,
+  state,
+  busy,
+  onClose,
 }: {
+  mode: OpenMode;
+  /** False while the sheet animates closed. */
   open: boolean;
-  onOpenChange: (o: boolean) => void;
-  /** the trip to edit, or null to add a new one */
-  trip: TripConfig | null;
-  terminals?: Terminals;
-  loginConfigured: boolean;
+  /** The trip being edited, from live state: undefined once it's been removed. */
+  trip: Trip | undefined;
+  state: State;
+  busy: boolean;
+  onClose: () => void;
 }) {
-  const config: Draft = trip ?? { ...NEW_TRIP, date: tomorrow() };
-  const [d, setD] = useState<Draft>(config);
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const [morePax, setMorePax] = useState(false);
-  useEffect(() => {
-    if (open) {
-      setD(config);
-      setConfirmDelete(false);
-      setMorePax(config.children + config.infants + config.seniors > 0);
-    }
-  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const save = useStateMutation((c: Draft) => (trip ? api.updateTrip(trip.id, c) : api.addTrip(c)), trip ? "Trip saved" : "Trip added, opening a booking session…");
-  const remove = useStateMutation(() => api.deleteTrip(trip!.id), "Trip removed");
-  const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setD((p) => ({ ...p, [k]: v }));
-
-  const byLabel = (a: string, b: string) => (terminals?.[a]?.label ?? a).localeCompare(terminals?.[b]?.label ?? b);
-  const origins = useMemo(() => Object.keys(terminals ?? {}).filter((c) => terminals![c].dests.length).sort(byLabel), [terminals]); // eslint-disable-line react-hooks/exhaustive-deps
-  const dests = useMemo(() => (terminals?.[d.from]?.dests ?? []).filter((c) => terminals![c]).sort(byLabel), [terminals, d.from]); // eslint-disable-line react-hooks/exhaustive-deps
-  const opt = (c: string) => ({ value: c, label: terminals?.[c]?.label ?? c });
-
-  const setFrom = (from: string) => {
-    const ds = terminals?.[from]?.dests ?? [];
-    setD((p) => ({ ...p, from, to: ds.includes(p.to) ? p.to : (ds[0] ?? p.to) }));
+  const editing = mode.kind === "editing";
+  const today = todayInPacific();
+  const terminals = useTerminals();
+  const baseId = useId();
+  const ids = {
+    form: `${baseId}-form`,
+    from: `${baseId}-from`,
+    to: `${baseId}-to`,
+    date: `${baseId}-date`,
+    passengers: `${baseId}-passengers`,
+    passengersHeading: `${baseId}-passengers-heading`,
+    passengersError: `${baseId}-passengers-error`,
+    vehicleHeading: `${baseId}-vehicle-heading`,
+    height: `${baseId}-height`,
+    earliest: `${baseId}-earliest`,
+    latest: `${baseId}-latest`,
+    autoCart: `${baseId}-auto-cart`,
+    fare: `${baseId}-fare`,
   };
 
-  return (
-    <Sheet
-      open={open}
-      onOpenChange={onOpenChange}
-      title={trip ? "Edit trip" : "Add a trip"}
-      description={trip ? "Changes take effect on the next check." : "Watch another route or date alongside your other trips."}
-      footer={
-        <>
-          {trip && (
-            <Button
-              variant="ghost"
-              className={confirmDelete ? "mr-auto text-danger hover:bg-danger-soft" : "mr-auto text-muted-foreground"}
-              onClick={() => (confirmDelete ? remove.mutate(undefined, { onSuccess: () => onOpenChange(false) }) : setConfirmDelete(true))}
-              disabled={remove.isPending}
-            >
-              <Trash2 /> {confirmDelete ? "Confirm remove" : "Remove"}
-            </Button>
-          )}
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button
-            onClick={() => save.mutate(d, { onSuccess: () => onOpenChange(false) })}
-            disabled={save.isPending}
-          >
-            {trip ? "Save" : "Add trip"}
-          </Button>
-        </>
+  // What the draft started from: Save sends only what differs from it.
+  const [base] = useState<TripSettings>(() =>
+    trip ? pickSettings(trip) : newTripSettings(state.trip_defaults, today),
+  );
+  const [route] = useState(() => trip?.route);
+  const [draft, setDraft] = useState<TripDraft>(() => draftFromSettings(base));
+  // A past date is flagged straight away; other problems show once a field is touched, or on Save.
+  const [touched, setTouched] = useState<ReadonlySet<DraftField>>(
+    () => new Set<DraftField>(base.date < today ? ["date"] : []),
+  );
+  const [submitted, setSubmitted] = useState(false);
+  const [serverError, setServerError] = useState<{ field: DraftField; message: string } | null>(null);
+  const [morePax, setMorePax] = useState(base.children + base.infants + base.seniors > 0);
+  const [confirmingRemove, setConfirmingRemove] = useState(false);
+  const inFlight = useRef(false);
+
+  const save = useStateMutation(
+    (request: SaveRequest) =>
+      request.kind === "add" ? api.addTrip(request.settings) : api.updateTrip(request.id, request.patch),
+    {
+      mutationKey: SHEET_MUTATION,
+      success: editing ? "Trip saved" : "Trip added. Opening a booking session…",
+      // Shown inline, or handled below by closing the sheet.
+      onError: (error) => inlineErrorField(error) !== null || hasStatus(error, 404),
+    },
+  );
+  const remove = useRemoveTrip(editing ? mode.tripId : "", SHEET_MUTATION);
+
+  // Every close this form asks for goes through here, so a push and a response racing each other
+  // can't close it (or say why) twice.
+  const closed = useRef(false);
+  const close = useCallback(() => {
+    if (closed.current) return;
+    closed.current = true;
+    onClose();
+  }, [onClose]);
+  const closeWithNotice = useCallback(
+    (message: string) => {
+      if (closed.current) return;
+      toast.info(message);
+      close();
+    },
+    [close],
+  );
+
+  // Removed somewhere else (another device, say) while open: close, and say why. Not when it was
+  // this sheet's own Remove.
+  const missing = editing && trip === undefined;
+  useEffect(() => {
+    if (open && missing && !remove.isPending && !remove.isSuccess) closeWithNotice("This trip was removed elsewhere.");
+  }, [open, missing, remove.isPending, remove.isSuccess, closeWithNotice]);
+
+  const errors = validateDraft(draft, today);
+  const shownError = (field: DraftField): string | undefined => {
+    if (serverError?.field === field) return serverError.message;
+    const seen = submitted || touched.has(field) || (field === "latest" && touched.has("earliest"));
+    return seen ? errors[field] : undefined;
+  };
+  const touch = (field: DraftField) => setTouched((prev) => (prev.has(field) ? prev : new Set(prev).add(field)));
+  const update = <K extends keyof TripDraft>(key: K, value: TripDraft[K]) => {
+    setDraft((d) => ({ ...d, [key]: value }));
+    const field = draftFieldFor(key);
+    if (field && serverError?.field === field) setServerError(null);
+  };
+  const focusField = (field: DraftField) => document.getElementById(ids[field])?.focus();
+
+  const terminalList = terminals.data;
+  const originList = terminalList ? origins(terminalList) : [];
+  const destinationList = terminalList ? destinations(terminalList, draft.from) : [];
+  const routeLabel = (code: string, place?: string, area?: string) => (place ? `${area} (${place})` : code);
+  const originOptions = terminalOptions(
+    originList,
+    draft.from,
+    draft.from === base.from ? routeLabel(draft.from, route?.from_place, route?.from_area) : draft.from,
+  );
+  const destinationOptions = terminalOptions(
+    destinationList,
+    draft.to,
+    draft.to === base.to ? routeLabel(draft.to, route?.to_place, route?.to_area) : draft.to,
+  );
+  const terminalsHint = terminalList
+    ? undefined
+    : terminals.failureCount > 0
+      ? `Couldn't load BC Ferries' terminals (${errorMessage(terminals.failureReason)}). Retrying…`
+      : "Loading terminals…";
+
+  const setFrom = (from: string) => {
+    // Default the destination from the same list the "To" dropdown shows.
+    const options = terminalList ? destinations(terminalList, from) : [];
+    setDraft((d) => ({
+      ...d,
+      from,
+      to: options.some((t) => t.code === d.to) ? d.to : (options[0]?.code ?? ""),
+    }));
+    touch("from");
+    if (serverError?.field === "from" || serverError?.field === "to") setServerError(null);
+  };
+
+  const setPassengers = (key: "adults" | "children" | "infants" | "seniors", value: number) => {
+    update(key, value);
+    touch("passengers");
+  };
+
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (busy || inFlight.current) return;
+    setSubmitted(true);
+    const invalid = DRAFT_FIELDS.find((field) => errors[field] !== undefined);
+    if (invalid) {
+      if (invalid === "passengers") setMorePax(true);
+      focusField(invalid);
+      return;
+    }
+    const settings = settingsFromDraft(draft, base);
+    let request: SaveRequest;
+    if (mode.kind === "editing") {
+      const patch = changedSettings(base, settings);
+      if (Object.keys(patch).length === 0) {
+        close();
+        return;
       }
-    >
-      <div className="space-y-8">
-        <Section title="Route & date">
-          <Field label="From">
-            <Select value={d.from} onValueChange={setFrom} options={origins.map(opt)} />
-          </Field>
-          <Field label="To">
-            <Select value={d.to} onValueChange={(v) => set("to", v)} options={dests.map(opt)} />
-          </Field>
-          <Field label="Departure date">
-            <Input type="date" value={d.date} onChange={(e) => e.target.value && set("date", e.target.value)} />
-          </Field>
-        </Section>
+      request = { kind: "update", id: mode.tripId, patch };
+    } else {
+      request = { kind: "add", settings };
+    }
+    inFlight.current = true;
+    // These callbacks only run while this form is mounted, so a late response can't close another trip's sheet.
+    save.mutate(request, {
+      onSuccess: close,
+      onError: (error) => {
+        const field = inlineErrorField(error);
+        if (field) {
+          setServerError({ field, message: errorMessage(error) });
+          focusField(field);
+        } else if (hasStatus(error, 404)) {
+          closeWithNotice("This trip was removed elsewhere.");
+        }
+      },
+      onSettled: () => {
+        inFlight.current = false;
+      },
+    });
+  };
 
-        <Section title="Travellers">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="text-sm font-medium">Adults</div>
-              <div className="text-xs text-muted-foreground">12 and over</div>
-            </div>
-            <Stepper label="adults" value={d.adults} min={1} onChange={(v) => set("adults", v)} />
-          </div>
-          <Collapsible.Root open={morePax} onOpenChange={setMorePax}>
-            <Collapsible.Trigger className="flex items-center gap-1 text-sm font-medium text-primary hover:underline">
-              <ChevronRight className={`size-4 transition-transform ${morePax ? "rotate-90" : ""}`} />
-              Children, infants &amp; seniors
-            </Collapsible.Trigger>
-            <Collapsible.Content className="mt-4 space-y-4">
-              {(
-                [
-                  ["children", "Children", "5 to 11"],
-                  ["infants", "Infants", "0 to 4"],
-                  ["seniors", "BC seniors", "65+, BC residents"],
-                ] as const
-              ).map(([k, l, h]) => (
-                <div key={k} className="flex items-center justify-between">
-                  <div>
-                    <div className="text-sm font-medium">{l}</div>
-                    <div className="text-xs text-muted-foreground">{h}</div>
-                  </div>
-                  <Stepper label={l.toLowerCase()} value={d[k]} onChange={(v) => set(k, v)} />
-                </div>
-              ))}
-            </Collapsible.Content>
-          </Collapsible.Root>
-        </Section>
+  const confirmRemove = () => {
+    if (busy || inFlight.current) return;
+    inFlight.current = true;
+    remove.mutate(undefined, {
+      onSuccess: () => {
+        setConfirmingRemove(false);
+        close();
+      },
+      onError: (error) => {
+        // A 404 means it was already gone; useRemoveTrip has said so.
+        if (!hasStatus(error, 404)) return;
+        setConfirmingRemove(false);
+        close();
+      },
+      onSettled: () => {
+        inFlight.current = false;
+      },
+    });
+  };
 
-        <Section title="Vehicle">
-          <Segmented<Vehicle>
-            value={d.vehicle}
-            onChange={(v) => set("vehicle", v)}
-            options={[
-              { value: "standard", label: "Car / SUV", icon: <Car /> },
-              { value: "tall", label: "Over 7 ft", icon: <Truck /> },
-              { value: "none", label: "Walk-on", icon: <Footprints /> },
-            ]}
-          />
-          {d.vehicle === "tall" && (
-            <Field label="Total height (ft)">
-              <Input type="number" min={7.1} max={14} step={0.1} value={d.height_ft} onChange={(e) => set("height_ft", parseFloat(e.target.value) || 8)} />
-            </Field>
-          )}
-        </Section>
+  const loginConfigured = state.login_configured;
+  const passengersError = shownError("passengers");
 
-        <Section title="Departure window">
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Earliest">
-              <Input type="time" value={d.earliest} onChange={(e) => set("earliest", e.target.value)} />
-            </Field>
-            <Field label="Latest">
-              <Input type="time" value={d.latest} onChange={(e) => set("latest", e.target.value)} />
-            </Field>
-          </div>
-          <p className="text-xs text-muted-foreground">Alerts and auto-cart only fire for sailings in this window.</p>
-        </Section>
-
-        <Section title="Auto-cart">
-          <label className="flex items-start justify-between gap-4 rounded-xl border bg-card p-4">
-            <div>
-              <div className="text-sm font-medium">Add open sailings to my cart</div>
-              <div className="mt-0.5 text-xs text-muted-foreground">
-                {loginConfigured ? "Logs in and holds the sailing in a browser you can finish checkout in." : "Needs BC Ferries login credentials (BCF_USER / BCF_PASS)."}
-              </div>
-            </div>
-            <Switch checked={d.hold} onCheckedChange={(v) => set("hold", v)} />
-          </label>
-          {d.hold && (
-            <Field label="Fare to select">
+  return (
+    <form id={ids.form} noValidate onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
+      <SheetHeader
+        title={editing ? "Edit trip" : "Add a trip"}
+        description={
+          editing
+            ? `${trip?.title ?? "This trip"}. Changes take effect on the next check.`
+            : "Watch another route or date alongside your other trips."
+        }
+        closeDisabled={busy}
+      />
+      <SheetBody>
+        <fieldset disabled={busy} className="min-w-0 space-y-8">
+          <Section title="Route & date">
+            <Field id={ids.from} label="From" error={shownError("from")} hint={terminalsHint}>
               <Select
-                value={d.fare}
-                onValueChange={(v) => set("fare", v as Fare)}
-                options={[
-                  { value: "cheapest", label: "Cheapest available" },
-                  { value: "saver", label: "Saver", hint: "Pay in full, lowest price, strict changes" },
-                  { value: "prepaid", label: "Prepaid", hint: "Pay in full, flexible until the day before" },
-                  { value: "reservation", label: "Reservation Only", hint: "$20 non-refundable fee, rest paid at the terminal" },
-                ]}
+                value={draft.from}
+                onValueChange={setFrom}
+                options={originOptions}
+                placeholder="Choose a terminal"
+                disabled={!terminalList}
               />
             </Field>
-          )}
-        </Section>
+            <Field id={ids.to} label="To" error={shownError("to")}>
+              <Select
+                value={draft.to}
+                onValueChange={(to) => {
+                  update("to", to);
+                  touch("to");
+                }}
+                options={destinationOptions}
+                placeholder="Choose a destination"
+                disabled={!terminalList}
+              />
+            </Field>
+            <Field id={ids.date} label="Departure date" error={shownError("date")}>
+              <Input
+                type="date"
+                min={today}
+                required
+                value={draft.date}
+                onChange={(e) => {
+                  update("date", e.target.value);
+                  touch("date");
+                }}
+              />
+            </Field>
+          </Section>
 
+          <Section title="Travellers" headingId={ids.passengersHeading}>
+            <div
+              id={ids.passengers}
+              role="group"
+              aria-labelledby={ids.passengersHeading}
+              aria-describedby={passengersError ? ids.passengersError : undefined}
+              tabIndex={-1}
+              className="space-y-4 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <PassengerRow
+                id={`${baseId}-adults`}
+                label="Adults"
+                hint="12 and over"
+                singular="adult"
+                plural="adults"
+                value={draft.adults}
+                onChange={(v) => setPassengers("adults", v)}
+              />
+              <Collapsible.Root open={morePax} onOpenChange={setMorePax}>
+                <Collapsible.Trigger className="flex items-center gap-1 rounded text-sm font-medium text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                  <ChevronRight
+                    aria-hidden
+                    className={`size-4 motion-safe:transition-transform ${morePax ? "rotate-90" : ""}`}
+                  />
+                  Children, infants &amp; seniors
+                </Collapsible.Trigger>
+                <Collapsible.Content className="mt-4 space-y-4">
+                  {PASSENGERS.map((p) => (
+                    <PassengerRow
+                      key={p.key}
+                      id={`${baseId}-${p.key}`}
+                      label={p.label}
+                      hint={p.hint}
+                      singular={p.singular}
+                      plural={p.plural}
+                      value={draft[p.key]}
+                      onChange={(v) => setPassengers(p.key, v)}
+                    />
+                  ))}
+                </Collapsible.Content>
+              </Collapsible.Root>
+              {passengersError && (
+                <p id={ids.passengersError} className="text-xs font-medium text-danger">
+                  {passengersError}
+                </p>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              At least one adult or senior, and up to {MAX_PASSENGERS} people in total.
+            </p>
+          </Section>
+
+          <Section title="Vehicle" headingId={ids.vehicleHeading}>
+            <ChoiceGroup
+              aria-labelledby={ids.vehicleHeading}
+              value={draft.vehicle}
+              onChange={(vehicle) => update("vehicle", vehicle)}
+              options={VEHICLES}
+            />
+            {draft.vehicle === "tall" && (
+              <Field
+                id={ids.height}
+                label="Total height (ft)"
+                error={shownError("height")}
+                hint="Over 7 ft and up to 14 ft, including anything on the roof."
+              >
+                <Input
+                  inputMode="decimal"
+                  autoComplete="off"
+                  value={draft.height}
+                  onChange={(e) => update("height", e.target.value)}
+                  onBlur={() => touch("height")}
+                />
+              </Field>
+            )}
+          </Section>
+
+          <Section title="Departure window">
+            <div className="grid grid-cols-2 gap-3">
+              <Field id={ids.earliest} label="Earliest" error={shownError("earliest")}>
+                <Input
+                  type="time"
+                  required
+                  value={draft.earliest}
+                  onChange={(e) => update("earliest", e.target.value)}
+                  onBlur={() => touch("earliest")}
+                />
+              </Field>
+              <Field id={ids.latest} label="Latest" error={shownError("latest")}>
+                <Input
+                  type="time"
+                  required
+                  value={draft.latest}
+                  onChange={(e) => update("latest", e.target.value)}
+                  onBlur={() => touch("latest")}
+                />
+              </Field>
+            </div>
+            <p className="text-xs text-muted-foreground">Alerts and auto-cart only fire for sailings in this window.</p>
+          </Section>
+
+          <Section title="Auto-cart">
+            <div className="flex items-start justify-between gap-4 rounded-xl border bg-card p-4">
+              <div>
+                <label htmlFor={ids.autoCart} className="text-sm font-medium">
+                  Add open sailings to my cart
+                </label>
+                <p id={`${ids.autoCart}-hint`} className="mt-0.5 text-xs text-muted-foreground">
+                  {loginConfigured
+                    ? "Logs in and holds the sailing in a browser you can finish checkout in."
+                    : "Needs a BC Ferries login on the server (BCF_USER and BCF_PASS), so it's off for now."}
+                </p>
+              </div>
+              <Switch
+                id={ids.autoCart}
+                aria-describedby={`${ids.autoCart}-hint`}
+                checked={loginConfigured && draft.auto_cart}
+                disabled={!loginConfigured}
+                onCheckedChange={(on) => update("auto_cart", on)}
+              />
+            </div>
+            {loginConfigured && draft.auto_cart && (
+              <Field id={ids.fare} label="Fare to select">
+                <Select
+                  value={draft.fare}
+                  onValueChange={(fare) => {
+                    if (isFare(fare)) update("fare", fare);
+                  }}
+                  options={FARES}
+                />
+              </Field>
+            )}
+          </Section>
+        </fieldset>
+      </SheetBody>
+      <SheetFooter>
+        {editing && (
+          <Button
+            variant="ghost"
+            className="mr-auto text-muted-foreground hover:text-danger"
+            disabled={busy || trip === undefined}
+            onClick={() => setConfirmingRemove(true)}
+          >
+            <Trash2 aria-hidden /> Remove
+          </Button>
+        )}
+        <Button variant="outline" disabled={busy} onClick={close}>
+          Cancel
+        </Button>
+        <Button type="submit" disabled={busy}>
+          {save.isPending ? (
+            <>
+              <Loader2 className="motion-safe:animate-spin" aria-hidden /> Saving…
+            </>
+          ) : editing ? (
+            "Save"
+          ) : (
+            "Add trip"
+          )}
+        </Button>
+      </SheetFooter>
+      {trip && (
+        <RemoveTripDialog
+          trip={trip}
+          open={confirmingRemove}
+          onOpenChange={setConfirmingRemove}
+          pending={remove.isPending}
+          onConfirm={confirmRemove}
+        />
+      )}
+    </form>
+  );
+}
+
+function PassengerRow({
+  id,
+  label,
+  hint,
+  singular,
+  plural,
+  value,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  hint: string;
+  singular: string;
+  plural: string;
+  value: number;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-4">
+      <div>
+        <div id={`${id}-label`} className="text-sm font-medium">
+          {label}
+        </div>
+        <div id={`${id}-hint`} className="text-xs text-muted-foreground">
+          {hint}
+        </div>
       </div>
-    </Sheet>
+      <Stepper
+        aria-labelledby={`${id}-label`}
+        aria-describedby={`${id}-hint`}
+        value={value}
+        singular={singular}
+        plural={plural}
+        onChange={onChange}
+      />
+    </div>
   );
 }

@@ -1,20 +1,37 @@
 #!/usr/bin/env bash
-# Virtual display for the cart browser, viewable through noVNC at /vnc/vnc.html on :6080.
+# Runs the virtual display, a window manager and the app in one container.
+#
+# KasmVNC's Xvnc is the X server and also serves its web viewer and WebSocket on :6080
+# (under /vnc). There's no password: the service must sit behind an authenticating proxy, and
+# the Kubernetes NetworkPolicy only lets that proxy reach it. If any process exits, so does the
+# container, and Kubernetes restarts it. tini (PID 1) forwards SIGTERM to all of them.
 set -euo pipefail
 
 export DISPLAY=:99
-W="${SCREEN_WIDTH:-1280}"
-H="${SCREEN_HEIGHT:-1000}"
-export BCF_WINDOW_SIZE="${W},${H}"
+mkdir -p /tmp/.X11-unix
 
-Xvfb "$DISPLAY" -screen 0 "${W}x${H}x24" -nolisten tcp &
-for _ in $(seq 50); do [[ -S /tmp/.X11-unix/X99 ]] && break; sleep 0.1; done
+# With a read-only root filesystem, give Chromium (profile, crash reports, caches) a writable home.
+if [[ ! -w "${HOME:-/nonexistent}" ]]; then
+  export HOME=/tmp/home
+  mkdir -p "$HOME"
+fi
 
-# VNC only listens on localhost; websockify is the only way in (behind the gateway's auth).
-x11vnc -display "$DISPLAY" -forever -shared -nopw -localhost -rfbport 5900 -quiet &
-websockify --web /opt/web 6080 localhost:5900 &
-python3 /app/watch.py &
+Xvnc "$DISPLAY" \
+  -geometry "${SCREEN_WIDTH:-1280}x${SCREEN_HEIGHT:-1000}" -depth 24 \
+  -websocketPort 6080 -interface 0.0.0.0 -httpd /opt/vnc-web \
+  -DisableBasicAuth -SecurityTypes None -sslOnly 0 \
+  -AlwaysShared -AcceptSetDesktopSize -FrameRate 30 \
+  -Log '*:stderr:10' &
 
-# If any process exits, exit so Kubernetes restarts the pod.
+for _ in $(seq 100); do
+  [[ -S /tmp/.X11-unix/X99 ]] && break
+  sleep 0.1
+done
+
+# Keeps every browser window full-screen, at whatever size the viewer resizes the screen to.
+matchbox-window-manager -use_titlebar no &
+
+ferry-watch &
+
 wait -n
 exit 1

@@ -1,55 +1,122 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Loader2, MonitorSmartphone, RotateCcw, ShoppingCart, X } from "lucide-react";
-import { api, type Trip } from "@/lib/api";
+import { useState } from "react";
+import { toast } from "sonner";
+import { api, hasStatus } from "@/lib/api";
 import { useStateMutation } from "@/lib/hooks";
+import type { Trip } from "@/lib/schema";
+import { STATE_KEY } from "@/lib/state";
+import { clock, serverToClientMs, timeLabel } from "@/lib/time";
 import { cn } from "@/lib/utils";
 import { Button, LinkButton } from "./ui/button";
 
-export function CartBanner({ trip, vncUrl }: { trip: Trip; vncUrl: string }) {
-  const dismiss = useStateMutation(() => api.dismissCart(trip.id));
-  const release = useStateMutation(() => api.releaseCart(trip.id), "Cart released, watching resumes");
-  const h = trip.cart;
-  if (!h || h.status === "closed") return null;
+export function CartBanner({ trip, checkoutUrl, skew }: { trip: Trip; checkoutUrl: string | null; skew: number }) {
+  const qc = useQueryClient();
+  // The cart being released. "Releasing…" lasts until a state arrives without that cart.
+  const [releasingId, setReleasingId] = useState<string | null>(null);
 
-  const failed = h.status === "failed";
+  // 409: the cart id no longer matches (already released, or replaced). Show the server's version.
+  const onConflict = (error: unknown) => {
+    if (!hasStatus(error, 409)) return false;
+    toast.info("Your cart had already changed. Showing the latest.");
+    void qc.invalidateQueries({ queryKey: STATE_KEY });
+    return true;
+  };
+  const release = useStateMutation((cartId: string) => api.releaseCart(trip.id, cartId), {
+    // If the response still has the cart, the banner keeps saying "Releasing…" until a push drops it.
+    success: (cartId, state) =>
+      state.trips.find((t) => t.id === trip.id)?.cart?.id === cartId ? null : "Cart released. Watching resumes.",
+    onError: onConflict,
+  });
+  const dismiss = useStateMutation((cartId: string) => api.dismissCart(trip.id, cartId), { onError: onConflict });
+
+  const cart = trip.cart;
+  if (!cart) return null;
+  const time = timeLabel(cart.depart);
+  const failed = cart.status === "failed";
+  const releasing = releasingId === cart.id;
+  const fare = [cart.fare, cart.price].filter((part) => part !== null && part !== "").join(" ");
+
+  const startRelease = () => {
+    if (releasing) return;
+    setReleasingId(cart.id);
+    release.mutate(cart.id, { onError: () => setReleasingId(null) });
+  };
+
   return (
-    <div className={cn("flex flex-col gap-4 border-t px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6", failed ? "bg-danger-soft" : "bg-accent")}>
+    <div
+      className={cn(
+        "flex flex-col gap-4 border-t px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6",
+        failed ? "bg-danger-soft" : "bg-accent",
+      )}
+    >
       <div className="flex min-w-0 items-start gap-3.5">
-        <div className={cn("grid size-9 shrink-0 place-items-center rounded-xl [&_svg]:size-[18px]", failed ? "bg-danger text-danger-foreground" : "bg-primary text-primary-foreground")}>
-          {h.status === "adding" ? <Loader2 className="animate-spin" /> : failed ? <AlertTriangle /> : <ShoppingCart />}
+        <div
+          aria-hidden
+          className={cn(
+            "grid size-9 shrink-0 place-items-center rounded-xl [&_svg]:size-[18px]",
+            failed ? "bg-danger text-danger-foreground" : "bg-primary text-primary-foreground",
+          )}
+        >
+          {cart.status === "adding" ? (
+            <Loader2 className="motion-safe:animate-spin" />
+          ) : failed ? (
+            <AlertTriangle />
+          ) : (
+            <ShoppingCart />
+          )}
         </div>
-        <div className="min-w-0">
+        <div className="min-w-0 space-y-1">
           <div className="text-[15px] font-semibold">
-            {h.status === "adding" && `Adding ${h.depart} to your cart…`}
-            {h.status === "ready" && `${h.depart} is in your cart`}
-            {failed && `Couldn't add ${h.depart} to the cart`}
+            {cart.status === "adding" && `Adding the ${time} sailing to your cart…`}
+            {cart.status === "ready" && `The ${time} sailing is in your cart`}
+            {failed && `Couldn't add the ${time} sailing to your cart`}
           </div>
-          <p className="mt-0.5 text-sm text-muted-foreground">
-            {h.status === "adding" && "Selecting your fare."}
-            {h.status === "ready" && (
-              <>
-                {h.fare} {h.price} · Finish checkout in the {vncUrl ? "checkout browser" : "browser window"}. Nothing is booked until you pay.
-                This trip is paused until you release the cart.
-              </>
-            )}
-            {failed && h.error}
-          </p>
+          {cart.status === "adding" && <p className="text-sm text-muted-foreground">Selecting your fare.</p>}
+          {cart.status === "ready" && (
+            <>
+              <p className="text-sm text-muted-foreground">
+                {fare && `${fare} · `}
+                Added at {clock(serverToClientMs(cart.since, skew))}. Finish checkout in the{" "}
+                {checkoutUrl ? "checkout browser" : "watcher's browser window"}. Nothing is booked until you pay.
+              </p>
+              <p className="text-sm text-muted-foreground">
+                Booked it? Pause or remove this trip so it doesn't hold another.
+              </p>
+            </>
+          )}
+          {failed && cart.error && <p className="break-words text-sm text-muted-foreground">{cart.error}</p>}
         </div>
       </div>
-      {h.status === "ready" && (
+      {cart.status === "ready" && (
         <div className="flex w-full flex-col-reverse gap-2 sm:w-auto sm:flex-row">
-          <Button variant="outline" onClick={() => release.mutate(undefined)} disabled={release.isPending}>
-            <RotateCcw /> Release
+          <Button variant="outline" onClick={startRelease} disabled={releasing}>
+            {releasing ? (
+              <>
+                <Loader2 className="motion-safe:animate-spin" aria-hidden /> Releasing…
+              </>
+            ) : (
+              <>
+                <RotateCcw aria-hidden /> Release
+              </>
+            )}
           </Button>
-          {vncUrl && (
-            <LinkButton href={vncUrl} target="_blank" rel="noopener">
-              <MonitorSmartphone /> Open checkout
+          {checkoutUrl && (
+            <LinkButton href={checkoutUrl} target="_blank">
+              <MonitorSmartphone aria-hidden /> Open checkout
             </LinkButton>
           )}
         </div>
       )}
       {failed && (
-        <Button variant="ghost" size="sm" onClick={() => dismiss.mutate(undefined)} className="self-end sm:self-auto">
-          <X /> Dismiss
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => dismiss.mutate(cart.id)}
+          disabled={dismiss.isPending}
+          className="self-end sm:self-auto"
+        >
+          <X aria-hidden /> Dismiss
         </Button>
       )}
     </div>

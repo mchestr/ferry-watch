@@ -9,6 +9,7 @@ const buttonVariants = cva(
       variant: {
         default: "bg-primary text-primary-foreground shadow-sm hover:bg-primary/90",
         success: "bg-success text-success-foreground shadow-sm hover:bg-success/90",
+        danger: "bg-danger text-danger-foreground shadow-sm hover:bg-danger/90",
         outline: "border border-input bg-card shadow-sm hover:bg-muted",
         ghost: "hover:bg-muted",
         subtle: "bg-muted text-foreground hover:bg-muted/70",
@@ -24,20 +25,30 @@ const buttonVariants = cva(
   },
 );
 
-export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement>, VariantProps<typeof buttonVariants> {
-  asChild?: boolean;
-}
+export type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & VariantProps<typeof buttonVariants>;
 
-export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(({ className, variant, size, ...props }, ref) => (
-  <button ref={ref} className={cn(buttonVariants({ variant, size }), className)} {...props} />
-));
+export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
+  ({ className, variant, size, type = "button", ...props }, ref) => (
+    <button ref={ref} type={type} className={cn(buttonVariants({ variant, size }), className)} {...props} />
+  ),
+);
 Button.displayName = "Button";
 
-export function LinkButton({
-  className,
-  variant,
-  size,
-  ...props
-}: React.AnchorHTMLAttributes<HTMLAnchorElement> & VariantProps<typeof buttonVariants>) {
-  return <a className={cn(buttonVariants({ variant, size }), className)} {...props} />;
-}
+export type LinkButtonProps = React.AnchorHTMLAttributes<HTMLAnchorElement> & VariantProps<typeof buttonVariants>;
+
+/**
+ * A link styled as a button. Links opening a new tab get rel="noopener noreferrer" unless told
+ * otherwise. Forwards its ref, so it can be a tooltip trigger.
+ */
+export const LinkButton = React.forwardRef<HTMLAnchorElement, LinkButtonProps>(
+  ({ className, variant, size, rel, target, ...props }, ref) => (
+    <a
+      ref={ref}
+      className={cn(buttonVariants({ variant, size }), className)}
+      target={target}
+      rel={rel ?? (target === "_blank" ? "noopener noreferrer" : undefined)}
+      {...props}
+    />
+  ),
+);
+LinkButton.displayName = "LinkButton";

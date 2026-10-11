@@ -1,12 +1,13 @@
-import path from "node:path";
+import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
 export default defineConfig({
   plugins: [react()],
-  resolve: { alias: { "@": path.resolve(__dirname, "src") } },
+  resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
   server: {
-    // `npm run dev` talks to a watcher running locally (./run.sh).
+    // `npm run dev` talks to a watcher running locally (./run.sh). Leave `changeOrigin` off:
+    // the server refuses cross-origin requests, so the proxied Host must stay the dev server's.
     proxy: { "/api": { target: "http://localhost:8765", ws: true } },
   },
 });

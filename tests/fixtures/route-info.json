@@ -1,0 +1,271 @@
+[
+ {
+  "code": "TSA",
+  "name": "Vancouver (Tsawwassen)",
+  "travelRouteName": null,
+  "city": {
+   "code": "DEL",
+   "name": "Delta",
+   "sortOrder": 1,
+   "isBookable": false
+  },
+  "geoGraphicalArea": {
+   "code": "MV",
+   "name": "Metro Vancouver",
+   "sortOrder": 1,
+   "isBookable": false
+  },
+  "destinationRoutes": [
+   {
+    "destination": "SWB",
+    "code": "SWB",
+    "name": "Victoria (Swartz Bay)",
+    "travelRouteName": "victoria-swartz-bay",
+    "routeGroup": "GROUP_4",
+    "isBookable": true,
+    "isWalkOn": true,
+    "motorcycleAllowed": false,
+    "allowLivestock": true,
+    "allowsWalkOnOptions": false,
+    "allowAdditionalPassengerTypes": false,
+    "allowVoucher": false,
+    "allowTAP": true,
+    "routeType": "SHORT",
+    "limitedAvailability": false,
+    "enableWaitlist": false,
+    "geoGraphicalArea": {
+     "code": "VI",
+     "name": "Vancouver Island",
+     "sortOrder": 2,
+     "isBookable": false
+    },
+    "city": {
+     "code": "SID",
+     "name": "Sidney",
+     "sortOrder": 1,
+     "isBookable": false
+    },
+    "currentConditionEnabled": true,
+    "allowAccessibilities": false,
+    "allowAmenities": false,
+    "staticSchedule": false,
+    "scheduleEnabled": true,
+    "serviceNoticeEnabled": true,
+    "fullyPrepaid": false
+   },
+   {
+    "destination": "NAN",
+    "code": "NAN",
+    "name": "Nanaimo (Departure Bay)",
+    "travelRouteName": "nanaimo-departure-bay",
+    "routeGroup": "GROUP_4",
+    "isBookable": true,
+    "isWalkOn": true,
+    "motorcycleAllowed": false,
+    "allowLivestock": true,
+    "allowsWalkOnOptions": false,
+    "allowAdditionalPassengerTypes": false,
+    "allowVoucher": false,
+    "allowTAP": true,
+    "routeType": "SHORT",
+    "limitedAvailability": false,
+    "enableWaitlist": false,
+    "geoGraphicalArea": {
+     "code": "VI",
+     "name": "Vancouver Island",
+     "sortOrder": 2,
+     "isBookable": false
+    },
+    "city": {
+     "code": "NMO",
+     "name": "Nanaimo",
+     "sortOrder": 2,
+     "isBookable": false
+    },
+    "currentConditionEnabled": true,
+    "allowAccessibilities": false,
+    "allowAmenities": false,
+    "staticSchedule": true,
+    "scheduleEnabled": true,
+    "serviceNoticeEnabled": true,
+    "fullyPrepaid": false
+   }
+  ],
+  "isBookable": true,
+  "allowsWalkOnOptions": false
+ },
+ {
+  "code": "HSB",
+  "name": "Vancouver (Horseshoe Bay)",
+  "travelRouteName": null,
+  "city": {
+   "code": "WVN",
+   "name": "West Vancouver",
+   "sortOrder": 2,
+   "isBookable": false
+  },
+  "geoGraphicalArea": {
+   "code": "MV",
+   "name": "Metro Vancouver",
+   "sortOrder": 1,
+   "isBookable": false
+  },
+  "destinationRoutes": [
+   {
+    "destination": "NAN",
+    "code": "NAN",
+    "name": "Nanaimo (Departure Bay)",
+    "travelRouteName": "nanaimo-departure-bay",
+    "routeGroup": "GROUP_4",
+    "isBookable": true,
+    "isWalkOn": true,
+    "motorcycleAllowed": true,
+    "allowLivestock": true,
+    "allowsWalkOnOptions": false,
+    "allowAdditionalPassengerTypes": false,
+    "allowVoucher": false,
+    "allowTAP": true,
+    "routeType": "SHORT",
+    "limitedAvailability": false,
+    "enableWaitlist": false,
+    "geoGraphicalArea": {
+     "code": "VI",
+     "name": "Vancouver Island",
+     "sortOrder": 2,
+     "isBookable": false
+    },
+    "city": {
+     "code": "NMO",
+     "name": "Nanaimo",
+     "sortOrder": 2,
+     "isBookable": false
+    },
+    "currentConditionEnabled": true,
+    "allowAccessibilities": false,
+    "allowAmenities": false,
+    "staticSchedule": false,
+    "scheduleEnabled": true,
+    "serviceNoticeEnabled": true,
+    "fullyPrepaid": true
+   }
+  ],
+  "isBookable": true,
+  "allowsWalkOnOptions": false
+ },
+ {
+  "code": "SWB",
+  "name": "Victoria (Swartz Bay)",
+  "travelRouteName": null,
+  "city": {
+   "code": "SID",
+   "name": "Sidney",
+   "sortOrder": 1,
+   "isBookable": false
+  },
+  "geoGraphicalArea": {
+   "code": "VI",
+   "name": "Vancouver Island",
+   "sortOrder": 2,
+   "isBookable": false
+  },
+  "destinationRoutes": [
+   {
+    "destination": "TSA",
+    "code": "TSA",
+    "name": "Vancouver (Tsawwassen)",
+    "travelRouteName": "vancouver-tsawwassen",
+    "routeGroup": "GROUP_4",
+    "isBookable": true,
+    "isWalkOn": true,
+    "motorcycleAllowed": false,
+    "allowLivestock": true,
+    "allowsWalkOnOptions": false,
+    "allowAdditionalPassengerTypes": false,
+    "allowVoucher": false,
+    "allowTAP": true,
+    "routeType": "SHORT",
+    "limitedAvailability": false,
+    "enableWaitlist": false,
+    "geoGraphicalArea": {
+     "code": "MV",
+     "name": "Metro Vancouver",
+     "sortOrder": 1,
+     "isBookable": false
+    },
+    "city": {
+     "code": "DEL",
+     "name": "Delta",
+     "sortOrder": 1,
+     "isBookable": false
+    },
+    "currentConditionEnabled": true,
+    "allowAccessibilities": false,
+    "allowAmenities": false,
+    "staticSchedule": false,
+    "scheduleEnabled": true,
+    "serviceNoticeEnabled": true,
+    "fullyPrepaid": false
+   }
+  ],
+  "isBookable": true,
+  "allowsWalkOnOptions": false
+ },
+ {
+  "code": "NAN",
+  "name": "Nanaimo (Departure Bay)",
+  "travelRouteName": null,
+  "city": {
+   "code": "NMO",
+   "name": "Nanaimo",
+   "sortOrder": 2,
+   "isBookable": false
+  },
+  "geoGraphicalArea": {
+   "code": "VI",
+   "name": "Vancouver Island",
+   "sortOrder": 2,
+   "isBookable": false
+  },
+  "destinationRoutes": [
+   {
+    "destination": "HSB",
+    "code": "HSB",
+    "name": "Vancouver (Horseshoe Bay)",
+    "travelRouteName": "vancouver-horseshoe-bay",
+    "routeGroup": "GROUP_4",
+    "isBookable": true,
+    "isWalkOn": true,
+    "motorcycleAllowed": false,
+    "allowLivestock": true,
+    "allowsWalkOnOptions": false,
+    "allowAdditionalPassengerTypes": false,
+    "allowVoucher": false,
+    "allowTAP": true,
+    "routeType": "SHORT",
+    "limitedAvailability": false,
+    "enableWaitlist": false,
+    "geoGraphicalArea": {
+     "code": "MV",
+     "name": "Metro Vancouver",
+     "sortOrder": 1,
+     "isBookable": false
+    },
+    "city": {
+     "code": "WVN",
+     "name": "West Vancouver",
+     "sortOrder": 2,
+     "isBookable": false
+    },
+    "currentConditionEnabled": true,
+    "allowAccessibilities": false,
+    "allowAmenities": false,
+    "staticSchedule": false,
+    "scheduleEnabled": true,
+    "serviceNoticeEnabled": true,
+    "fullyPrepaid": false
+   }
+  ],
+  "isBookable": true,
+  "allowsWalkOnOptions": false
+ }
+]

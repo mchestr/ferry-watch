@@ -1,78 +1,182 @@
-import { AlertTriangle, CheckCircle2, ExternalLink, Loader2, PauseCircle, Radar } from "lucide-react";
-import type { Trip } from "@/lib/api";
-import { cn } from "@/lib/utils";
-import { LinkButton } from "./ui/button";
+import {
+  AlertTriangle,
+  CalendarX2,
+  CheckCircle2,
+  ExternalLink,
+  Loader2,
+  PauseCircle,
+  Radar,
+  ShoppingCart,
+  Trash2,
+} from "lucide-react";
+import type * as React from "react";
+import type { Trip } from "@/lib/schema";
+import { clock, serverToClientMs, timeLabel } from "@/lib/time";
+import { bookableSummary, soldOutSummary, tripStatus } from "@/lib/trip";
+import { cn, plural } from "@/lib/utils";
+import { Button, LinkButton } from "./ui/button";
 
-export function StatusPanel({ trip, watching }: { trip: Trip; watching: boolean }) {
-  const { sailings, checking, last_error } = trip;
-  const inWindow = sailings.filter((s) => s.in_window !== false);
-  const bookable = inWindow.filter((s) => s.status === "available");
-  const active = watching && trip.enabled;
+type Tone = "ok" | "bad" | "idle" | "live";
 
-  let tone: "ok" | "bad" | "idle" | "live" = "live";
-  let icon = <Radar />;
-  let title = "No reservations available yet";
-  let sub = `${inWindow.length} sailing${inWindow.length === 1 ? "" : "s"} in your window, all sold out.`;
+interface View {
+  tone: Tone;
+  icon: React.ReactNode;
+  title: string;
+  lines: string[];
+}
 
-  if (bookable.length) {
-    tone = "ok";
-    icon = <CheckCircle2 />;
-    title = `${bookable.length} sailing${bookable.length > 1 ? "s" : ""} bookable now`;
-    const shown = bookable.slice(0, 3).map((s) => (s.price ? `${s.depart} (${s.price})` : s.depart));
-    sub = shown.join(", ") + (bookable.length > 3 ? ` +${bookable.length - 3} more` : "");
-  } else if (!active) {
-    tone = "idle";
-    icon = <PauseCircle />;
-    title = trip.enabled ? "Watching is paused" : "This trip is paused";
-    sub = trip.enabled ? "Turn watching back on to resume checks." : "Turn it back on to resume checks and alerts.";
-  } else if (!sailings.length && checking) {
-    tone = "idle";
-    icon = <Loader2 className="animate-spin" />;
-    title = "Opening a booking session…";
-    sub = "Walking through the BC Ferries booking form, this takes up to a minute.";
-  } else if (!sailings.length && last_error) {
-    tone = "bad";
-    icon = <AlertTriangle />;
-    title = "Last check failed";
-    sub = last_error;
-  } else if (!sailings.length) {
-    tone = "idle";
-    title = "Waiting for the first check";
-    sub = "";
+function describe(trip: Trip, watching: boolean, skew: number): View & { kind: ReturnType<typeof tripStatus>["kind"] } {
+  const status = tripStatus(trip, watching);
+  const at = (serverSeconds: number) => clock(serverToClientMs(serverSeconds, skew));
+  switch (status.kind) {
+    case "error": {
+      const lines = [status.message];
+      if (status.resultsFrom !== null) lines.push(`Showing results from ${at(status.resultsFrom)}.`);
+      if (status.retryAt !== null && serverToClientMs(status.retryAt, skew) > Date.now()) {
+        lines.push(`Trying again at ${at(status.retryAt)}.`);
+      }
+      return { kind: status.kind, tone: "bad", icon: <AlertTriangle />, title: "Last check failed", lines };
+    }
+    case "past":
+      return {
+        kind: status.kind,
+        tone: "idle",
+        icon: <CalendarX2 />,
+        title: "This date has passed",
+        lines: ["Past dates aren't checked any more. Remove the trip, or pause it to keep it around."],
+      };
+    case "paused":
+      return status.scope === "trip"
+        ? {
+            kind: status.kind,
+            tone: "idle",
+            icon: <PauseCircle />,
+            title: "This trip is paused",
+            lines: ["Turn it back on to resume checks and alerts."],
+          }
+        : {
+            kind: status.kind,
+            tone: "idle",
+            icon: <PauseCircle />,
+            title: "Watching is paused",
+            lines: ["Turn watching back on to resume checks."],
+          };
+    case "held":
+      return status.cart.status === "ready"
+        ? {
+            kind: status.kind,
+            tone: "idle",
+            icon: <ShoppingCart />,
+            title: "Checks paused while your cart is held",
+            lines: [`The ${timeLabel(status.cart.depart)} sailing is in your cart. Release it to resume watching.`],
+          }
+        : {
+            kind: status.kind,
+            tone: "idle",
+            icon: <ShoppingCart />,
+            title: "A sailing opened up",
+            lines: [`Adding the ${timeLabel(status.cart.depart)} sailing to your cart.`],
+          };
+    case "checking":
+      return {
+        kind: status.kind,
+        tone: "idle",
+        icon: <Loader2 className="motion-safe:animate-spin" />,
+        title: "Opening a booking session…",
+        lines: ["Walking through the BC Ferries booking form. This takes up to a minute."],
+      };
+    case "waiting":
+      return { kind: status.kind, tone: "idle", icon: <Radar />, title: "Waiting for the first check", lines: [] };
+    case "bookable":
+      return {
+        kind: status.kind,
+        tone: "ok",
+        icon: <CheckCircle2 />,
+        title: `${plural(status.sailings.length, "sailing")} bookable now`,
+        lines: [bookableSummary(status.sailings)],
+      };
+    case "sold_out":
+      return {
+        kind: status.kind,
+        tone: "live",
+        icon: <Radar />,
+        title: status.total ? "No reservations available yet" : "No sailings found",
+        lines: [soldOutSummary(status.inWindow, status.total)],
+      };
   }
+}
 
+export function StatusPanel({
+  trip,
+  watching,
+  skew,
+  onPause,
+  pausePending,
+  onRemove,
+}: {
+  trip: Trip;
+  watching: boolean;
+  skew: number;
+  onPause: () => void;
+  pausePending: boolean;
+  onRemove: () => void;
+}) {
+  const view = describe(trip, watching, skew);
   return (
     <div
       className={cn(
         "flex flex-col gap-4 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6",
-        tone === "ok" && "bg-success-soft",
-        tone === "bad" && "bg-danger-soft",
+        view.tone === "ok" && "bg-success-soft",
+        view.tone === "bad" && "bg-danger-soft",
       )}
     >
       <div className="flex min-w-0 items-start gap-3.5">
         <div
+          aria-hidden
           className={cn(
             "grid size-9 shrink-0 place-items-center rounded-xl [&_svg]:size-[18px]",
-            tone === "ok" && "bg-success text-success-foreground",
-            tone === "bad" && "bg-danger text-danger-foreground",
-            tone === "live" && "bg-accent text-accent-foreground",
-            tone === "idle" && "bg-muted text-muted-foreground",
+            view.tone === "ok" && "bg-success text-success-foreground",
+            view.tone === "bad" && "bg-danger text-danger-foreground",
+            view.tone === "live" && "bg-accent text-accent-foreground",
+            view.tone === "idle" && "bg-muted text-muted-foreground",
           )}
         >
-          {icon}
+          {view.icon}
         </div>
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-[15px] font-semibold">
-            {title}
-            {tone === "live" && <span className="size-2 rounded-full bg-success animate-pulse-ring" aria-label="watching" />}
+            {view.title}
+            {view.tone === "live" && (
+              <span
+                role="img"
+                aria-label="Watching"
+                className="size-2 shrink-0 rounded-full bg-success motion-safe:animate-pulse-ring"
+              />
+            )}
           </div>
-          {sub && <p className="mt-0.5 break-words text-sm text-muted-foreground tabular">{sub}</p>}
+          {view.lines.map((line) => (
+            <p key={line} className="tabular mt-0.5 break-words text-sm text-muted-foreground">
+              {line}
+            </p>
+          ))}
         </div>
       </div>
-      {tone === "ok" && (
-        <LinkButton variant="success" href={trip.booking_link} target="_blank" rel="noopener" className="w-full sm:w-auto">
-          Book on BC Ferries <ExternalLink />
+      {view.kind === "bookable" && trip.booking_url && (
+        <LinkButton variant="success" href={trip.booking_url} target="_blank" className="w-full sm:w-auto">
+          Book on BC Ferries <ExternalLink aria-hidden />
         </LinkButton>
+      )}
+      {view.kind === "past" && (
+        <div className="flex w-full gap-2 sm:w-auto">
+          {trip.enabled && (
+            <Button variant="outline" className="flex-1 sm:flex-none" onClick={onPause} disabled={pausePending}>
+              <PauseCircle aria-hidden /> Pause
+            </Button>
+          )}
+          <Button variant="outline" className="flex-1 sm:flex-none" onClick={onRemove}>
+            <Trash2 aria-hidden /> Remove
+          </Button>
+        </div>
       )}
     </div>
   );

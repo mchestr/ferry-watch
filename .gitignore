@@ -1,7 +1,19 @@
-config.json
-last-error.png
-watch.log
+# local runtime files
+/config.json
+/alerted.json
+/terminals.json
+*.invalid-*
+
+# Python
 __pycache__/
+.venv/
+.coverage
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# frontend
 web/node_modules/
 web/dist/
+web/coverage/
 *.tsbuildinfo
