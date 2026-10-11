@@ -4,7 +4,11 @@ Runs as a task on the same event loop as the web server, so it shares state with
 handlers without locks. Each trip's session walks the booking form once and is then re-checked by
 reloading its results page (~3s). When a sailing in the trip's window opens, the same page selects
 a fare (it lands in that session's cart) and an alert goes out. A trip holding a cart isn't checked
-until the user releases the cart or closes the checkout window; the cart survives pausing.
+until the user releases the cart, closes the checkout window, or the hold time runs out; the cart
+survives pausing.
+
+Each trip is checked on its own schedule, in a background task (a few at a time), so a trip
+waiting in BC Ferries' queue doesn't hold up the others or the care of held carts.
 """
 
 from __future__ import annotations
@@ -22,10 +26,11 @@ from typing import Protocol
 from .bcferries.errors import BookingError, LoginFailed, MarkupChanged, SessionExpired, describe
 from .bcferries.site import Credentials, search_url
 from .bcferries.terminals import Terminals
-from .models import Fare, FarePreference, Sailing, Trip, format_time, today
+from .models import Config, Fare, FarePreference, Sailing, Trip, format_time, today
 from .notify import (
     Alerts,
     bookable_message,
+    cart_expired_message,
     cart_lost_message,
     cart_message,
     failing_message,
@@ -39,7 +44,9 @@ from .store import ConfigStore
 log = logging.getLogger(__name__)
 
 JITTER = 0.15  # spread checks so they don't land on an exact beat
-CART_POLL_SECONDS = 5  # how often a held cart is checked for release or a closed window
+CART_POLL_SECONDS = 5  # how often a held cart is checked for release, a closed window or expiry
+CHECK_TIMEOUT_SECONDS = 15 * 60  # longer than BC Ferries' queue ever takes; a check past this is stuck
+IDLE_WAKE_SECONDS = 60  # with nothing due, look again this often anyway
 CART_BUDGET_SECONDS = 40  # give up selecting a fare after this long and just alert
 ERROR_BACKOFF_SECONDS = (0, 60, 120, 300, 600)  # wait before retrying, by consecutive failures
 RESET_SESSION_AFTER = 3  # consecutive failures before starting over with a fresh browser context
@@ -102,6 +109,8 @@ class Watcher:
         memory: AlertMemory | None,
         credentials: Credentials | None,
         checkout_url: str | None,
+        cart_hold_minutes: int = 60,
+        concurrency: int = 3,
     ) -> None:
         self._store = store
         self._state = state
@@ -112,7 +121,11 @@ class Watcher:
         self._credentials = credentials
         self._secrets = (credentials.username, credentials.password) if credentials else ()
         self._checkout_url = checkout_url
+        self._cart_hold_minutes = cart_hold_minutes  # 0: hold until released
         self._sessions: dict[str, _OpenSession] = {}
+        self._checks: dict[str, asyncio.Task[None]] = {}  # trip id -> its check, while one runs
+        self._slots = asyncio.Semaphore(concurrency)
+        self._login_lock = asyncio.Lock()  # one login at a time, however many trips start at once
         self._wake = asyncio.Event()
         self._login_blocked_until = 0.0
         store.subscribe(self.wake)
@@ -128,6 +141,7 @@ class Watcher:
     def check_now(self) -> None:
         for runtime in self._state.trips.values():
             runtime.retry_at = None
+            runtime.next_due = None
         self.wake()
 
     def release_cart(self, trip_id: str, cart_id: str) -> bool:
@@ -164,62 +178,117 @@ class Watcher:
             await self._close_all()
 
     async def cycle(self) -> None:
-        """One pass over every trip: check it, or look after its held cart. `run()` repeats this."""
-        config = self._store.config
-        trip_ids = [t.id for t in config.trips]
+        """Look after held carts and start a check for every trip that's due. `run()` repeats this.
 
-        # Trips removed while their cart was held: hand the spot back.
-        for trip_id in set(self._sessions) - set(trip_ids):
+        Checks run in the background; `drain()` waits for them (tests use it).
+        """
+        self._state.heartbeat_at = time.time()
+        config = self._store.config
+        trip_ids = {t.id for t in config.trips}
+
+        # Trips removed meanwhile: stop their checks and hand back any cart they had.
+        for trip_id in (set(self._sessions) | set(self._checks)) - trip_ids:
+            await self._stop_check(trip_id)
             runtime = self._state.trips.get(trip_id)
-            if runtime and runtime.holding:
+            if runtime and runtime.cart and runtime.cart.status is not CartStatus.FAILED:
                 await self._empty_cart(trip_id)
             await self._close_session(trip_id)
         self._state.prune(trip_ids)
 
-        for trip_id in trip_ids:
-            self._state.heartbeat_at = time.time()
-            # Re-read: the config may have changed while earlier trips were being checked.
-            config = self._store.config
-            trip = config.trip(trip_id)
-            if trip is None:
-                continue
-            runtime = self._state.trip(trip_id)
+        now = time.time()
+        for trip in config.trips:
+            runtime = self._state.trip(trip.id)
             if runtime.holding:
                 await self._service_cart(trip, runtime)
-            elif config.enabled and trip.enabled and trip.date >= today():
-                await self._check(trip, runtime)
-            else:
-                await self._close_session(trip_id)
+                if runtime.holding:
+                    continue
+            if trip.id in self._checks:
+                continue
+            if not self._active(config, trip):
+                await self._close_session(trip.id)
                 if runtime.error or runtime.retry_at:
                     # Not being checked any more, so an old failure would only mislead.
                     runtime.error = runtime.error_at = runtime.retry_at = None
                     runtime.consecutive_errors = 0
                     self._state.changed()
+                continue
+            if (runtime.next_due is None or runtime.next_due <= now) and (
+                runtime.retry_at is None or runtime.retry_at <= now
+            ):
+                self._start_check(trip.id)
 
         self._state.heartbeat_at = time.time()
         self._save_alerts()
 
+    async def drain(self) -> None:
+        """Wait until no check is running."""
+        while self._checks:
+            await asyncio.gather(*self._checks.values(), return_exceptions=True)
+
+    def _active(self, config: Config, trip: Trip) -> bool:
+        return config.enabled and trip.enabled and trip.date >= today()
+
+    def _start_check(self, trip_id: str) -> None:
+        task = asyncio.create_task(self._guarded_check(trip_id), name=f"check {trip_id}")
+        self._checks[trip_id] = task
+
+        def done(_: asyncio.Task[None]) -> None:
+            if self._checks.get(trip_id) is task:
+                del self._checks[trip_id]
+            self.wake()  # its next check time is known now
+
+        task.add_done_callback(done)
+
+    async def _stop_check(self, trip_id: str) -> None:
+        task = self._checks.pop(trip_id, None)
+        if task is not None:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    async def _guarded_check(self, trip_id: str) -> None:
+        async with self._slots:
+            # Re-read: the trip may have changed (or gone) while waiting for a slot.
+            config = self._store.config
+            trip = config.trip(trip_id)
+            runtime = self._state.trips.get(trip_id)
+            if trip is None or runtime is None or runtime.holding or not self._active(config, trip):
+                return
+            try:
+                async with asyncio.timeout(CHECK_TIMEOUT_SECONDS):
+                    await self._check(trip, runtime)
+            except TimeoutError:
+                minutes = CHECK_TIMEOUT_SECONDS // 60
+                await self._failed(trip, runtime, BookingError(f"The check was stuck for {minutes} minutes"))
+            except Exception:
+                log.exception("%s: unexpected error while checking", trip_id)
+            finally:
+                interval = self._store.config.interval_seconds
+                runtime.next_due = time.time() + interval * random.uniform(1 - JITTER, 1 + JITTER)  # noqa: S311
+                self._state.changed()
+
     async def _sleep(self) -> None:
+        """Until the next trip is due, a held cart needs looking at, or something changes."""
         config = self._store.config
-        delay = config.interval_seconds * random.uniform(1 - JITTER, 1 + JITTER)  # noqa: S311 (not crypto)
-        deadline = time.monotonic() + delay
-        checking = config.enabled and any(
-            t.enabled and t.date >= today() and not self._holding(t.id) for t in config.trips
-        )
-        self._state.next_check_at = time.time() + delay if checking else None
+        now = time.time()
+        due: list[float] = []
+        holding = False
+        for trip in config.trips:
+            runtime = self._state.trip(trip.id)
+            if runtime.holding:
+                holding = True
+            elif self._active(config, trip) and trip.id not in self._checks:
+                due.append(max(runtime.next_due or now, runtime.retry_at or now))
+        self._state.next_check_at = min(due, default=None)
         self._state.changed()
 
-        while (remaining := deadline - time.monotonic()) > 0:
-            held = [t for t in self._store.config.trips if self._holding(t.id)]
-            try:
-                await asyncio.wait_for(self._wake.wait(), min(remaining, CART_POLL_SECONDS) if held else remaining)
-            except TimeoutError:
-                self._state.heartbeat_at = time.time()
-                for trip in held:
-                    await self._service_cart(trip, self._state.trip(trip.id))
-                continue
-            self._wake.clear()
+        timeout = min(due, default=now + IDLE_WAKE_SECONDS) - now
+        if holding:
+            timeout = min(timeout, CART_POLL_SECONDS)
+        try:
+            await asyncio.wait_for(self._wake.wait(), max(timeout, 0.05))
+        except TimeoutError:
             return
+        self._wake.clear()
 
     def _holding(self, trip_id: str) -> bool:
         runtime = self._state.trips.get(trip_id)
@@ -262,10 +331,15 @@ class Watcher:
         return session, sailings
 
     async def _login(self, session: Session) -> None:
-        if self._credentials is None:
-            return
+        async with self._login_lock:
+            # Checked again inside the lock: a login that just failed for another trip pauses this one too.
+            if self._credentials is None or time.time() < self._login_blocked_until:
+                return
+            await self._login_once(session, self._credentials)
+
+    async def _login_once(self, session: Session, credentials: Credentials) -> None:
         try:
-            await session.login(self._credentials)
+            await session.login(credentials)
         except LoginFailed as e:
             # Don't retry every check and get the account locked; carry on without logging in.
             self._login_blocked_until = time.time() + LOGIN_BACKOFF_SECONDS
@@ -292,6 +366,8 @@ class Watcher:
             self._state.changed()
 
     async def _close_all(self) -> None:
+        for trip_id in list(self._checks):
+            await self._stop_check(trip_id)
         for trip_id in list(self._sessions):
             with contextlib.suppress(Exception):
                 await self._close_session(trip_id)
@@ -308,8 +384,6 @@ class Watcher:
     # ---- checking
 
     async def _check(self, trip: Trip, runtime: TripRuntime) -> None:
-        if runtime.retry_at and time.time() < runtime.retry_at:
-            return
         runtime.checking = True
         self._state.changed()
         try:
@@ -421,7 +495,8 @@ class Watcher:
             )
             return None
 
-        runtime.cart = Cart(CartStatus.READY, sailing.depart, fare=fare)
+        expires_at = time.time() + self._cart_hold_minutes * 60 if self._cart_hold_minutes else None
+        runtime.cart = Cart(CartStatus.READY, sailing.depart, fare=fare, expires_at=expires_at)
         self._state.event(
             EventKind.CART,
             f"{format_time(sailing.depart)} added to the cart ({fare.name} {fare.price})",
@@ -433,18 +508,24 @@ class Watcher:
         return fare
 
     async def _service_cart(self, trip: Trip, runtime: TripRuntime) -> None:
-        """A held cart: carry on once the user releases it or the checkout window goes away."""
+        """A held cart: carry on once the user releases it, the checkout window goes away, or it expires."""
         cart = runtime.cart
         current = self._sessions.get(trip.id)
         session = current.session if current else None
         open_window = session is not None and not session.closed
-        if cart is None or (open_window and not runtime.release_requested):
+        expired = cart is not None and cart.expires_at is not None and cart.expires_at <= time.time()
+        if cart is None or (open_window and not runtime.release_requested and not expired):
             return
 
-        if runtime.release_requested:
+        if runtime.release_requested or (open_window and expired):
             if open_window:
                 await self._empty_cart(trip.id)
-            kind, text = EventKind.INFO, "Cart released, watching resumed"
+            if runtime.release_requested:
+                kind, text = EventKind.INFO, "Cart released, watching resumed"
+            else:
+                minutes = self._cart_hold_minutes
+                kind, text = EventKind.INFO, f"Released the {format_time(cart.depart)} cart after {minutes} minutes"
+                self._alerts.submit(cart_expired_message(trip, self._route(trip), cart.depart, minutes))
         elif session is not None and not session.lost:
             kind, text = EventKind.INFO, "Checkout window closed, watching resumed"
         else:
@@ -455,6 +536,7 @@ class Watcher:
 
         runtime.cart = None
         runtime.release_requested = False
+        runtime.next_due = None  # check again straight away
         await self._close_session(trip.id)
         self._state.event(kind, text, trip.id, self._title(trip))
         self._save_alerts()

@@ -46,6 +46,7 @@ export function makeCart(overrides: Partial<CartState> = {}): CartState {
     fare: "Saver",
     price: "$93.45",
     error: null,
+    expires_at: null,
     ...overrides,
   };
 }

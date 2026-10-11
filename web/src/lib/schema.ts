@@ -69,6 +69,7 @@ export const CartStateSchema = z.object({
   fare: z.string().nullable(),
   price: z.string().nullable(),
   error: z.string().nullable(),
+  expires_at: epoch.nullable(), // a ready cart is handed back at this time (null: held until released)
 });
 
 export const TripSchema = TripSettingsSchema.extend({

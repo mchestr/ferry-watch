@@ -80,6 +80,7 @@ interface CartState {
   fare: string | null;     // "Saver", ...
   price: string | null;    // "$93.45"
   error: string | null;    // when failed
+  expires_at: number | null;  // a ready cart is handed back at this time (null: held until released)
 }
 
 interface ActivityEvent {

@@ -27,6 +27,7 @@ class Settings:
     debug_dir: Path | None = None  # failure screenshots; never inside the backed-up config volume
     log_level: str = "INFO"
     credentials: Credentials | None = None
+    cart_hold_minutes: int = 60  # a cart nobody checks out is handed back after this; 0 holds it until released
     pushover_token: str | None = field(default=None, repr=False)
     pushover_user_key: str | None = field(default=None, repr=False)
 
@@ -46,8 +47,11 @@ class Settings:
         try:
             port = int(env.get("BCF_PORT", "8765"))
             width, height = (int(v) for v in env.get("BCF_WINDOW_SIZE", "1280,1000").split(","))
+            cart_hold_minutes = int(env.get("BCF_CART_HOLD_MINUTES", "60"))
         except ValueError as e:
-            raise SettingsError(f"Invalid BCF_PORT or BCF_WINDOW_SIZE: {e}") from e
+            raise SettingsError(f"Invalid BCF_PORT, BCF_WINDOW_SIZE or BCF_CART_HOLD_MINUTES: {e}") from e
+        if cart_hold_minutes < 0:
+            raise SettingsError("BCF_CART_HOLD_MINUTES can't be negative (0 holds carts until released)")
 
         debug_dir = env.get("BCF_DEBUG_DIR", str(Path(tempfile.gettempdir()) / "ferry-watch"))
         static_dir = opt("BCF_STATIC")
@@ -62,6 +66,7 @@ class Settings:
             debug_dir=Path(debug_dir) if debug_dir else None,
             log_level=env.get("LOG_LEVEL", "INFO").upper(),
             credentials=Credentials(user, password) if user and password else None,
+            cart_hold_minutes=cart_hold_minutes,
             pushover_token=token,
             pushover_user_key=user_key,
         )

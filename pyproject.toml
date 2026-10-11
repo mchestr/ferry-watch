@@ -1,6 +1,6 @@
 [project]
 name = "ferry-watch"
-version = "0.5.0"
+version = "0.5.1"
 description = "Watch BC Ferries for open reservations, alert via Pushover, and hold the sailing in a cart"
 readme = "README.md"
 requires-python = ">=3.12"

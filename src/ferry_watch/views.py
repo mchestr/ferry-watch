@@ -46,6 +46,7 @@ def cart_view(cart: Cart | None) -> dict[str, Any] | None:
         "fare": cart.fare.name if cart.fare else None,
         "price": cart.fare.price if cart.fare else None,
         "error": cart.error,
+        "expires_at": cart.expires_at,
     }
 
 

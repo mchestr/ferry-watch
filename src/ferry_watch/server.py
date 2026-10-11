@@ -15,6 +15,7 @@ import functools
 import hashlib
 import json
 import logging
+import mimetypes
 import re
 import time
 import urllib.parse
@@ -45,6 +46,7 @@ COALESCE_SECONDS = 0.1
 TEST_ALERT_COOLDOWN_SECONDS = 30
 
 _dumps = functools.partial(json.dumps, allow_nan=False)
+mimetypes.add_type("application/manifest+json", ".webmanifest")
 
 
 class ApiError(Exception):
@@ -470,8 +472,9 @@ def build_app(services: Services | None = None, static_dir: Path | None = None) 
         app.router.add_get("/", index_page)
         if (static_dir / "assets").is_dir():
             app.router.add_static("/assets", static_dir / "assets")
-        for icon in static_dir.glob("*.svg"):
-            app.router.add_get(f"/{icon.name}", functools.partial(_file, icon))
+        for item in sorted(static_dir.iterdir()):  # favicon, icons, manifest.webmanifest
+            if item.is_file() and item.name != "index.html":
+                app.router.add_get(f"/{item.name}", functools.partial(_file, item))
     return app
 
 
@@ -515,6 +518,7 @@ async def _lifecycle(settings: Settings, app: web.Application) -> AsyncIterator[
             memory=AlertMemory(settings.config_path.with_name("alerted.json")),
             credentials=settings.credentials,
             checkout_url=settings.checkout_url,
+            cart_hold_minutes=settings.cart_hold_minutes,
         )
         services = Services(settings, store, state, terminals, alerts, watcher)
         app[SERVICES] = services

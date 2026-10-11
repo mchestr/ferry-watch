@@ -29,7 +29,7 @@ MAX_EVENTS = 80
 
 class CartStatus(enum.StrEnum):
     ADDING = "adding"  # selecting the fare
-    READY = "ready"  # in the cart; the trip is paused until the user releases it
+    READY = "ready"  # in the cart; the trip is paused until it's released
     FAILED = "failed"  # couldn't add it; shown until dismissed
 
 
@@ -41,6 +41,7 @@ class Cart:
     since: float = field(default_factory=time.time)
     fare: Fare | None = None
     error: str | None = None
+    expires_at: float | None = None  # a ready cart is handed back at this time
 
 
 class EventKind(enum.StrEnum):
@@ -69,6 +70,7 @@ class TripRuntime:
     error_at: float | None = None
     consecutive_errors: int = 0
     retry_at: float | None = None  # backing off after errors until this time
+    next_due: float | None = None  # when it's checked next (None: as soon as possible)
     alerted: set[clock_time] = field(default_factory=set)  # departures already alerted
     session_opened_at: float | None = None
     session_logged_in: bool = False
@@ -83,6 +85,7 @@ class TripRuntime:
         self.error_at = None
         self.consecutive_errors = 0
         self.retry_at = None
+        self.next_due = None
         self.alerted = set()
 
     @property
