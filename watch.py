@@ -388,10 +388,11 @@ class Session:
         self.ctx, self.pg, self.key = ctx, pg, key
 
     def alive(self) -> bool:
-        try:
-            return not self.pg.is_closed() and self.pg.title() is not None
-        except Exception:  # noqa: BLE001
-            return False
+        # is_closed() is set by Playwright's "close" event and never talks to the page, so a page
+        # in the middle of navigating (e.g. the user submitting payment) isn't mistaken for a closed
+        # window. Asking the page for its title did exactly that, and the watcher then closed the
+        # checkout window itself.
+        return not self.pg.is_closed()
 
     def close(self) -> None:
         try:
