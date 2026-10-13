@@ -38,7 +38,8 @@ better."
 - Guest carting works without a BC Ferries login (code + PR #1 live test). Auto-cart is gated on
   credentials only by watcher.py:459/562. Guest CHECKOUT on bcferries.com is probable but unverified;
   BC Ferries refuses a login while a guest cart exists. => a "no stored BC Ferries credentials" default
-  is likely possible, pending a live spike.
+  is likely possible, pending a live spike. (Superseded in round 2: no live spike; guest checkout is
+  assumed and detected in production.)
 - Measured: ~0.52-0.57 GB RAM per headed pod (Xvnc+matchbox+Chromium+Playwright driver) vs ~35-80 MB per
   extra context in one shared Chromium. Real BC Ferries pages are heavier.
 - All pods share one home egress IP behind Queue-it; a global check budget is needed.
@@ -74,7 +75,8 @@ better."
 - CNI: Cilium  => CiliumNetworkPolicy toFQDNs (with a DNS L7 rule) is available for browser egress
   allowlisting; an egress proxy becomes optional defence in depth, not required.
 - Ingress: Envoy Gateway => Gateway API HTTPRoute + SecurityPolicy extAuth per route; WebSockets on by
-  default. Target this; no ingress-nginx.
+  default. Target this; no ingress-nginx. (Superseded in round 2 for the ferry routes: no SecurityPolicy on
+  them; the app does its own OIDC.)
 - Kubernetes: 1.36 or newer => ValidatingAdmissionPolicy and MutatingAdmissionPolicy GA, user-namespace
   pods (hostUsers: false) GA, WebSocket exec 'create' check, fine-grained kubelet authz GA. No Kyverno
   fallback needed.
@@ -166,11 +168,14 @@ research/cluster-platform-services.md. Verified facts that the plan MUST reflect
 ## Owner answers to the plan's open questions (round 2; authoritative)
 
 - **Guest checkout (Q3/Q3b): accepted "for now".** Guest checkout is the launch mode, including for the
-  owner's own trips. Owner asked: "Users can always sign-in on the browser?" Answer recorded in the plan:
-  users *may* sign in to BC Ferries inside the VNC checkout (bcferries.com, including `/login`, is on the
-  allowlist), but the plan does not rely on it. The owner has observed that BC Ferries' login page won't
-  accept a login while a guest cart exists (README.md "Things to know", `site.py:288-290`), so signing in
-  can drop the held cart. Nothing persists after the pod exits, and the password manager stays off.
+  owner's own trips. Owner asked: "Users can always sign-in on the browser?" Answer recorded in the plan
+  (corrected after review): probably not during checkout, and advised against. bcferries.com, including
+  `/login`, is on the allowlist, so a user can try, but VNC exists only while a guest cart is held and the
+  owner has observed that BC Ferries' login page won't accept a login while a guest cart exists
+  ([top-level README](../../README.md) "Things to know about BC Ferries"; `site.py:288-290`), so a sign-in
+  will most likely fail; whether trying affects the cart is unverified. A password typed there would also
+  cross the plaintext VNC path into an unsandboxed Chromium. The plan does not rely on it. Nothing persists
+  in the pod after it exits, and the password manager stays off.
 - **No live-site spike for guest checkout (Q2 = no).** "No spike for now, assume it works and if not we
   will adjust later, don't make any one way door decisions on this." => W0 is no longer gated on S1/S2/S2b/
   S5/S6/S7. Guest checkout is assumed to work. The plan must stay reversible: keep `SiteSession.login()` and
