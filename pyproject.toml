@@ -10,6 +10,7 @@ dependencies = [
   "aiohttp==3.10.10",
   "selectolax==0.3.21",
   "msgspec==0.22.0",
+  "cryptography==50.0.1",
 ]
 
 [project.scripts]
