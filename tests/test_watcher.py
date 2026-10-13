@@ -145,13 +145,29 @@ async def test_without_auto_cart_it_just_alerts(tmp_path: Path, terminals: Termi
     assert "couldn't add" not in env.alerts.sent[0].body
 
 
-async def test_without_credentials_there_is_no_cart(tmp_path: Path, terminals: Terminals) -> None:
+async def test_without_credentials_it_carts_as_a_guest(tmp_path: Path, terminals: Terminals) -> None:
     env = make_env(tmp_path, terminals, credentials=False)
     env.site.sailings = [sailing(9)]
     await env.cycle()
-    assert "login" not in env.site.session.calls
-    assert env.runtime().cart is None
-    assert env.alerts.titles == ["⛴ Ferry space: Swartz Bay → Tsawwassen · Mon Oct 12"]
+    assert env.site.session.calls == ["search", "cart 09:00", "show"]  # no login
+    cart = env.runtime().cart
+    assert cart is not None
+    assert cart.status is CartStatus.READY
+    assert env.alerts.titles == ["🛒 9:00 am is in your cart"]
+
+
+async def test_shutting_down_hands_held_carts_back(env: Env) -> None:
+    env.site.sailings = [sailing(9)]
+    run = asyncio.create_task(env.watcher.run())
+    for _ in range(200):
+        cart = env.trip.id in env.state.trips and env.runtime().cart
+        if cart and cart.status is CartStatus.READY:
+            break
+        await asyncio.sleep(0.01)
+    run.cancel()
+    await asyncio.gather(run, return_exceptions=True)
+
+    assert env.site.session.calls[-2:] == ["empty cart", "close"]
 
 
 async def test_a_sailing_alerts_once_until_it_sells_out_again(tmp_path: Path, terminals: Terminals) -> None:

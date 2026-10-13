@@ -294,13 +294,13 @@ describe("TripSheet", () => {
     expect(requests).toEqual([expect.objectContaining({ method: "POST", url: "/api/trips", body: defaults })]);
   });
 
-  it("explains and disables auto-cart when there's no BC Ferries login", () => {
+  it("offers auto-cart as a guest cart when there's no BC Ferries login", () => {
     renderSheet({ state: makeState({ login_configured: false, trips: [makeTrip({ auto_cart: true })] }) });
     const autoCart = screen.getByRole("switch", { name: "Add open sailings to my cart" });
-    expect(autoCart).toBeDisabled();
-    expect(autoCart).not.toBeChecked();
-    expect(autoCart).toHaveAccessibleDescription(/Needs a BC Ferries login/);
-    expect(screen.queryByRole("combobox", { name: "Fare to select" })).not.toBeInTheDocument();
+    expect(autoCart).toBeEnabled();
+    expect(autoCart).toBeChecked();
+    expect(autoCart).toHaveAccessibleDescription(/guest cart/);
+    expect(screen.getByRole("combobox", { name: "Fare to select" })).toBeInTheDocument();
   });
 
   it("keeps showing the trip while it animates closed", () => {

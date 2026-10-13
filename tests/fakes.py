@@ -13,6 +13,7 @@ from ferry_watch.bcferries.errors import SessionExpired
 from ferry_watch.bcferries.urls import Credentials
 from ferry_watch.models import Fare, FarePreference, Sailing, SailingStatus, Trip
 from ferry_watch.notify import Message
+from ferry_watch.protocol import ReleaseCheck
 
 PASSWORD = "hunter2-secret"
 
@@ -84,8 +85,9 @@ class FakeSession:
             raise self.site.cart_error
         return Fare("Saver", "$93.45", selectable=True)
 
-    async def empty_cart(self) -> None:
+    async def empty_cart(self) -> ReleaseCheck:
         self.calls.append("empty cart")
+        return "landing_url"
 
     async def show(self) -> None:
         self.calls.append("show")

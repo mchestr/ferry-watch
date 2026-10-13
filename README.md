@@ -61,7 +61,7 @@ Environment variables:
 | `BCF_HOST`, `BCF_PORT` | `127.0.0.1`, `8765` | Where the web server listens |
 | `BCF_CONFIG` | `config.json` | Where trips are stored. `alerted.json` and `terminals.json` go next to it |
 | `BCF_STATIC` | (none) | The built frontend (`web/dist`); the image sets `/app/static` |
-| `BCF_USER`, `BCF_PASS` | (none) | Your BC Ferries login. Needed for auto-cart, so saved cards are available at checkout |
+| `BCF_USER`, `BCF_PASS` | (none) | Your BC Ferries login (optional). With it, auto-cart logs in so saved cards are available at checkout; without it, carts are guest carts |
 | `PUSHOVER_TOKEN`, `PUSHOVER_USER_KEY` | (none) | Pushover alerts. Without them, alerts only go to the log |
 | `BCF_VNC_URL` | (none) | The remote viewer's address, linked from cart alerts |
 | `BCF_CART_HOLD_MINUTES` | `60` | How long a cart nobody checks out is held before it's handed back. `0` holds it until released |

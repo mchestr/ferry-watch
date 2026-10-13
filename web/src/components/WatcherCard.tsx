@@ -214,7 +214,7 @@ export function WatcherCard({ state, skew }: { state: State; skew: number }) {
             ok={state.login_configured}
             icon={<KeyRound />}
             label="BC Ferries login"
-            detail={state.login_configured ? "Used only for auto-cart" : "Not configured, so auto-cart is off"}
+            detail={state.login_configured ? "Auto-cart logs in, for saved cards" : "Not set, so carts are guest carts"}
           />
         </ul>
       </div>

@@ -139,7 +139,7 @@ async def test_state_shape(client: TestClient) -> None:
     assert trip["booking_url"].startswith("https://www.bcferries.com/?")
     assert trip["past"] is False
     assert state["trip_defaults"]["date"] == "2026-10-12"  # tomorrow
-    assert state["trip_defaults"]["auto_cart"] is False  # no login configured
+    assert state["trip_defaults"]["auto_cart"] is True  # a guest cart, no login needed
     assert state["events"][0]["trip_title"] == "Swartz Bay → Tsawwassen · Mon Oct 12"
     assert state["watcher"]["healthy"] is True
 

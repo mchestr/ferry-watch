@@ -38,6 +38,7 @@ from .notify import (
     summarize,
     trip_title,
 )
+from .protocol import ReleaseCheck
 from .state import AlertMemory, Cart, CartStatus, EventKind, RuntimeState, TripRuntime
 from .store import ConfigStore
 
@@ -48,6 +49,7 @@ CART_POLL_SECONDS = 5  # how often a held cart is checked for release, a closed 
 CHECK_TIMEOUT_SECONDS = 15 * 60  # longer than BC Ferries' queue ever takes; a check past this is stuck
 IDLE_WAKE_SECONDS = 60  # with nothing due, look again this often anyway
 CART_BUDGET_SECONDS = 40  # give up selecting a fare after this long and just alert
+DRAIN_EMPTY_SECONDS = 45  # on shutdown, how long emptying each held cart may take
 ERROR_BACKOFF_SECONDS = (0, 60, 120, 300, 600)  # wait before retrying, by consecutive failures
 RESET_SESSION_AFTER = 3  # consecutive failures before starting over with a fresh browser context
 FAILURE_ALERT_AFTER = 3
@@ -68,7 +70,7 @@ class Session(Protocol):
     async def search(self, trip: Trip) -> list[Sailing]: ...
     async def refresh(self) -> list[Sailing]: ...
     async def add_to_cart(self, depart: clock_time, preference: FarePreference) -> Fare: ...
-    async def empty_cart(self) -> None: ...
+    async def empty_cart(self) -> ReleaseCheck: ...
     async def show(self) -> None: ...
     async def save_debug_snapshot(self, reason: str) -> Path | None: ...
     async def close(self) -> None: ...
@@ -366,9 +368,15 @@ class Watcher:
             self._state.changed()
 
     async def _close_all(self) -> None:
+        """On shutdown, hand held carts back (or they'd stay stuck until BC Ferries' timer), then close."""
         for trip_id in list(self._checks):
             await self._stop_check(trip_id)
         for trip_id in list(self._sessions):
+            runtime = self._state.trips.get(trip_id)
+            if runtime and runtime.cart and runtime.cart.status is not CartStatus.FAILED:
+                with contextlib.suppress(Exception):
+                    async with asyncio.timeout(DRAIN_EMPTY_SECONDS):
+                        await self._empty_cart(trip_id)
             with contextlib.suppress(Exception):
                 await self._close_session(trip_id)
 
@@ -377,9 +385,12 @@ class Watcher:
         if current is None or current.session.closed:
             return
         try:
-            await current.session.empty_cart()  # gives the spot back straight away
+            check = await current.session.empty_cart()  # gives the spot back straight away
         except BookingError:
             log.warning("%s: couldn't empty the cart; it will expire on its own", trip_id, exc_info=True)
+            return
+        if check == "none":
+            log.warning("%s: emptied the cart but couldn't confirm it; BC Ferries' timer is the backstop", trip_id)
 
     # ---- checking
 
@@ -456,7 +467,7 @@ class Watcher:
             return
 
         fare = None
-        if trip.auto_cart and self._credentials is not None:
+        if trip.auto_cart:  # a guest cart unless a login is configured
             fare = await self._add_to_cart(trip, runtime, session, new[0])
             latest = self._store.config.trip(trip.id)
             if fare and (latest is None or latest.search_key() != trip.search_key()):
@@ -559,7 +570,7 @@ class Watcher:
         if fare is not None:
             message = cart_message(trip, route, new[0], fare, new[1:], self._checkout_url, booking_url)
         else:
-            cart_failed = trip.auto_cart and self._credentials is not None
+            cart_failed = trip.auto_cart
             message = bookable_message(trip, route, new, booking_url, cart_failed=cart_failed)
         self._alerts.submit(message)
 

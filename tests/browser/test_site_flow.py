@@ -279,7 +279,7 @@ async def test_a_failed_login_never_mentions_the_password(session: SiteSession) 
 
 
 async def test_empty_cart(session: SiteSession) -> None:
-    await session.empty_cart()  # lands on my-account without error
+    assert await session.empty_cart() == "landing_url"  # lands on my-account
 
 
 async def test_closing_the_window_is_noticed(session: SiteSession, context: BrowserContext) -> None:

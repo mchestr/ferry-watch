@@ -476,18 +476,17 @@ function TripForm({
                 <p id={`${ids.autoCart}-hint`} className="mt-0.5 text-xs text-muted-foreground">
                   {loginConfigured
                     ? "Logs in and holds the sailing in a browser you can finish checkout in."
-                    : "Needs a BC Ferries login on the server (BCF_USER and BCF_PASS), so it's off for now."}
+                    : "Holds the sailing in a guest cart, in a browser you can finish checkout in."}
                 </p>
               </div>
               <Switch
                 id={ids.autoCart}
                 aria-describedby={`${ids.autoCart}-hint`}
-                checked={loginConfigured && draft.auto_cart}
-                disabled={!loginConfigured}
+                checked={draft.auto_cart}
                 onCheckedChange={(on) => update("auto_cart", on)}
               />
             </div>
-            {loginConfigured && draft.auto_cart && (
+            {draft.auto_cart && (
               <Field id={ids.fare} label="Fare to select">
                 <Select
                   value={draft.fare}

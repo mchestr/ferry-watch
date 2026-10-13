@@ -15,7 +15,7 @@ import urllib.parse
 import weakref
 from datetime import UTC, datetime, time
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from playwright.async_api import Browser, BrowserContext, Locator, Page, Playwright, async_playwright
 from playwright.async_api import Error as PlaywrightError
@@ -37,9 +37,14 @@ from .parse import parse_sailings, parse_time
 from .terminals import Terminals
 from .urls import BASE_URL, USER_AGENT, Credentials, search_url
 
+if TYPE_CHECKING:
+    from ferry_watch.protocol import ReleaseCheck
+
 log = logging.getLogger(__name__)
 
 QUEUE_HOST = "queue-it.net"
+# Where /abandoned-cart/my-account ends up: the account page, or its login page for a guest.
+_RELEASE_LANDINGS = ("/my-account", "/login")
 
 ACTION_TIMEOUT_MS = 30_000
 NAVIGATION_TIMEOUT_MS = 60_000
@@ -368,8 +373,16 @@ class SiteSession:
             raise CartMismatch(f"The cart doesn't show the {format_time(depart)} {fare.name} sailing")
         return fare
 
-    async def empty_cart(self) -> None:
+    async def empty_cart(self) -> ReleaseCheck:
+        """Abandon the cart, which gives the sailing back straight away.
+
+        Returns how far the release could be confirmed: "landing_url" when BC Ferries sent us where an
+        abandoned cart lands (the account page, or its login page for a guest), "none" otherwise. Checking
+        that the cart is really empty needs captured cart pages (docs/multi-tenant §5.7).
+        """
         await self._goto(f"{self._base_url}/abandoned-cart/my-account")
+        landed = urllib.parse.urlsplit(self._page.url).path
+        return "landing_url" if landed.startswith(_RELEASE_LANDINGS) else "none"
 
     async def show(self) -> None:
         """Raise this session's window, so it's what's on screen over noVNC."""

@@ -53,7 +53,6 @@ export function TripCard({
   trip,
   watching,
   checkoutUrl,
-  loginConfigured,
   skew,
   today,
   defaultOpen,
@@ -62,7 +61,6 @@ export function TripCard({
   trip: Trip;
   watching: boolean;
   checkoutUrl: string | null;
-  loginConfigured: boolean;
   skew: number;
   /** "YYYY-MM-DD", Pacific time. */
   today: string;
@@ -154,7 +152,7 @@ export function TripCard({
             <Chip icon={<Car />}>Standard vehicle</Chip>
           )}
           <Chip icon={<Clock />}>{windowLabel(trip)}</Chip>
-          {trip.auto_cart && loginConfigured && <Chip icon={<ShoppingCart />}>Auto-cart</Chip>}
+          {trip.auto_cart && <Chip icon={<ShoppingCart />}>Auto-cart</Chip>}
         </div>
       </div>
       <StatusPanel
