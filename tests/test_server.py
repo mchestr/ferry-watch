@@ -20,7 +20,7 @@ from aiohttp.test_utils import TestClient, TestServer
 from ferry_watch import server as server_module
 from ferry_watch.bcferries.terminals import TerminalDirectory
 from ferry_watch.models import Fare
-from ferry_watch.notify import AlertDispatcher, Message, NotifyError
+from ferry_watch.notify import AlertDispatcher, Message, NotifyError, TextAlerts
 from ferry_watch.server import Services, build_app
 from ferry_watch.settings import Settings
 from ferry_watch.state import Cart, CartStatus, RuntimeState
@@ -74,7 +74,13 @@ async def services(tmp_path: Path, route_info: TestServer, notifier: FakeNotifie
         state = RuntimeState()
         alerts = AlertDispatcher(notifier, lambda _m, _e: None)
         watcher = Watcher(
-            store, state, FakeSite(), alerts, terminals, memory=None, credentials=None, checkout_url="https://vnc"
+            store,
+            state,
+            FakeSite(),
+            TextAlerts(alerts, terminals, "https://vnc"),
+            terminals,
+            memory=None,
+            credentials=None,
         )
         yield Services(Settings(checkout_url="https://vnc"), store, state, terminals, alerts, watcher)
 

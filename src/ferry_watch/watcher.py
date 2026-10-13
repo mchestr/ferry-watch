@@ -25,19 +25,9 @@ from typing import Protocol
 
 from .bcferries.errors import BookingError, LoginFailed, MarkupChanged, SessionExpired, describe
 from .bcferries.terminals import Terminals
-from .bcferries.urls import Credentials, search_url
+from .bcferries.urls import Credentials
 from .models import Config, Fare, FarePreference, Sailing, Trip, format_time, today
-from .notify import (
-    Alerts,
-    bookable_message,
-    cart_expired_message,
-    cart_lost_message,
-    cart_message,
-    failing_message,
-    login_failed_message,
-    summarize,
-    trip_title,
-)
+from .notify import AlertSink, route_name, summarize, trip_title
 from .protocol import ReleaseCheck
 from .state import AlertMemory, Cart, CartStatus, EventKind, RuntimeState, TripRuntime
 from .store import ConfigStore
@@ -105,12 +95,11 @@ class Watcher:
         store: ConfigStore,
         state: RuntimeState,
         browser: Browser,
-        alerts: Alerts,
+        alerts: AlertSink,
         terminals: TerminalSource,
         *,
         memory: AlertMemory | None,
         credentials: Credentials | None,
-        checkout_url: str | None,
         cart_hold_minutes: int = 60,
         concurrency: int = 3,
     ) -> None:
@@ -122,7 +111,6 @@ class Watcher:
         self._memory = memory
         self._credentials = credentials
         self._secrets = (credentials.username, credentials.password) if credentials else ()
-        self._checkout_url = checkout_url
         self._cart_hold_minutes = cart_hold_minutes  # 0: hold until released
         self._sessions: dict[str, _OpenSession] = {}
         self._checks: dict[str, asyncio.Task[None]] = {}  # trip id -> its check, while one runs
@@ -348,7 +336,7 @@ class Watcher:
             reason = self._describe(e)
             log.warning("%s; not logging in again for %d minutes", reason, LOGIN_BACKOFF_SECONDS // 60)
             self._state.event(EventKind.ERROR, f"{reason}. Auto-cart logins paused for 30 minutes.")
-            self._alerts.submit(login_failed_message(reason))
+            self._alerts.login_failed(reason)
 
     async def _raise_held_windows(self) -> None:
         """New windows open on top; keep any checkout in progress visible over noVNC."""
@@ -430,7 +418,7 @@ class Watcher:
         log.warning("%s: check failed (%d in a row): %s", trip.id, runtime.consecutive_errors, runtime.error)
         self._state.event(EventKind.ERROR, f"Check failed: {runtime.error}", trip.id, self._title(trip))
         if runtime.consecutive_errors == FAILURE_ALERT_AFTER:
-            self._alerts.submit(failing_message(trip, self._route(trip), runtime.error))
+            self._alerts.failing(trip, runtime.error)
 
     async def _process(self, trip: Trip, runtime: TripRuntime, session: Session, sailings: list[Sailing]) -> None:
         # The trip may have been edited or removed while we were on the page.
@@ -536,14 +524,14 @@ class Watcher:
             else:
                 minutes = self._cart_hold_minutes
                 kind, text = EventKind.INFO, f"Released the {format_time(cart.depart)} cart after {minutes} minutes"
-                self._alerts.submit(cart_expired_message(trip, self._route(trip), cart.depart, minutes))
+                self._alerts.cart_expired(trip, cart.depart, minutes)
         elif session is not None and not session.lost:
             kind, text = EventKind.INFO, "Checkout window closed, watching resumed"
         else:
             # Crashed: the cart is gone. Forget the alert so it's alerted (and carted) again if still open.
             runtime.alerted.discard(cart.depart)
             kind, text = EventKind.ERROR, f"Lost the {format_time(cart.depart)} cart (the browser closed unexpectedly)"
-            self._alerts.submit(cart_lost_message(trip, self._route(trip), cart.depart))
+            self._alerts.cart_lost(trip, cart.depart)
 
         runtime.cart = None
         runtime.release_requested = False
@@ -554,25 +542,14 @@ class Watcher:
 
     # ---- alerts and labels
 
-    def _route(self, trip: Trip) -> str:
-        terminals = self._terminals.cached
-        return (
-            terminals.route_name(trip.origin, trip.destination) if terminals else f"{trip.origin} → {trip.destination}"
-        )
-
     def _title(self, trip: Trip) -> str:
-        return trip_title(trip, self._route(trip))
+        return trip_title(trip, route_name(trip, self._terminals.cached))
 
     def _alert(self, trip: Trip, new: list[Sailing], fare: Fare | None) -> None:
-        terminals = self._terminals.cached
-        booking_url = search_url(trip, terminals) if terminals else "https://www.bcferries.com/"
-        route = self._route(trip)
         if fare is not None:
-            message = cart_message(trip, route, new[0], fare, new[1:], self._checkout_url, booking_url)
+            self._alerts.cart_held(trip, new[0], fare, new[1:])
         else:
-            cart_failed = trip.auto_cart
-            message = bookable_message(trip, route, new, booking_url, cart_failed=cart_failed)
-        self._alerts.submit(message)
+            self._alerts.bookable(trip, new, cart_failed=trip.auto_cart)
 
     # ---- alert memory (survives restarts)
 

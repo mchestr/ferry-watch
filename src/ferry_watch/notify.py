@@ -12,6 +12,8 @@ from typing import Protocol
 
 import aiohttp
 
+from .bcferries.terminals import Terminals
+from .bcferries.urls import BASE_URL, search_url
 from .models import Fare, Sailing, Trip, Vehicle, format_time
 
 log = logging.getLogger(__name__)
@@ -45,9 +47,74 @@ class Notifier(Protocol):
 
 
 class Alerts(Protocol):
-    """Where the watcher sends alerts (AlertDispatcher, or a recorder in tests)."""
+    """Where written alerts go for delivery (AlertDispatcher, or a recorder in tests)."""
 
     def submit(self, message: Message) -> None: ...
+
+
+class AlertSink(Protocol):
+    """What the watcher tells the user about.
+
+    The watcher reports what happened; a sink picks the words and the links. TextAlerts writes today's
+    messages. In a browser pod the agent sends typed alerts to the operator, which writes them.
+    """
+
+    def bookable(self, trip: Trip, sailings: Sequence[Sailing], *, cart_failed: bool) -> None: ...
+    def cart_held(self, trip: Trip, held: Sailing, fare: Fare, others: Sequence[Sailing]) -> None: ...
+    def failing(self, trip: Trip, error: str) -> None: ...
+    def cart_expired(self, trip: Trip, depart: time, minutes: int) -> None: ...
+    def cart_lost(self, trip: Trip, depart: time) -> None: ...
+    def login_failed(self, reason: str) -> None: ...
+
+
+class RouteNames(Protocol):
+    """The terminal list, if it's been loaded (bcferries.terminals.TerminalDirectory)."""
+
+    @property
+    def cached(self) -> Terminals | None: ...
+
+
+def route_name(trip: Trip, terminals: Terminals | None) -> str:
+    """'Swartz Bay → Tsawwassen', or the codes before the terminal list has loaded."""
+    if terminals is None:
+        return f"{trip.origin} → {trip.destination}"
+    return terminals.route_name(trip.origin, trip.destination)
+
+
+class TextAlerts:
+    """Writes the watcher's alerts as messages and submits them for delivery."""
+
+    def __init__(self, alerts: Alerts, terminals: RouteNames, checkout_url: str | None) -> None:
+        self._alerts = alerts
+        self._terminals = terminals
+        self._checkout_url = checkout_url
+
+    def _route(self, trip: Trip) -> str:
+        return route_name(trip, self._terminals.cached)
+
+    def _booking_url(self, trip: Trip) -> str:
+        terminals = self._terminals.cached
+        return search_url(trip, terminals) if terminals else f"{BASE_URL}/"
+
+    def bookable(self, trip: Trip, sailings: Sequence[Sailing], *, cart_failed: bool) -> None:
+        message = bookable_message(trip, self._route(trip), sailings, self._booking_url(trip), cart_failed=cart_failed)
+        self._alerts.submit(message)
+
+    def cart_held(self, trip: Trip, held: Sailing, fare: Fare, others: Sequence[Sailing]) -> None:
+        route, url = self._route(trip), self._booking_url(trip)
+        self._alerts.submit(cart_message(trip, route, held, fare, others, self._checkout_url, url))
+
+    def failing(self, trip: Trip, error: str) -> None:
+        self._alerts.submit(failing_message(trip, self._route(trip), error))
+
+    def cart_expired(self, trip: Trip, depart: time, minutes: int) -> None:
+        self._alerts.submit(cart_expired_message(trip, self._route(trip), depart, minutes))
+
+    def cart_lost(self, trip: Trip, depart: time) -> None:
+        self._alerts.submit(cart_lost_message(trip, self._route(trip), depart))
+
+    def login_failed(self, reason: str) -> None:
+        self._alerts.submit(login_failed_message(reason))
 
 
 class PushoverNotifier:

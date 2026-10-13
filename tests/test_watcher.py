@@ -17,6 +17,7 @@ from ferry_watch.bcferries.errors import BookingError, LoginFailed, MarkupChange
 from ferry_watch.bcferries.terminals import Terminals
 from ferry_watch.bcferries.urls import Credentials
 from ferry_watch.models import Trip
+from ferry_watch.notify import TextAlerts
 from ferry_watch.state import AlertMemory, CartStatus, EventKind, RuntimeState, TripRuntime
 from ferry_watch.store import ConfigStore
 from ferry_watch.watcher import JITTER, RESET_SESSION_AFTER, Watcher
@@ -65,11 +66,10 @@ def make_env(
         store,
         state,
         site,
-        alerts,
+        TextAlerts(alerts, SimpleNamespace(cached=terminals), "https://ferry.example/vnc"),
         SimpleNamespace(cached=terminals),
         memory=memory,
         credentials=Credentials("me@example.com", PASSWORD) if credentials else None,
-        checkout_url="https://ferry.example/vnc",
         cart_hold_minutes=cart_hold_minutes,
     )
     return Env(store, state, site, alerts, watcher, added, memory)
@@ -353,11 +353,10 @@ async def test_alert_memory_survives_a_restart(tmp_path: Path, terminals: Termin
         env.store,
         state,
         FakeSite(),
-        RecordingAlerts(),
+        TextAlerts(RecordingAlerts(), SimpleNamespace(cached=terminals), None),
         SimpleNamespace(cached=terminals),
         memory=AlertMemory(tmp_path / "alerted.json"),
         credentials=None,
-        checkout_url=None,
     )
     restarted.restore_alert_memory()
     runtime = state.trip(env.trip.id)
