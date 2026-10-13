@@ -108,7 +108,7 @@ research/cluster-platform-services.md. Verified facts that the plan MUST reflect
 - Authelia session cookie is scoped to chestr.dev (and mikeflix.lol): any VNC host under chestr.dev receives it
   -> strip Cookie/Authorization on VNC routes (RequestHeaderModifier) or use a separate registrable domain.
 - Certs/tunnel/DNS: only single-label *.chestr.dev is covered; external-dns and gatus-sidecar react to every
-  HTTPRoute -> prefer ONE fixed VNC host (e.g. ferry-vnc.chestr.dev) with per-trip PATHS; per-trip routes must
+  HTTPRoute -> prefer ONE fixed VNC host (e.g. ferry-checkout.chestr.dev) with per-trip PATHS; per-trip routes must
   carry external-dns 'controller: none' and gatus 'enabled: false' annotations. Gateway https listeners accept
   routes from ALL namespaces for ANY hostname -> an admission policy must constrain operator-created HTTPRoutes.
 - Cross-node Envoy->pod traffic is SNATed to node IPs which Cilium labels 'kube-apiserver'; existing policies
