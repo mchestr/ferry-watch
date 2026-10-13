@@ -187,3 +187,6 @@ research/cluster-platform-services.md. Verified facts that the plan MUST reflect
   the Chromium sandbox / user-namespace Talos change and the `mitigations=off` question optional hardening,
   not a gate on invitees; the owner can make it a gate later.)
 - **Pre-cart sign-in window (Q1): no.** VNC stays strictly gated to a held cart. Reversible later.
+- **Checkout host name: `ferry-checkout.chestr.dev`** (owner, round 2), replacing `ferry-vnc.chestr.dev`.
+  Still a single label under `chestr.dev`, so the existing `*.chestr.dev` certificate and the cloudflared
+  `*.chestr.dev` rule cover it. Internal component names (`vnc-edge`, `FW_VNC_*`) may stay as they are.
