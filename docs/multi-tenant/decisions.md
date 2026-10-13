@@ -190,3 +190,42 @@ research/cluster-platform-services.md. Verified facts that the plan MUST reflect
 - **Checkout host name: `ferry-checkout.chestr.dev`** (owner, round 2), replacing `ferry-vnc.chestr.dev`.
   Still a single label under `chestr.dev`, so the existing `*.chestr.dev` certificate and the cloudflared
   `*.chestr.dev` rule cover it. Internal component names (`vnc-edge`, `FW_VNC_*`) may stay as they are.
+
+## Owner answers to the remaining open questions (round 3; authoritative)
+
+1. **VNC first-connection race (R3):** accept for invite-only; the IdP-signed in-pod check stays in the
+   hardening backlog.
+2. **iOS device lock:** no takeover ticket. iPhone users who lose the device lock check out in Safari or on a
+   computer; revisit with data from the owner's iPhone during M1.
+3. **After a viewed checkout without a detected confirmation: pause the trip until the user answers "Did you
+   book it?"** (no automatic resume). "Yes" archives it, "No" resumes. The viewed sailing is never re-carted.
+4. **Trip horizon, polling and quiet hours (owner, replacing the proposed defaults):**
+   - Trips may be at most **30 days** ahead (`tripHorizonDays` = 30).
+   - "We shouldn't just hammer the BC Ferries website ... the longer away it is the less frequent we poll,
+     but closer it is more frequent. We want to be good users of the api."
+   - **Warm browser** (the user's one `maxActiveBrowsers` slot) goes to the user's trip with the **nearest
+     sailing within 7 days**. It polls on a curve by time until the trip's earliest departure:
+     7-3 days out every 5 min; 3 days-24 h every 2 min; 24 h-6 h every 60 s; under 6 h every 30 s
+     (±15% jitter; tiers admin-tunable within GitOps ceilings).
+   - **Every other saved trip** (up to `maxTrips` = 3, within 30 days) gets a **short check every 6 hours**
+     (admin-configurable, up to daily) by a short-lived pod that starts, checks once and exits. These pods
+     don't take the user's warm-browser slot; they count against cluster capacity and the start throttle. If a
+     short check finds an opening and the user holds no cart, it carts it and that pod stays for checkout.
+   - **Quiet hours 23:00-06:00 Pacific: normal polling, alert only** (no cart held overnight).
+   - Other per-user defaults as proposed: 4 holds/day, 6 cart attempts/day, 60 VNC min/day; hold clocks
+     30 min to open / 30 min session (paused on payment/3DS pages) / 10 min viewer-gone / 60 min hard cap;
+     one hold at a time.
+5. **Fleet budget 20 checks/min** (ceiling 40), brake on Queue-it detours or 403/429; **keep the desktop UA**.
+6. **Talos upgrades:** accept that holds on a drained node are released (with an alert); the runbook pauses
+   carting before a Talos bump. Hold protection stays in the backlog.
+7. **Invitee sign-in: `one_factor` for the ferry-watch OIDC client** (password only, no 2FA enrolment).
+   Other clients keep their policies; the authorization policies restricting the other OIDC clients to their
+   own groups still come before anyone new joins lldap.
+8. **Admin access:** confirmed. No admin VNC, exec or screenshots in the app; tenants are told the cluster
+   admin can technically see everything.
+9. **Payment/3DS egress: open public HTTPS egress while a cart is held**, so any bank's 3-D Secure works.
+   Private, cluster, node and metadata ranges stay denied. Accepted: a user can browse other sites from the
+   owner's IP during their own hold (VNC exists only during holds).
+10. **Postgres superuser Secret:** keep the standard `components/cnpg` permanently; accepted residual.
+11. **Self-hosted CI runner:** leave as is; stated as a residual to tenants.
+12. **Cloudflare geo-block:** unchanged; onboarding tells invitees it only works from Canada/US.
