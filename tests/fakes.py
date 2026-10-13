@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from ferry_watch.bcferries.errors import SessionExpired
-from ferry_watch.bcferries.site import Credentials
+from ferry_watch.bcferries.urls import Credentials
 from ferry_watch.models import Fare, FarePreference, Sailing, SailingStatus, Trip
 from ferry_watch.notify import Message
 

@@ -62,6 +62,15 @@ function describe(trip: Trip, watching: boolean, skew: number): View & { kind: R
             lines: ["Turn watching back on to resume checks."],
           };
     case "held":
+      if (status.cart.status === "unknown") {
+        return {
+          kind: status.kind,
+          tone: "idle",
+          icon: <ShoppingCart />,
+          title: "Your cart changed",
+          lines: ["Reload the page to see its latest state."],
+        };
+      }
       return status.cart.status === "ready"
         ? {
             kind: status.kind,

@@ -102,6 +102,7 @@ export function CartBanner({ trip, checkoutUrl, skew }: { trip: Trip; checkoutUr
             {cart.status === "adding" && `Adding the ${time} sailing to your cart…`}
             {cart.status === "ready" && `The ${time} sailing is in your cart`}
             {failed && `Couldn't add the ${time} sailing to your cart`}
+            {cart.status === "unknown" && `The ${time} sailing's cart changed`}
           </div>
           {cart.status === "adding" && <p className="text-sm text-muted-foreground">Selecting your fare.</p>}
           {cart.status === "ready" && (

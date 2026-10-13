@@ -10,6 +10,7 @@ const KIND = {
   alert: { icon: BellRing, label: "Alert", cls: "bg-success-soft text-success" },
   cart: { icon: ShoppingCart, label: "Cart", cls: "bg-accent text-accent-foreground" },
   error: { icon: AlertTriangle, label: "Error", cls: "bg-danger-soft text-danger" },
+  unknown: { icon: Info, label: "Event", cls: "bg-muted text-muted-foreground" },
 } as const;
 
 const SHOWN = 14;

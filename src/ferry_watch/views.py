@@ -6,8 +6,8 @@ import time
 from datetime import timedelta
 from typing import Any
 
-from .bcferries.site import search_url
 from .bcferries.terminals import Terminals
+from .bcferries.urls import search_url
 from .models import MAX_TRIPS, Config, Sailing, Trip, today
 from .notify import trip_title
 from .state import Cart, Event, RuntimeState, TripRuntime

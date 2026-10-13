@@ -24,8 +24,8 @@ from pathlib import Path
 from typing import Protocol
 
 from .bcferries.errors import BookingError, LoginFailed, MarkupChanged, SessionExpired, describe
-from .bcferries.site import Credentials, search_url
 from .bcferries.terminals import Terminals
+from .bcferries.urls import Credentials, search_url
 from .models import Config, Fare, FarePreference, Sailing, Trip, format_time, today
 from .notify import (
     Alerts,

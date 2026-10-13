@@ -28,8 +28,9 @@ import aiohttp
 from aiohttp import web
 
 from .bcferries.errors import BookingError
-from .bcferries.site import USER_AGENT, SiteBrowser
+from .bcferries.site import SiteBrowser
 from .bcferries.terminals import TerminalDirectory, Terminals
+from .bcferries.urls import USER_AGENT
 from .models import Trip, ValidationError, today
 from .notify import AlertDispatcher, LogNotifier, Message, NotifyError, PushoverNotifier, trip_title
 from .settings import Settings

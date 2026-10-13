@@ -14,8 +14,8 @@ import pytest
 
 from ferry_watch import watcher as watcher_module
 from ferry_watch.bcferries.errors import BookingError, LoginFailed, MarkupChanged, NotBookable
-from ferry_watch.bcferries.site import Credentials
 from ferry_watch.bcferries.terminals import Terminals
+from ferry_watch.bcferries.urls import Credentials
 from ferry_watch.models import Trip
 from ferry_watch.state import AlertMemory, CartStatus, EventKind, RuntimeState, TripRuntime
 from ferry_watch.store import ConfigStore

@@ -22,8 +22,9 @@ from multidict import MultiDictProxy
 from playwright.async_api import Browser, BrowserContext, async_playwright
 
 from ferry_watch.bcferries.errors import CartMismatch, LoginFailed, NotBookable, RouteRejected, SessionExpired
-from ferry_watch.bcferries.site import Credentials, SiteSession
+from ferry_watch.bcferries.site import SiteSession
 from ferry_watch.bcferries.terminals import Terminals
+from ferry_watch.bcferries.urls import Credentials
 from ferry_watch.models import FarePreference, Trip
 
 pytestmark = pytest.mark.browser
