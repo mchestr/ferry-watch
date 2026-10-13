@@ -30,6 +30,7 @@ MAX_UNACKED = 200  # agent messages buffered until acked, and replayed on reconn
 
 # Limits the agent enforces whatever the operator says (§5.4); the schema refuses anything beyond them.
 MIN_INTERVAL_S = 30
+MAX_INTERVAL_S = 3600  # a warm browser's slowest tier is 5 min; 6-hourly checks are one-shot pods
 MAX_UNCLAIMED_S = 45 * 60
 MAX_SESSION_S = 45 * 60
 MAX_VIEWER_GONE_S = 15 * 60
@@ -329,7 +330,7 @@ class Configure(_Message, tag="configure", frozen=True, kw_only=True):
 
     trip_spec: TripSpec
     active: bool
-    interval_s: Annotated[int, msgspec.Meta(ge=MIN_INTERVAL_S, le=24 * 3600)]
+    interval_s: Annotated[int, msgspec.Meta(ge=MIN_INTERVAL_S, le=MAX_INTERVAL_S)]
     auto_cart: bool
     checkout_mode: CheckoutMode = "guest"
     hold: HoldLimits

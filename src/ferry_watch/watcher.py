@@ -418,7 +418,7 @@ class Watcher:
         log.warning("%s: check failed (%d in a row): %s", trip.id, runtime.consecutive_errors, runtime.error)
         self._state.event(EventKind.ERROR, f"Check failed: {runtime.error}", trip.id, self._title(trip))
         if runtime.consecutive_errors == FAILURE_ALERT_AFTER:
-            self._alerts.failing(trip, runtime.error)
+            self._alerts.failing(trip, runtime.error, error)
 
     async def _process(self, trip: Trip, runtime: TripRuntime, session: Session, sailings: list[Sailing]) -> None:
         # The trip may have been edited or removed while we were on the page.
