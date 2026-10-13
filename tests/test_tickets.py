@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+from typing import Any
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -11,6 +12,7 @@ from ferry_watch.tickets import (
     MAX_TOKEN_LENGTH,
     TTL_SECONDS,
     Claims,
+    Display,
     TicketError,
     mint,
     public_key,
@@ -21,11 +23,16 @@ from ferry_watch.tickets import (
 NOW = 1_790_000_000.0
 KEY = Ed25519PrivateKey.generate()
 KEYS = {"k1": KEY.public_key()}
-BINDING = {"sub": "user-7", "trip": "3f9c0a1b2c3d4e5f", "pod": "fw-3f9c0a1b2c3d4e5f-g1", "cart_id": "c-1"}
+BINDING: dict[str, Any] = {
+    "sub": "user-7",
+    "trip": "3f9c0a1b2c3d4e5f",
+    "pod": "fw-3f9c0a1b2c3d4e5f-g1",
+    "cart_id": "c-1",
+}
 
 
-def ticket(**kw: object) -> str:
-    return mint(KEY, "k1", now=NOW, **(BINDING | kw))  # type: ignore[arg-type]
+def ticket(**kw: Any) -> str:
+    return mint(KEY, "k1", now=NOW, **(BINDING | kw))
 
 
 def b64(data: bytes) -> str:
@@ -47,6 +54,19 @@ def test_round_trip() -> None:
     assert (claims.sub, claims.trip, claims.pod, claims.cart_id) == tuple(BINDING.values())
     assert (claims.iss, claims.aud) == ("fw-web", "fw-vnc")
     assert claims.exp - claims.iat == TTL_SECONDS
+
+
+def test_display_fields_ride_along() -> None:
+    disp = Display(
+        route="Tsawwassen → Swartz Bay",
+        date="2026-10-14",
+        depart="09:00",
+        fare="Saver",
+        session_s=1800,
+        hard_deadline=int(NOW) + 3600,
+    )
+    assert verify(ticket(disp=disp), KEYS, now=NOW).disp == disp
+    assert verify(ticket(), KEYS, now=NOW).disp is None
 
 
 def test_every_ticket_is_unique() -> None:

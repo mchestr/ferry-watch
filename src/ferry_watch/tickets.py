@@ -39,6 +39,17 @@ class TicketError(ValueError):
     """The ticket is malformed, forged, expired, or for something else."""
 
 
+class Display(msgspec.Struct, forbid_unknown_fields=True, frozen=True, kw_only=True):
+    """What the checkout landing page shows. Signed, but the gate ignores it and the page treats it as text."""
+
+    route: Annotated[str, msgspec.Meta(max_length=64)]
+    date: Annotated[str, msgspec.Meta(pattern=r"^\d{4}-\d{2}-\d{2}$")]
+    depart: Annotated[str, msgspec.Meta(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")]
+    fare: Annotated[str, msgspec.Meta(max_length=32)]
+    session_s: Annotated[int, msgspec.Meta(ge=0, le=6 * 3600)]
+    hard_deadline: int
+
+
 class Claims(msgspec.Struct, forbid_unknown_fields=True, frozen=True, kw_only=True):
     iss: Literal["fw-web"] = ISSUER
     aud: Literal["fw-vnc"] = AUDIENCE
@@ -49,6 +60,7 @@ class Claims(msgspec.Struct, forbid_unknown_fields=True, frozen=True, kw_only=Tr
     jti: Annotated[str, msgspec.Meta(pattern=r"^[A-Za-z0-9_-]{16,64}$")]
     iat: int
     exp: int
+    disp: Display | None = None
 
 
 def _b64(data: bytes) -> str:
@@ -63,7 +75,15 @@ def _unb64(text: str) -> bytes:
 
 
 def mint(
-    key: Ed25519PrivateKey, key_id: str, *, sub: str, trip: str, pod: str, cart_id: str, now: float | None = None
+    key: Ed25519PrivateKey,
+    key_id: str,
+    *,
+    sub: str,
+    trip: str,
+    pod: str,
+    cart_id: str,
+    disp: Display | None = None,
+    now: float | None = None,
 ) -> str:
     if not _KEY_ID.fullmatch(key_id):
         raise TicketError("Bad key id")
@@ -76,6 +96,7 @@ def mint(
         jti=secrets.token_urlsafe(16),
         iat=issued,
         exp=issued + TTL_SECONDS,
+        disp=disp,
     )
     signed = f"{PREFIX}.{key_id}.{_b64(msgspec.json.encode(claims))}"
     return f"{signed}.{_b64(key.sign(signed.encode()))}"
