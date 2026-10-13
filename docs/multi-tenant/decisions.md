@@ -162,3 +162,28 @@ research/cluster-platform-services.md. Verified facts that the plan MUST reflect
   vnc-edge proxying that path to that pod's own DNS name (headless Service + pod hostname/subdomain), and
   the pod admitting only a ticket bound to its own owner/trip/cart. Concurrent checkouts are independent
   paths to independent pods; guessing another path yields nothing without that user's ticket.
+
+## Owner answers to the plan's open questions (round 2; authoritative)
+
+- **Guest checkout (Q3/Q3b): accepted "for now".** Guest checkout is the launch mode, including for the
+  owner's own trips. Owner asked: "Users can always sign-in on the browser?" Answer recorded in the plan:
+  users *may* sign in to BC Ferries inside the VNC checkout (bcferries.com, including `/login`, is on the
+  allowlist), but the plan does not rely on it. The owner has observed that BC Ferries' login page won't
+  accept a login while a guest cart exists (README.md "Things to know", `site.py:288-290`), so signing in
+  can drop the held cart. Nothing persists after the pod exits, and the password manager stays off.
+- **No live-site spike for guest checkout (Q2 = no).** "No spike for now, assume it works and if not we
+  will adjust later, don't make any one way door decisions on this." => W0 is no longer gated on S1/S2/S2b/
+  S5/S6/S7. Guest checkout is assumed to work. The plan must stay reversible: keep `SiteSession.login()` and
+  `Credentials` behind a disabled flag rather than deleting them; keep the data model and protocol able to
+  express an account/login mode later; detect checkout failure in production; keep the fleet-wide
+  `autoCart` kill switch (alert-only) as the adjustment. Fixtures (cart, review, confirmation, release
+  pages) are captured from the owner's real use during M1, as the existing fixtures were.
+- **Identity (Q0): "Can we use oidc?" => use OIDC.** This supersedes trusted headers. (Recommendation:
+  app-native OIDC against Authelia's existing OIDC provider, confidential client + PKCE, with a cookie-less
+  app session (bearer token held by the SPA) so the gateway strips every Cookie header and the owner's
+  `chestr.dev`-scoped Authelia cookie never reaches the app, with no gateway-wide Lua and no new domain.)
+  The IdP stays replaceable: issuer, client and claim names are config.
+- **Sandbox and kernel (Q4): owner asked why it is needed.** Explained in the plan. (Recommendation: make
+  the Chromium sandbox / user-namespace Talos change and the `mitigations=off` question optional hardening,
+  not a gate on invitees; the owner can make it a gate later.)
+- **Pre-cart sign-in window (Q1): no.** VNC stays strictly gated to a held cart. Reversible later.
