@@ -186,6 +186,7 @@ async def test_the_agent_is_bound_and_configured(rig: Rig, agent: Agent) -> None
     assert latest.auto_cart
     assert agent.store.config.trip(TRIP.id) == TRIP
     assert rig.hub.connected(POD)
+    assert [r["agent_version"] for r in await rig.fetch("SELECT agent_version FROM browser_pods")] == ["0.6.0"]
 
 
 async def test_an_unknown_token_is_refused(rig: Rig) -> None:

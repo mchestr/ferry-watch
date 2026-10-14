@@ -18,6 +18,7 @@ import pytest
 from aiohttp.test_utils import TestClient
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from ferry_watch import __version__
 from ferry_watch.control.limits import Limits
 from ferry_watch.models import PACIFIC
 from ferry_watch.polling import PollPolicy
@@ -681,6 +682,49 @@ async def test_the_overview_shows_the_fleet_and_what_needs_attention(rig: Rig) -
     await rig.sql("INSERT INTO fleet_state (key, value) VALUES ('control_alive_at', '2000')")
     overview = await (await rig.call("GET", "/api/admin/overview")).json()
     assert overview["control_seen"] == 2_000.0
+
+
+async def test_the_overview_shows_what_versions_run(rig: Rig) -> None:
+    await make_admin(rig)
+
+    async def versions() -> dict[str, Any]:
+        return dict((await (await rig.call("GET", "/api/admin/overview")).json())["versions"])
+
+    assert await versions() == {"web": {"version": __version__}, "control": None, "browsers": []}
+    report = {"at": 1_000.0, "browsers": {"max": 7, "live": 3}}  # from a ferry-control too old to say
+    await rig.sql("INSERT INTO fleet_state (key, value) VALUES ('fleet_report', $1)", json.dumps(report))
+    assert (await versions())["control"] is None
+    await rig.sql(
+        "UPDATE fleet_state SET value = $1 WHERE key = 'fleet_report'", json.dumps(report | {"version": "9.9"})
+    )
+    image = "ghcr.io/mchestr/ferry-watch-browser:0.6.3@sha256:" + "b" * 64
+    for gen, version, ended in [(1, "0.6.2", True), (2, "0.6.3", False)]:  # the same trip's old pod and its new one
+        await rig.sql(
+            "INSERT INTO browser_pods (name, trip_id, user_id, gen, mode, deadline_at, image_digest, agent_version,"
+            " ended_at) VALUES ($1, $2, $3, $4, 'warm', now(), $5, $6, CASE WHEN $7 THEN now() END)",
+            f"fw-{'1' * 16}-g{gen}",
+            "1" * 16,
+            BOB,
+            gen,
+            image,
+            version,
+            ended,
+        )
+    for trip_id, said in [("2" * 16, "0.6.3"), ("3" * 16, None)]:  # None: it hasn't said hello yet
+        await rig.sql(
+            "INSERT INTO browser_pods (name, trip_id, user_id, gen, mode, deadline_at, image_digest, agent_version)"
+            " VALUES ($1, $2, $3, 1, 'short_check', now(), $4, $5)",
+            f"fw-{trip_id}-g1",
+            trip_id,
+            BOB,
+            image,
+            said,
+        )
+    assert await versions() == {
+        "web": {"version": __version__},
+        "control": {"version": "9.9", "at": 1_000.0},
+        "browsers": [{"version": "0.6.3", "image": image, "pods": 2}, {"version": None, "image": image, "pods": 1}],
+    }
 
 
 async def held(rig: Rig, trip_id: str, user: str = BOB) -> str:

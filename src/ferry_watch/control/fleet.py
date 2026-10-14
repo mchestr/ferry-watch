@@ -23,6 +23,7 @@ from typing import Any, Protocol
 
 import asyncpg
 
+from ferry_watch import __version__
 from ferry_watch.models import PACIFIC, Trip, ValidationError
 from ferry_watch.polling import quiet_hours
 from ferry_watch.protocol import CommandOp, CommandReason
@@ -343,6 +344,7 @@ class Fleet:
             memory |= {"pod_mb": pod_mib, "requested_mb": live * pod_mib, "budget_mb": self._max_total * pod_mib}
         report.summary = {
             "at": now,
+            "version": __version__,  # ferry-control's own, for the admin page
             "browsers": {"max": self._max_total, "live": live},
             "memory": memory,
         } | report.summary
@@ -440,8 +442,8 @@ class Fleet:
             )
             name = pod_name(trip.id, gen)
             await conn.execute(
-                "INSERT INTO browser_pods (name, trip_id, user_id, gen, mode, deadline_at, created_at)"
-                " VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                "INSERT INTO browser_pods (name, trip_id, user_id, gen, mode, deadline_at, created_at, image_digest)"
+                " VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
                 name,
                 trip.id,
                 start.user_id,
@@ -449,6 +451,7 @@ class Fleet:
                 start.mode,
                 _ts(now + DEADLINE_SECONDS),
                 _ts(now),
+                self._params.image,  # pinned by digest: what the pod runs
             )
             await conn.execute(
                 "UPDATE trip_runtime SET mode = $2, phase = 'starting', queue_position = NULL, queued_since = NULL,"

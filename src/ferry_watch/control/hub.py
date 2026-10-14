@@ -184,6 +184,7 @@ class HubEndpoint:
             raise Violation("The hello names another trip or pod")
         if VERSION not in hello.proto:
             raise ProtocolError("No protocol version in common")
+        await self._store.record_agent_version(binding, hello.agent_version)  # for the admin page
         peer = Peer(binding, ws, hello.boot)
         old = self._peers.get(binding.pod)
         self._peers[binding.pod] = peer  # one live socket per pod: the newest wins

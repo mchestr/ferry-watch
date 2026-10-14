@@ -183,6 +183,10 @@ class ControlStore:
 
     # ---- what a pod reports
 
+    async def record_agent_version(self, binding: Binding, version: str) -> None:
+        """The agent version the pod said hello with."""
+        await self._pool.execute("UPDATE browser_pods SET agent_version = $2 WHERE name = $1", binding.pod, version)
+
     async def record_state(self, binding: Binding, boot: str, state: State) -> None:
         cart = state.cart
         ready_at = cart.ready_at if cart is not None and cart.status == "ready" else None

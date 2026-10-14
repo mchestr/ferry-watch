@@ -12,6 +12,7 @@ from typing import Any
 import asyncpg
 import pytest
 
+from ferry_watch import __version__
 from ferry_watch.control.configure import HubSettings, curve_interval
 from ferry_watch.control.fleet import (
     EGRESS_GIVE_UP_S,
@@ -141,6 +142,7 @@ async def test_a_trip_within_a_week_gets_a_warm_pod(rig: Rig) -> None:
     assert report.started == [name]
     (row,) = await rig.pods()
     assert (row["name"], row["mode"], row["phase"], row["uid"]) == (name, "warm", "starting", "uid-1")
+    assert row["image_digest"] == PARAMS.image  # what it runs, for the admin page
     assert rig.cluster.specs[name]["spec"]["containers"][0]["env"][1] == {"name": "FW_OWNER", "value": ANN}
     assert (await rig.fleet.reconcile()).started == []  # one pod per trip
 
@@ -355,6 +357,7 @@ async def test_each_pass_reports_what_it_knew(rig: Rig) -> None:
     interval = curve_interval(NEAR, datetime.fromtimestamp(NOW, PACIFIC), PollPolicy())
     assert report.summary == {
         "at": NOW,
+        "version": __version__,
         "browsers": {"max": 7, "live": 2},
         "memory": {"pod": "1536Mi", "pod_mb": 1536, "requested_mb": 3072, "budget_mb": 7 * 1536},
         "queued": 0,
