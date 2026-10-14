@@ -133,6 +133,21 @@ def test_quiet_hours_stop_a_users_trips_unless_lifted() -> None:
     assert plan([ann], [lapsed], [pod(near)], FleetView(), POLICY, night).drain == [Drain(f"fw-{near.id}-g1", "paused")]
 
 
+def test_a_cart_held_for_a_quiet_trip_leaves_a_lifted_trip_to_short_checks() -> None:
+    """The warm pod holds a cart for a trip that's now ineligible (quiet hours, paused): it stays until the
+    cart is let go, so a trip the user lifted their quiet hours for gets a short check meanwhile instead of
+    waiting for that pod to leave."""
+    ann = UserView("ann", quiet=QuietHours(time(23, 0), time(6, 0)))
+    held, lifted = trip(1, 2), trip(2, 1)
+    night = NOW + 11.5 * 3600  # 23:30 Pacific
+    lifted = replace(lifted, quiet_lifted_until=night + 600)
+    result = plan([ann], [held, lifted], [pod(held, "holding")], FleetView(), POLICY, night)
+    assert result.drain == []
+    assert result.start == [Start(lifted.id, "ann", "short_check")]
+    paused = replace(held, paused_reason="after_checkout")
+    assert run([paused, trip(2, 1)], [pod(paused, "holding")]).start == [Start(trip(2, 1).id, "ann", "short_check")]
+
+
 def test_a_pod_for_a_deleted_trip_is_drained() -> None:
     orphan = trip(9, 2)
     assert run([], [pod(orphan)]).drain == [Drain(f"fw-{orphan.id}-g1", "deleted")]

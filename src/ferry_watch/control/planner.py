@@ -199,8 +199,8 @@ class _Planner:
                 if warm.trip_id in self.eligible and warm.trip_id not in nearest_ids and warm.phase == "watching":
                     self.result.drain.append(Drain(warm.name, "superseded"))  # a nearer trip takes the browser
                     leaving = True
-                elif warm.phase == "draining" or warm.trip_id not in self.eligible:
-                    leaving = True
+                elif warm.phase == "draining" or (warm.trip_id not in self.eligible and warm.phase != "holding"):
+                    leaving = True  # drained this pass or already; a held cart keeps its pod until it's let go
             # Every warm pod counts until it's gone, so a user never has more than their warm browsers.
             room = max(user.max_active_browsers - len(warm_pods), 0)
             for view in nearest:
