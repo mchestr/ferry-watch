@@ -2612,7 +2612,8 @@ The size is L: about 2-2.5k changed or added lines, including tests [R:map-front
      35 KB gzipped, in its own chunk with the maths, loaded the first time a map shows). Berths come from a
      table in the script and must be within 1.5 km of the coast, apart from four documented gaps in
      Natural Earth (Tsawwassen's causeway, the Duke Point peninsula, Cormorant Island, the head of Cousins
-     Inlet). Each bookable route's path is a least-cost path across a water grid that keeps off the shore,
+     Inlet); a berth that falls inside the land as drawn (Natural Earth leaves out most small bays) is drawn
+     just off the nearest shore, so no marker sits inland. Each bookable route's path is a least-cost path across a water grid that keeps off the shore,
      steered through the Inside Passage and north of Gabriola where the real ferries go, smoothed, and
      checked to stay off the land (as drawn) except near its ends. Colours come from the `--map-*` theme
      tokens; the dashes move only when reduced motion isn't requested.

@@ -13,6 +13,8 @@ whole Web Mercator pixels at zoom 13 (about 12 m here), counted from the data's 
   against that smoothed shape, not the raw one.
 - ``terminals``: each terminal's berth, from TERMINALS. A berth more than 1.5 km from the coast fails the build:
   either its coordinates or the coastline is wrong (OFF_THE_COAST_M lists the few known gaps in the coastline).
+  Natural Earth leaves out most small bays and harbours, so a berth can fall inside the land as drawn: it's then
+  drawn just off the nearest shore, so its marker sits on the coast and its routes don't start overland.
 - ``routes``: a path through the water for every route BC Ferries books, keyed "A-B" (codes sorted) and running
   from A to B, stored like a ring. Each is the cheapest way across a water grid where keeping clear of the
   shore costs less, smoothed so it reads as a ferry's course, then checked to stay off the land except near
@@ -65,7 +67,8 @@ EARTH_CIRCUMFERENCE_M = 40_075_016.686
 
 # Each terminal's berth (lat, lon) and the terminals BC Ferries books to from it (its booking form on 2026-10-11,
 # tests/fixtures/flow/route.html). The coordinates are the berths' own, not moved onto the coastline: Natural
-# Earth draws it with points about 1.5 km apart, so a berth can sit some way inside or off it.
+# Earth draws it with points about 1.5 km apart, so a berth can sit some way inside or off it (one inside it is
+# drawn off the nearest shore: place_berths).
 TERMINALS: dict[str, tuple[float, float, str]] = {
     "TSA": (49.0066, -123.1306, "DUK NAN PLH POB PSB PST PVB SWB"),  # Vancouver (Tsawwassen)
     "HSB": (49.3742, -123.2734, "BOW LNG NAN"),  # Vancouver (Horseshoe Bay)
@@ -92,7 +95,7 @@ TERMINALS: dict[str, tuple[float, float, str]] = {
     "PSB": (48.8768, -123.3148, "PLH POB PST PVB SWB TSA"),  # Galiano Island (Sturdies Bay)
     "PVB": (48.8446, -123.3224, "PLH POB PSB PST SWB TSA"),  # Mayne Island (Village Bay)
     "PST": (48.7992, -123.2027, "PLH POB PSB PVB SWB TSA"),  # Saturna Island (Lyall Harbour)
-    "GAB": (49.1593, -123.8617, "NAH"),  # Gabriola Island (Descanso Bay)
+    "GAB": (49.1784, -123.8597, "NAH"),  # Gabriola Island (Descanso Bay)
     "PEN": (48.9705, -123.6585, "CHM THT"),  # Penelakut Island (Telegraph Harbour)
     "PLH": (48.8508, -123.4494, "POB PSB PST PVB SWB TSA"),  # Salt Spring Island (Long Harbour)
     "FUL": (48.7689, -123.4506, "SWB"),  # Salt Spring Island (Fulford Harbour)
@@ -107,7 +110,7 @@ TERMINALS: dict[str, tuple[float, float, str]] = {
     "HRB": (50.1027, -125.2110, "COR"),  # Quadra Island (Heriot Bay)
     "QDR": (50.0446, -125.2187, "CAM"),  # Quadra Island (Quathiaski Cove)
     "BEC": (52.3795, -126.7690, "PBB POF PPH SHW"),  # Bella Coola
-    "PBB": (52.1384, -128.1270, "BEC KLE POF PPH PPR SHW"),  # Bella Bella (McLoughlin Bay)
+    "PBB": (52.1375, -128.1430, "BEC KLE POF PPH PPR SHW"),  # Bella Bella (McLoughlin Bay)
     "POF": (52.3528, -127.6930, "BEC PBB PPH SHW"),  # Ocean Falls
     "SHW": (52.1476, -128.0887, "BEC PBB POF PPH"),  # Shearwater
     "PPR": (54.2942, -130.3375, "KLE PBB PPH PSK"),  # Prince Rupert
@@ -124,6 +127,8 @@ OFF_THE_COAST_M = {
     "ALR": 3000,  # Natural Earth leaves out Cormorant Island
     "POF": 2500,  # Natural Earth's Cousins Inlet stops short of Ocean Falls
 }
+# How far into the water a berth inside the drawn land is drawn, past the nearest shore.
+SHORE_OFFSET_M = 60.0
 # Rings smaller than this (about 150 m across) are dropped: they're specks at any scale the app shows.
 MIN_RING_AREA = 150.0
 SIMPLIFY = 1.5  # pixels: drops points that sit on a straight line once rounded
@@ -252,7 +257,7 @@ class Berth:
     x: float
     y: float
     coast_m: float  # how far the berth is from the drawn coast
-    inland: bool  # whether it's inside the drawn land
+    inland: bool  # whether it's inside the drawn land (it's then drawn off the nearest shore: x and y)
 
 
 def place_berths(land: shapely.Geometry) -> dict[str, Berth]:
@@ -263,12 +268,24 @@ def place_berths(land: shapely.Geometry) -> dict[str, Berth]:
         x, y = (round(v) for v in to_map(lon, lat))
         point = Point(x, y)
         coast_m = coast.distance(point) * metres_per_pixel(y)
-        berths[code] = Berth(code, x, y, coast_m, land.contains(point))
+        inland = land.contains(point)
+        if inland:
+            x, y = _off_the_shore(coast, point)
+            if land.contains(Point(x, y)):
+                problems.append(f"{code} can't be drawn off the shore")
+        berths[code] = Berth(code, x, y, coast_m, inland)
         if coast_m > OFF_THE_COAST_M.get(code, MAX_BERTH_TO_COAST_M):
             problems.append(f"{code} is {coast_m:.0f} m from the coast")
     if problems:
         raise BuildError("; ".join(problems))
     return berths
+
+
+def _off_the_shore(coast: shapely.Geometry, point: Point) -> tuple[int, int]:
+    """Where a berth inside the land is drawn: SHORE_OFFSET_M into the water past the nearest shore."""
+    (x0, y0), (x1, y1) = shapely.shortest_line(point, coast).coords
+    offset = SHORE_OFFSET_M / metres_per_pixel(y1) / math.hypot(x1 - x0, y1 - y0)
+    return round(x1 + (x1 - x0) * offset), round(y1 + (y1 - y0) * offset)
 
 
 def route_pairs() -> list[tuple[str, str]]:
@@ -298,7 +315,7 @@ GRID_CELLS = 1800  # cells across a route's grid, within the limits below
 CELL_M = (50.0, 150.0)
 # Some routes keep to sheltered channels that a shortest path would skip; these points steer them through.
 _FITZ_HUGH_SOUND = (51.80, -127.90)
-_LAMA_PASSAGE = (52.1384, -128.1270)  # off Bella Bella's berth
+_LAMA_PASSAGE = (52.1380, -128.1365)  # mid-channel, off Bella Bella
 _MILBANKE_SOUND = (52.33, -128.55)
 _FINLAYSON_CHANNEL = (52.50, -128.47)
 # Graham Reach, Fraser Reach, Wright Sound, Grenville Channel and Chatham Sound.
@@ -534,7 +551,10 @@ def build(ne_dir: Path, out: Path) -> str:
     text = json.dumps(data, separators=(",", ":")) + "\n"
     out.write_text(text)
     far = sorted((b for b in berths.values() if b.coast_m > 500), key=lambda b: -b.coast_m)
-    report += [f"{b.code}: berth {b.coast_m:.0f} m {'inside' if b.inland else 'off'} the coast" for b in far]
+    report += [
+        f"{b.code}: berth {b.coast_m:.0f} m {'inside the coast (drawn off the shore)' if b.inland else 'off the coast'}"
+        for b in far
+    ]
     report.append(
         f"{out.relative_to(ROOT) if out.is_relative_to(ROOT) else out}: {sum(len(r) for r in rings)} coast points "
         f"in {len(rings)} rings, {len(routes)} routes, {len(text) / 1024:.0f} KB "

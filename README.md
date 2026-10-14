@@ -128,7 +128,9 @@ berth, and a path through the water for every route BC Ferries books. The app lo
 docstring says where to download the coastline and how to run it. When BC Ferries adds a
 terminal or a route, add it to the script's `TERMINALS` table and rebuild. Until then there's no
 map for a trip to or from a new terminal, and a new route between known ones gets its two ends
-but no line. The script checks each berth against the coast and each path against the land.
+but no line. The script checks each berth against the coast and each path against the land. The
+coastline leaves out most small bays, so a berth that falls inside the land is drawn just off the
+nearest shore.
 
 ## Things to know about BC Ferries
 
