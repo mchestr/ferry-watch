@@ -2,7 +2,7 @@
 import { z } from "zod";
 import { request } from "@/lib/api";
 import { TerminalListSchema, type Terminal, type TripSettings } from "@/lib/schema";
-import { CheckoutSchema, MyStateSchema, type MyState } from "./schema";
+import { CheckoutSchema, MyStateSchema, type MyState, type QuietHours } from "./schema";
 
 export const MY_STATE_KEY = ["my-state"] as const;
 
@@ -33,6 +33,8 @@ export const myApi = {
   dismiss: (id: string, cartId: string) => mutate("POST", `${tripPath(id)}/cart/dismiss`, { cart_id: cartId }),
   booked: (id: string, booked: boolean, reason?: BookedReason) =>
     mutate("POST", `${tripPath(id)}/booked`, reason ? { booked, reason } : { booked }),
+  /** The user's quiet hours (Pacific time), or null for none. */
+  setQuietHours: (quiet: QuietHours | null) => mutate("PATCH", "/api/me", { quiet_hours: quiet }),
   /** A one-minute link to this trip's checkout. Not followed automatically: the user chooses the device. */
   checkout: (id: string) => request(`${tripPath(id)}/vnc`, { method: "POST", body: {}, schema: CheckoutSchema }),
   subscribe: (subscription: PushSubscriptionJSON) =>

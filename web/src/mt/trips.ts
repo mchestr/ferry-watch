@@ -76,7 +76,7 @@ export function unheld(trip: MyTrip): string[] {
 }
 
 const NOT_HELD: Record<string, string> = {
-  quiet_hours: "We don't hold carts overnight.",
+  quiet_hours: "You're in your quiet hours.",
   auto_cart_off: "Auto-hold is off for this trip.",
   holding_elsewhere: "You're already holding a cart on another trip.",
   no_holds_left: "You've used today's holds.",

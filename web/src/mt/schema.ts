@@ -13,6 +13,9 @@ function reported<const T extends string>(values: readonly [T, ...T[]]) {
   return z.enum([...values, "unknown"] as [T | "unknown", ...(T | "unknown")[]]).catch("unknown");
 }
 
+/** Quiet hours, Pacific time; they may run past midnight ("23:00" to "06:00"). */
+export const QuietHoursSchema = z.object({ start: timeOfDay, end: timeOfDay });
+
 export const FareInfoSchema = z.object({ name: z.string(), price: z.string().nullable(), selectable: z.boolean() });
 
 export const SailingInfoSchema = z.object({
@@ -75,6 +78,8 @@ export const MyTripSchema = z.object({
   trip: TripSettingsSchema.extend({ id: z.string().regex(/^[a-f0-9]{16}$/) }),
   rev: z.number().int(),
   paused_reason: z.string().nullable(),
+  // In the user's quiet hours now, and not lifted for this trip (Check now, Hold it for me): it isn't checked.
+  quiet: z.boolean().default(false),
   browser: BrowserSchema,
   hold: HoldSchema.default({
     reason: null,
@@ -100,7 +105,10 @@ export const MyStateSchema = z.object({
   usage: z.record(z.string(), z.number()),
   trips: z.array(MyTripSchema),
   capacity: z.object({ can_add: z.boolean(), reason: z.string().nullable() }),
-  quiet_hours: z.object({ start: timeOfDay, end: timeOfDay, now: z.boolean() }),
+  // The user's own settings; an older server sends none.
+  settings: z.object({ quiet_hours: QuietHoursSchema.nullable().default(null) }).default({ quiet_hours: null }),
+  // The same quiet hours, and whether it's quiet now; null when the user has none.
+  quiet_hours: QuietHoursSchema.extend({ now: z.boolean() }).nullable().default(null),
   devices: z.number().int().default(0),
   events: z.array(
     z.object({
@@ -126,3 +134,4 @@ export type Browser = z.infer<typeof BrowserSchema>;
 export type MyTrip = z.infer<typeof MyTripSchema>;
 export type Hold = z.infer<typeof HoldSchema>;
 export type MyState = z.infer<typeof MyStateSchema>;
+export type QuietHours = z.infer<typeof QuietHoursSchema>;

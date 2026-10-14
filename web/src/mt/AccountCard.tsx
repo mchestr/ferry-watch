@@ -1,14 +1,107 @@
-/** The user's own settings: alerts on this device, signing out, and the Ko-fi link. */
+/** The user's own settings: alerts on this device, quiet hours, signing out, and the Ko-fi link. */
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Bell, Coffee, LogOut } from "lucide-react";
+import { useState } from "react";
 import { toast } from "sonner";
 import { Button, LinkButton } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Field, Input } from "@/components/ui/controls";
+import { Switch } from "@/components/ui/switch";
 import { reportError } from "@/lib/hooks";
+import { parseTimeOfDay, timeLabel } from "@/lib/time";
 import { MY_STATE_KEY, myApi } from "./api";
 import { signOut } from "./auth";
 import { pushSupported, subscribe } from "./push";
-import type { MyState } from "./schema";
+import type { MyState, QuietHours } from "./schema";
+
+/** What quiet hours start as when turned on. */
+const NIGHT: QuietHours = { start: "23:00", end: "06:00" };
+
+/**
+ * The user's quiet hours: off unless they turn them on. The switch saves at once (with the times last shown,
+ * 11 pm to 6 am at first); changed times wait for Save.
+ */
+function QuietHoursSetting({ saved }: { saved: QuietHours | null }) {
+  const qc = useQueryClient();
+  const [draft, setDraft] = useState<QuietHours>(saved ?? NIGHT);
+  // Saved here or on another device: the times start afresh from what's saved.
+  const key = saved ? `${saved.start}-${saved.end}` : "";
+  const [shownKey, setShownKey] = useState(key);
+  if (key !== shownKey) {
+    setShownKey(key);
+    if (saved) setDraft(saved);
+  }
+  const save = useMutation({
+    mutationFn: myApi.setQuietHours,
+    onSuccess: (next, quiet) => {
+      qc.setQueryData(MY_STATE_KEY, next);
+      toast.success(
+        quiet ? `Quiet hours: ${timeLabel(quiet.start)} to ${timeLabel(quiet.end)}` : "Quiet hours are off",
+      );
+    },
+    onError: (error) => reportError(qc, error),
+  });
+  // While saving, show what's being saved.
+  const on = save.isPending ? save.variables !== null : saved !== null;
+  const blank = parseTimeOfDay(draft.start) === null || parseTimeOfDay(draft.end) === null;
+  const error = blank
+    ? "Enter a start and an end."
+    : draft.start === draft.end
+      ? "Start and end can't be the same."
+      : null;
+  const changed = saved !== null && (draft.start !== saved.start || draft.end !== saved.end);
+  return (
+    <div className="space-y-3">
+      <label className="flex items-center justify-between gap-3 text-sm">
+        <span>
+          Quiet hours <span className="text-muted-foreground">(Pacific time)</span>
+        </span>
+        <Switch
+          checked={on}
+          disabled={save.isPending}
+          onCheckedChange={(next) => save.mutate(next ? (error === null ? draft : NIGHT) : null)}
+        />
+      </label>
+      <p className="text-xs text-muted-foreground">
+        Your trips aren't checked during them, so nothing is held and you get no alerts. Check now and Hold it for me
+        still work.
+      </p>
+      {on && (
+        <form
+          className="space-y-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (error === null) save.mutate(draft);
+          }}
+        >
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Start" error={error}>
+              <Input
+                type="time"
+                required
+                value={draft.start}
+                onChange={(e) => setDraft((d) => ({ ...d, start: e.target.value }))}
+              />
+            </Field>
+            <Field label="End">
+              <Input
+                type="time"
+                required
+                value={draft.end}
+                onChange={(e) => setDraft((d) => ({ ...d, end: e.target.value }))}
+              />
+            </Field>
+          </div>
+          {changed && (
+            <Button type="submit" size="sm" disabled={save.isPending || error !== null}>
+              Save
+            </Button>
+          )}
+        </form>
+      )}
+    </div>
+  );
+}
 
 export function AccountCard({ state }: { state: MyState }) {
   const qc = useQueryClient();
@@ -48,10 +141,10 @@ export function AccountCard({ state }: { state: MyState }) {
           </Button>
         </div>
       </div>
+      <QuietHoursSetting saved={state.settings.quiet_hours} />
       <p className="text-xs text-muted-foreground">
         Your nearest trip within a week is watched closely, every 5 minutes a week out down to every 30 seconds in the
-        last 6 hours. Other trips are checked every 6 hours. Between {state.quiet_hours.start} and{" "}
-        {state.quiet_hours.end} we only alert, without holding a cart.
+        last 6 hours. Other trips are checked every 6 hours.
       </p>
       <div className="flex flex-wrap gap-2">
         <Button size="sm" variant="ghost" onClick={() => void signOut()}>

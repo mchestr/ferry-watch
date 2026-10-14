@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeSettings } from "@/test/fixtures";
 import { FakeWebSocket } from "@/test/fake-websocket";
@@ -18,6 +18,7 @@ function myState(overrides: Partial<MyState> = {}): MyState {
         trip: { ...makeSettings(), id: TRIP_ID },
         rev: 1,
         paused_reason: null,
+        quiet: false,
         hold: { reason: null, can_request: true, holdable: [], requested_at: null, requested_until: null },
         booking_url: null,
         browser: {
@@ -50,7 +51,8 @@ function myState(overrides: Partial<MyState> = {}): MyState {
       },
     ],
     capacity: { can_add: true, reason: null },
-    quiet_hours: { start: "23:00", end: "06:00", now: false },
+    settings: { quiet_hours: null },
+    quiet_hours: null,
     devices: 0,
     events: [],
     links: { kofi: null },
@@ -305,7 +307,103 @@ describe("pausing a trip", () => {
     renderWithProviders(<MtApp />);
     expect(await screen.findByRole("heading", { name: "Your account" })).toBeInTheDocument();
     expect(screen.queryByText(/Pause all/)).toBeNull();
-    expect(screen.queryByRole("switch")).toBeNull();
+    expect(screen.queryByRole("switch", { name: /pause/i })).toBeNull();
+  });
+});
+
+describe("quiet hours", () => {
+  beforeEach(() => {
+    localStorage.setItem("fw.token", "t-1");
+    history.replaceState(null, "", "/settings");
+  });
+
+  const NIGHT = { start: "23:00", end: "06:00" };
+
+  /** ferry-web as the contract has it: PATCH /api/me {quiet_hours} answers with the whole state. */
+  function api(initial: { start: string; end: string } | null) {
+    let quiet = initial;
+    const state = () => myState({ settings: { quiet_hours: quiet }, quiet_hours: quiet && { ...quiet, now: false } });
+    return mockFetch((r) => {
+      if (r.url === "/api/me" && r.method === "PATCH") quiet = (r.body as { quiet_hours: typeof quiet }).quiet_hours;
+      if (r.url === "/api/state" || r.url === "/api/me") return jsonResponse(state());
+      return jsonResponse({ terminals: [] });
+    });
+  }
+
+  it("are off unless turned on, and start as 11 pm to 6 am", async () => {
+    const { requests } = api(null);
+    const { user } = renderWithProviders(<MtApp />);
+    const quiet = await screen.findByRole("switch", { name: "Quiet hours (Pacific time)" });
+    expect(quiet).not.toBeChecked();
+    expect(
+      screen.getByText(
+        "Your trips aren't checked during them, so nothing is held and you get no alerts. Check now and Hold it for me still work.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText("Start")).toBeNull();
+    await user.click(quiet);
+    expect(await screen.findByText("Quiet hours: 11:00 pm to 6:00 am")).toBeInTheDocument();
+    expect(requests.find((r) => r.method === "PATCH")).toMatchObject({ url: "/api/me", body: { quiet_hours: NIGHT } });
+    expect(quiet).toBeChecked();
+    expect(screen.getByLabelText("Start")).toHaveValue("23:00");
+    expect(screen.getByLabelText("End")).toHaveValue("06:00");
+  });
+
+  it("saves changed times, and turns off as null", async () => {
+    const { requests } = api(NIGHT);
+    const { user } = renderWithProviders(<MtApp />);
+    const start = await screen.findByLabelText("Start");
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull(); // nothing changed yet
+    fireEvent.change(start, { target: { value: "22:30" } });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Quiet hours: 10:30 pm to 6:00 am")).toBeInTheDocument();
+    await user.click(screen.getByRole("switch", { name: "Quiet hours (Pacific time)" }));
+    expect(await screen.findByText("Quiet hours are off")).toBeInTheDocument();
+    expect(requests.filter((r) => r.method === "PATCH").map((r) => r.body)).toEqual([
+      { quiet_hours: { start: "22:30", end: "06:00" } },
+      { quiet_hours: null },
+    ]);
+    expect(screen.queryByLabelText("Start")).toBeNull();
+  });
+
+  it("won't save a start and end that are the same", async () => {
+    const { requests } = api({ start: "22:00", end: "07:00" });
+    const { user } = renderWithProviders(<MtApp />);
+    const end = await screen.findByLabelText("End");
+    fireEvent.change(end, { target: { value: "22:00" } });
+    expect(screen.getByLabelText("Start")).toHaveAccessibleDescription("Start and end can't be the same.");
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    expect(requests.some((r) => r.method === "PATCH")).toBe(false);
+    // Off and on again: back to the night.
+    const quiet = screen.getByRole("switch", { name: "Quiet hours (Pacific time)" });
+    await user.click(quiet);
+    await waitFor(() => expect(quiet).not.toBeChecked());
+    await user.click(quiet);
+    await waitFor(() => expect(quiet).toBeChecked());
+    expect(requests.filter((r) => r.method === "PATCH").map((r) => r.body)).toEqual([
+      { quiet_hours: null },
+      { quiet_hours: NIGHT },
+    ]);
+  });
+
+  it("are off for a server that doesn't send them", async () => {
+    const older: Partial<MyState> = myState();
+    delete older.settings;
+    delete older.quiet_hours;
+    mockFetch((r) => (r.url === "/api/state" ? jsonResponse(older) : jsonResponse({ terminals: [] })));
+    renderWithProviders(<MtApp />);
+    expect(await screen.findByRole("switch", { name: "Quiet hours (Pacific time)" })).not.toBeChecked();
+  });
+
+  it("say when it's quiet now, on the trips", async () => {
+    history.replaceState(null, "", "/");
+    mockFetch((r) =>
+      r.url === "/api/state"
+        ? jsonResponse(myState({ settings: { quiet_hours: NIGHT }, quiet_hours: { ...NIGHT, now: true } }))
+        : jsonResponse({ terminals: [] }),
+    );
+    renderWithProviders(<MtApp />);
+    expect(await screen.findByText(/1 of 3 watched · quiet until 6:00 am/)).toBeInTheDocument();
   });
 });
 
@@ -356,7 +454,7 @@ describe("a bookable sailing nothing holds", () => {
     });
     const { user } = renderWithProviders(<MtApp />);
     expect(await screen.findByText("9:00 am is bookable, not held")).toBeInTheDocument();
-    expect(screen.getByText("We don't hold carts overnight. Hold it for me, or book it yourself.")).toBeInTheDocument();
+    expect(screen.getByText("You're in your quiet hours. Hold it for me, or book it yourself.")).toBeInTheDocument();
     expect(screen.getByText("Bookable now")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Book on bcferries.com/ })).toHaveAttribute("href", BOOK);
     await user.click(screen.getByRole("button", { name: /Hold it for me/ }));

@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { configureBearerAuth, errorMessage, hasStatus, type AuthReason } from "@/lib/api";
 import type { TripSettings } from "@/lib/schema";
+import { timeLabel } from "@/lib/time";
 import { AccountCard } from "./AccountCard";
 import { AdminPage } from "./AdminPage";
 import { MY_STATE_KEY, myApi } from "./api";
@@ -188,6 +189,7 @@ function SignedIn() {
                 <h1 className="text-xl font-bold tracking-tight">Your trips</h1>
                 <p className="text-sm text-muted-foreground">
                   {state.trips.length} of {state.limits.maxTrips?.value ?? 3} watched
+                  {state.quiet_hours?.now && ` · quiet until ${timeLabel(state.quiet_hours.end)}`}
                 </p>
               </div>
               <Button onClick={() => setSheet({ kind: "adding" })} disabled={!state.capacity.can_add}>

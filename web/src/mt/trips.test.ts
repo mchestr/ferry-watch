@@ -8,6 +8,7 @@ function myTrip(browser: Partial<MyTrip["browser"]> = {}, extra: Partial<MyTrip>
     trip: { ...makeSettings(), id: "3f9c0a1b2c3d4e5f", earliest: "07:00", latest: "12:00" },
     rev: 1,
     paused_reason: null,
+    quiet: false,
     hold: { reason: null, can_request: true, holdable: [], requested_at: null, requested_until: null },
     booking_url: null,
     browser: {
