@@ -21,6 +21,7 @@ browser = [
 # What the control plane (ferry-control, ferry-web) needs beyond the core: Postgres.
 control = [
   "asyncpg==0.31.0",
+  "PyJWT==2.15.1",  # ferry-web's OIDC id_token checks
 ]
 
 [project.scripts]
@@ -159,3 +160,18 @@ name = "The agent never imports the control plane"
 type = "forbidden"
 source_modules = ["ferry_watch.agent"]
 forbidden_modules = ["ferry_watch.control", "asyncpg"]
+
+[[tool.importlinter.contracts]]
+name = "ferry-web has no Kubernetes access and never drives a browser"
+type = "forbidden"
+source_modules = ["ferry_watch.web"]
+forbidden_modules = [
+  "ferry_watch.control.kube",
+  "ferry_watch.control.fleet",
+  "ferry_watch.control.hub",
+  "ferry_watch.agent",
+  "ferry_watch.bcferries.site",
+  "ferry_watch.bcferries.parse",
+  "playwright",
+  "selectolax",
+]
