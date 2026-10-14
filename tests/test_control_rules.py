@@ -28,7 +28,7 @@ from ferry_watch.protocol import Brake, Configure
 TRIP = Trip(id="3f9c0a1b2c3d4e5f", origin="SWB", destination="TSA", date=date(2026, 10, 16), earliest=time(7))
 NOON = datetime(2026, 10, 15, 12, 0, tzinfo=PACIFIC)
 NIGHT = NOON.replace(hour=23, minute=30)
-PLENTY = Allowance(holds_per_day=4, cart_attempts_per_day=6, vnc_minutes_per_day=60)
+PLENTY = Allowance(holds_per_day=4, cart_attempts_per_day=6, vnc_minutes_per_day=60)  # quiet 10 pm to 5 am
 QUIET = replace(PLENTY, quiet=QuietHours(time(23, 0), time(6, 0)))  # the user's own quiet hours
 SETTINGS = HubSettings()
 
@@ -57,10 +57,14 @@ def test_a_default_above_its_ceiling_is_refused() -> None:
         (PLENTY, Switches(), NOON, "ok"),
         (PLENTY, Switches(pause_carting=True), NOON, "carting_paused"),
         (PLENTY, Switches(maintenance=True), NOON, "carting_paused"),
-        (PLENTY, Switches(), NIGHT, "ok"),  # no quiet hours unless the user sets some
+        (PLENTY, Switches(), NOON.replace(hour=22), "quiet_hours"),  # everyone has quiet hours: 10 pm to 5 am
+        (PLENTY, Switches(), NOON.replace(hour=4, minute=59), "quiet_hours"),
+        (PLENTY, Switches(), NOON.replace(hour=5), "ok"),
+        (PLENTY, Switches(), NOON.replace(hour=21, minute=59), "ok"),
         (QUIET, Switches(), NIGHT, "quiet_hours"),
         (QUIET, Switches(), NOON.replace(hour=5, minute=59), "quiet_hours"),
         (QUIET, Switches(), NOON.replace(hour=6), "ok"),
+        (QUIET, Switches(), NOON.replace(hour=22, minute=30), "ok"),  # their own hours, not the default
         (Allowance(4, 6, 60, holds_today=4), Switches(), NOON, "no_holds_left"),
         (Allowance(4, 6, 60, cart_attempts_today=6), Switches(), NOON, "limit"),
         (Allowance(4, 6, 60, vnc_seconds_today=31 * 60), Switches(), NOON, "limit"),  # < a session's minutes left
@@ -190,7 +194,8 @@ def test_configure_for_a_requested_hold() -> None:
         (QUIET, NIGHT, NIGHT.timestamp() + 600, True),  # lifted for this trip by a manual check
         (QUIET, NIGHT, NIGHT.timestamp() - 1, False),  # the lift has lapsed
         (QUIET, NOON, None, True),
-        (PLENTY, NIGHT, None, True),  # no quiet hours: checked at any hour
+        (PLENTY, NIGHT, None, False),  # the default quiet hours, 10 pm to 5 am
+        (PLENTY, NOON, None, True),
     ],
 )
 def test_in_quiet_hours_a_trip_isnt_checked_unless_lifted(

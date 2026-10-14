@@ -13,7 +13,7 @@ from datetime import date, datetime
 import msgspec
 
 from ferry_watch.models import PACIFIC, Trip
-from ferry_watch.polling import PollPolicy, QuietHours, time_until
+from ferry_watch.polling import DEFAULT_QUIET_HOURS, PollPolicy, QuietHours, time_until
 from ferry_watch.protocol import (
     MAX_INTERVAL_S,
     MIN_INTERVAL_S,
@@ -67,10 +67,10 @@ class Allowance:
     holds_today: int = 0
     cart_attempts_today: int = 0
     vnc_seconds_today: int = 0
-    quiet: QuietHours | None = None  # none unless the user set some
+    quiet: QuietHours = DEFAULT_QUIET_HOURS  # the default until the user changes them
 
     def quiet_now(self, at: datetime) -> bool:
-        return self.quiet is not None and self.quiet.contains(at)
+        return self.quiet.contains(at)
 
 
 def cart_gate(

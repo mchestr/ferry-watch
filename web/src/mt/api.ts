@@ -41,8 +41,8 @@ export const myApi = {
   release: (id: string, cartId: string) => mutate("POST", `${tripPath(id)}/cart/release`, { cart_id: cartId }),
   dismiss: (id: string, cartId: string) => mutate("POST", `${tripPath(id)}/cart/dismiss`, { cart_id: cartId }),
   booked: (id: string, answer: BookedAnswer) => mutate("POST", `${tripPath(id)}/booked`, answer),
-  /** The user's quiet hours (Pacific time), or null for none. */
-  setQuietHours: (quiet: QuietHours | null) => mutate("PATCH", "/api/me", { quiet_hours: quiet }),
+  /** The user's quiet hours (Pacific time). Everyone has them, so there's no turning them off. */
+  setQuietHours: (quiet: QuietHours) => mutate("PATCH", "/api/me", { quiet_hours: quiet }),
   /** A one-minute link to this trip's checkout. Not followed automatically: the user chooses the device. */
   checkout: (id: string) => request(`${tripPath(id)}/vnc`, { method: "POST", body: {}, schema: CheckoutSchema }),
   subscribe: (subscription: PushSubscriptionJSON) =>

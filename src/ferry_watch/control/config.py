@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import replace
-from datetime import time, timedelta
+from datetime import timedelta
 from pathlib import Path
 from typing import Annotated
 
@@ -76,8 +76,8 @@ class PollingConfig(_Config, kw_only=True):
     tiers: list[TierConfig] | None = None
     short_check_interval: str = "6h"
     horizon_days: Annotated[int, msgspec.Meta(ge=7, le=120)] = 30
-    # Deprecated and ignored: quiet hours are each user's own setting now. Still accepted for a release, so a
-    # deployment that sets them keeps starting.
+    # Deprecated and ignored: quiet hours are each user's own setting (10 pm to 5 am until they change them).
+    # Still accepted, so a deployment that sets them keeps starting.
     quiet_start: str = "23:00"
     quiet_end: str = "06:00"
 
@@ -170,8 +170,6 @@ def poll_policy(p: PollingConfig) -> PollPolicy:
     policy = PollPolicy(
         short_check_interval=duration(p.short_check_interval),
         horizon=timedelta(days=p.horizon_days),
-        quiet_start=time.fromisoformat(p.quiet_start),
-        quiet_end=time.fromisoformat(p.quiet_end),
     )
     if p.tiers:
         policy = replace(policy, tiers=tuple(Tier(duration(t.within), duration(t.interval)) for t in p.tiers))

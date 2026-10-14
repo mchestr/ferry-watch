@@ -24,7 +24,7 @@ from datetime import datetime, timedelta
 from typing import Literal
 
 from ferry_watch.models import PACIFIC, Trip
-from ferry_watch.polling import PollPolicy, QuietHours, time_until
+from ferry_watch.polling import DEFAULT_QUIET_HOURS, PollPolicy, QuietHours, time_until
 from ferry_watch.protocol import CommandReason, Mode
 
 PodPhase = Literal["creating", "starting", "watching", "holding", "draining", "failed", "gone"]
@@ -40,10 +40,10 @@ class UserView:
     active: bool = True  # not suspended
     paused: bool = False  # for a release: "Pause all" from a ferry-web before 0004, until ferry-web moves it
     max_active_browsers: int = 1
-    quiet: QuietHours | None = None  # their trips aren't checked then
+    quiet: QuietHours = DEFAULT_QUIET_HOURS  # their trips aren't checked then
 
     def quiet_now(self, at: datetime) -> bool:
-        return self.quiet is not None and self.quiet.contains(at)
+        return self.quiet.contains(at)
 
 
 @dataclass(frozen=True, slots=True)

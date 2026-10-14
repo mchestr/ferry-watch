@@ -13,8 +13,11 @@ function reported<const T extends string>(values: readonly [T, ...T[]]) {
   return z.enum([...values, "unknown"] as [T | "unknown", ...(T | "unknown")[]]).catch("unknown");
 }
 
-/** Quiet hours, Pacific time; they may run past midnight ("23:00" to "06:00"). */
+/** Quiet hours, Pacific time; they may run past midnight ("22:00" to "05:00"). */
 export const QuietHoursSchema = z.object({ start: timeOfDay, end: timeOfDay });
+
+/** Everyone's quiet hours until they change them: the ferries sail from about 5 am to 10 pm. */
+export const DEFAULT_QUIET_HOURS: z.infer<typeof QuietHoursSchema> = { start: "22:00", end: "05:00" };
 
 export const FareInfoSchema = z.object({ name: z.string(), price: z.string().nullable(), selectable: z.boolean() });
 
@@ -105,9 +108,15 @@ export const MyStateSchema = z.object({
   usage: z.record(z.string(), z.number()),
   trips: z.array(MyTripSchema),
   capacity: z.object({ can_add: z.boolean(), reason: z.string().nullable() }),
-  // The user's own settings; an older server sends none.
-  settings: z.object({ quiet_hours: QuietHoursSchema.nullable().default(null) }).default({ quiet_hours: null }),
-  // The same quiet hours, and whether it's quiet now; null when the user has none.
+  // The user's own settings. Everyone has quiet hours: where an older server sends none, they're the default.
+  settings: z
+    .object({
+      quiet_hours: QuietHoursSchema.nullable()
+        .default(null)
+        .transform((quiet) => quiet ?? DEFAULT_QUIET_HOURS),
+    })
+    .default({ quiet_hours: null }),
+  // The same quiet hours, and whether it's quiet now; null from a server too old to say.
   quiet_hours: QuietHoursSchema.extend({ now: z.boolean() }).nullable().default(null),
   devices: z.number().int().default(0),
   events: z.array(

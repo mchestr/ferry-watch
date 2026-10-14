@@ -5,8 +5,8 @@ The aim is to be a good citizen of bcferries.com (docs/multi-tenant/decisions.md
 - each user's nearest trip within 7 days gets a browser kept warm between checks, and is checked on a
   curve that tightens as the sailing approaches;
 - every other trip gets a short check every 6 hours;
-- in a user's own quiet hours (none unless they set some) their trips aren't checked at all, unless they
-  lift them for a trip (a manual check, or "Hold it for me").
+- in a user's own quiet hours (10 pm to 5 am unless they change them) their trips aren't checked at all,
+  unless they lift them for a trip (a manual check, or "Hold it for me").
 """
 
 from __future__ import annotations
@@ -39,10 +39,6 @@ class PollPolicy:
     )
     short_check_interval: timedelta = timedelta(hours=6)  # trips without a warm browser
     horizon: timedelta = timedelta(days=30)  # how far ahead a trip may be
-    # Deprecated and unused: quiet hours are each user's own (QuietHours). Kept a release, so a deployment's
-    # polling.quietStart and quietEnd still parse.
-    quiet_start: time = time(23, 0)
-    quiet_end: time = time(6, 0)
 
     def __post_init__(self) -> None:
         if not self.tiers:
@@ -108,9 +104,14 @@ class QuietHours:
         return end if end > local else datetime.combine(local.date() + timedelta(days=1), self.end, tzinfo=PACIFIC)
 
 
-def quiet_hours(start: time | None, end: time | None) -> QuietHours | None:
-    """A user's quiet hours as stored (`user_settings`): None unless both times are set."""
-    return QuietHours(start, end) if start is not None and end is not None else None
+# Everyone's quiet hours until they change them: the ferries sail from about 5 am to 10 pm.
+DEFAULT_QUIET_HOURS = QuietHours(time(22, 0), time(5, 0))
+
+
+def quiet_hours(start: time | None, end: time | None) -> QuietHours:
+    """A user's quiet hours as stored (`user_settings`): the default when they have no row, or no times (what a
+    0.6.3 ferry-web stores for "off" during the rollout)."""
+    return QuietHours(start, end) if start is not None and end is not None else DEFAULT_QUIET_HOURS
 
 
 def time_until(trip: Trip, now: datetime) -> timedelta | None:

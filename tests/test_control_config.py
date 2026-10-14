@@ -64,11 +64,11 @@ def test_values_override(tmp_path: Path) -> None:
 
 def test_the_old_fleet_wide_quiet_hours_still_parse(tmp_path: Path) -> None:
     """Quiet hours are each user's own now: a deployment that still sets polling.quietStart/quietEnd starts,
-    and they change nothing."""
+    and they change nothing (a user's quiet hours end at 5 am unless they change them)."""
     config = load(write(tmp_path, MINIMAL | {"polling": {"quietStart": "22:00", "quietEnd": "07:00"}}))
     trip = Trip(id="3f9c0a1b2c3d4e5f", origin="SWB", destination="TSA", date=date(2026, 10, 16))
-    night = datetime(2026, 10, 15, 23, 30, tzinfo=PACIFIC)
-    assert cart_gate(trip, Allowance(4, 6, 60), Switches(), config.hub_settings(), night) == "ok"
+    early = datetime(2026, 10, 15, 6, 30, tzinfo=PACIFIC)
+    assert cart_gate(trip, Allowance(4, 6, 60), Switches(), config.hub_settings(), early) == "ok"
 
 
 @pytest.mark.parametrize(
