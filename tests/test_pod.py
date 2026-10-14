@@ -232,8 +232,13 @@ def test_xvnc_listens_on_its_unix_socket_only() -> None:
     argv = xvnc_argv(":99", (1280, 1000), Path("/tmp/kasm/rfb.sock"))
     assert argv[argv.index("-rfbunixpath") + 1] == "/tmp/kasm/rfb.sock"
     assert argv[argv.index("-rfbunixmode") + 1] == "0600"
-    for flag in ("-websocketPort", "-interface", "-httpd", "-AlwaysShared", "-DisableBasicAuth", "-MaxIdleTime"):
+    for flag in ("-websocketPort", "-interface", "-httpd", "-AlwaysShared", "-MaxIdleTime"):
         assert flag not in argv
+
+
+def test_xvnc_lets_the_gates_client_see_the_screen_and_use_it() -> None:
+    # Without it, a client with no kasmpasswd user (the gate's, on the unix socket) gets no frames and no input.
+    assert "-DisableBasicAuth" in xvnc_argv(":99", (1280, 1000), Path("/tmp/kasm/rfb.sock"))
 
 
 async def test_processes_start_report_a_death_and_stop() -> None:

@@ -808,7 +808,7 @@ No lifecycle hooks exist, so the VAP forbids them outright. This fixes three thi
 | `site.py:270-301` `login()` | Kept unchanged behind the disabled flag (see the login row above). Never called in v1. |
 | `site.py:112` `base_url` parameter | Overridable only in the `agent-e2e` image, enabled by a baked marker file. |
 | `state.py` `RuntimeState`, `Cart` (`:36-44`, `cart.id` at `:40`) | Reused in the agent. `cart.id` is the `cart_id` tickets bind to. |
-| `entrypoint.sh:20-26` Xvnc flags | §5.6. `-AlwaysShared`, `-interface 0.0.0.0`, `-websocketPort`, `-httpd` and `-DisableBasicAuth` are removed; `:99`, `-geometry` and `-depth 24` stay. |
+| `entrypoint.sh:20-26` Xvnc flags | §5.6. `-AlwaysShared`, `-interface 0.0.0.0`, `-websocketPort` and `-httpd` are removed; `:99`, `-geometry`, `-depth 24` and `-DisableBasicAuth` stay (it gives the gate's client its view and input rights). |
 | `Dockerfile:36-38` `/vnc` symlink, `:65` `USER pwuser`, `:67` `tini -g` | Symlink removed. `USER 1001:1001` (numeric). `ENTRYPOINT ["/usr/bin/tini","--","ferry-watch-agent"]`. Firefox and WebKit removed from the image. |
 
 **As built:** the one-trip watcher is a new module, `src/ferry_watch/agent/watch.py` (`TripWatcher`), rather
@@ -1002,13 +1002,19 @@ is harmless: nothing can cart or open the gate before a check has launched Chrom
 
 **Xvnc flags** replace `entrypoint.sh:20-26`:
 `:99 -geometry 1280x1000 -depth 24 -rfbunixpath /tmp/kasm/rfb.sock -rfbunixmode 0600 -SecurityTypes None
--NeverShared -DisconnectClients=0 -SendCutText=0 -AcceptCutText=1 -DLP_ClipAcceptMax 256
+-DisableBasicAuth -NeverShared -DisconnectClients=0 -SendCutText=0 -AcceptCutText=1 -DLP_ClipAcceptMax 256
 -IgnoreClientSettingsKasm -FrameRate 15 -MaxVideoResolution 1920x1080 -MaxConnectionTime 6000
 -AcceptSetDesktopSize -publicIP 127.0.0.1 -Log *:stderr:10`.
 
 - With `-rfbunixpath` set, KasmVNC creates only the unix listener and no WebSocket or TCP listener
   (upstream `unix/xserver/hw/vnc/vncExtInit.cc:255-290`). That is what makes C13 hold by construction.
-- **Removed:** `-AlwaysShared`, `-interface`, `-websocketPort`, `-httpd`, `-DisableBasicAuth`, `-sslOnly`,
+- **Kept:** `-DisableBasicAuth`, despite its name. It is the only switch that gives a client with no
+  `~/.kasmpasswd` user its rights (`common/rfb/VNCSConnectionST.cxx:1241-1270`). The gate's connection
+  arrives on the unix socket with no user, so without it Xvnc takes away its view and input rights
+  (`:91-108`) and never sends a frame: the checkout is black and ignores every tap. With `-rfbunixpath`
+  there is no WebSocket or HTTP listener, so there is no basic auth to turn off; access stays the socket's
+  0600 mode and the gate.
+- **Removed:** `-AlwaysShared`, `-interface`, `-websocketPort`, `-httpd`, `-sslOnly`,
   `-IdleTimeout` (the gate's ping replaces it; idle-dropping a user who is reading the page only forces a
   reconnect), and `-DLP_KeyRateLimit` (KasmVNC drops any key-down within `1000/limit` ms of the previous key
   event, `common/rfb/VNCSConnectionST.cxx:872-880`, which silently loses characters from phone keyboards).

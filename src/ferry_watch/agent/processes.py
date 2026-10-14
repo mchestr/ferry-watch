@@ -36,6 +36,11 @@ def xvnc_argv(display: str, screen: tuple[int, int], rfb_socket: Path) -> list[s
         "0600",
         "-SecurityTypes",
         "None",
+        # Despite its name, this is what gives the gate's unix-socket client view and input rights: without it
+        # KasmVNC looks a user up in ~/.kasmpasswd, finds none, and never sends a frame (a black checkout).
+        # With -rfbunixpath there's no WebSocket or HTTP listener, so there's no basic auth to disable; access
+        # stays the socket's 0600 mode and the gate.
+        "-DisableBasicAuth",
         "-NeverShared",
         "-DisconnectClients=0",
         "-SendCutText=0",
