@@ -1,6 +1,6 @@
 /** One of the user's trips: its browser's status, its sailings, a held cart and the questions it raises. */
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, Pause, Pencil, Play, RefreshCw, ShoppingCart } from "lucide-react";
+import { ChevronRight, Loader2, Pause, Pencil, Play, RefreshCw, ShoppingCart } from "lucide-react";
 import { toast } from "sonner";
 import { SailingsList } from "@/components/SailingsList";
 import { Badge } from "@/components/ui/badge";
@@ -11,6 +11,7 @@ import type { Terminal } from "@/lib/schema";
 import { clock, timeLabel } from "@/lib/time";
 import { MY_STATE_KEY, myApi } from "./api";
 import { BookedQuestion } from "./BookedQuestion";
+import { useRelease } from "./release";
 import { navigate } from "./router";
 import type { MyState, MyTrip } from "./schema";
 import { NotHeld } from "./NotHeld";
@@ -31,7 +32,7 @@ function useMyMutation<A>(fn: (arg: A) => Promise<MyState>, success?: string | (
 function HeldCart({ trip }: { trip: MyTrip }) {
   useNow(15_000);
   const cart = trip.browser.cart;
-  const release = useMyMutation(() => myApi.release(trip.trip.id, cart?.id ?? ""), "Cart released");
+  const { release, releasing } = useRelease(trip.trip.id, cart);
   if (!cart || cart.status !== "ready") return null;
   const deadline = cart.session_deadline ?? cart.unclaimed_deadline;
   const left = minutesLeft(deadline);
@@ -55,11 +56,17 @@ function HeldCart({ trip }: { trip: MyTrip }) {
         </div>
       </div>
       <div className="flex flex-wrap gap-2">
-        <Button variant="success" onClick={() => navigate(`/c/${trip.trip.id}`)}>
+        <Button variant="success" disabled={releasing} onClick={() => navigate(`/c/${trip.trip.id}`)}>
           Open checkout <ChevronRight aria-hidden />
         </Button>
-        <Button variant="outline" disabled={release.isPending} onClick={() => release.mutate(undefined)}>
-          Release
+        <Button variant="outline" disabled={releasing} onClick={release}>
+          {releasing ? (
+            <>
+              <Loader2 className="motion-safe:animate-spin" aria-hidden /> Releasing…
+            </>
+          ) : (
+            "Release"
+          )}
         </Button>
       </div>
     </div>

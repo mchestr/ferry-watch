@@ -2,18 +2,19 @@
  * /c/<trip>: where a cart alert lands. It never opens the checkout by itself: the first device to open
  * it is the only one that can, so the user chooses (docs/multi-tenant/design-reference.md §10).
  */
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 import { ArrowLeft, Laptop, Loader2, Smartphone } from "lucide-react";
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { errorMessage } from "@/lib/api";
-import { reportError, useNow } from "@/lib/hooks";
+import { useNow } from "@/lib/hooks";
 import type { Terminal } from "@/lib/schema";
 import { clock, timeLabel } from "@/lib/time";
-import { endsTrip, MY_STATE_KEY, myApi } from "./api";
+import { endsTrip, myApi } from "./api";
 import { BookedQuestion } from "./BookedQuestion";
+import { useRelease } from "./release";
 import { navigate } from "./router";
 import type { MyState } from "./schema";
 import { NotHeld } from "./NotHeld";
@@ -29,7 +30,6 @@ export function CheckoutPage({
   terminals: readonly Terminal[] | undefined;
 }) {
   useNow(15_000);
-  const qc = useQueryClient();
   const [elsewhere, setElsewhere] = useState(false);
   const trip = state.trips.find((t) => t.trip.id === tripId);
   const cart = trip?.browser.cart;
@@ -37,14 +37,8 @@ export function CheckoutPage({
     mutationFn: () => myApi.checkout(tripId),
     onSuccess: ({ url }) => location.assign(url),
   });
-  const release = useMutation({
-    mutationFn: () => myApi.release(tripId, cart?.id ?? ""),
-    onSuccess: (next) => {
-      qc.setQueryData(MY_STATE_KEY, next);
-      navigate("/");
-    },
-    onError: (error) => reportError(qc, error),
-  });
+  // Stays here: once the cart is let go, this page offers bcferries.com for the sailing.
+  const { release, releasing } = useRelease(tripId, cart);
 
   const back = (
     <Button variant="ghost" size="sm" onClick={() => navigate("/")}>
@@ -135,7 +129,7 @@ export function CheckoutPage({
         </ul>
         {open.error && <p className="text-sm text-danger">{errorMessage(open.error)}</p>}
         <div className="grid gap-2 sm:grid-cols-2">
-          <Button size="lg" variant="success" disabled={open.isPending} onClick={() => open.mutate()}>
+          <Button size="lg" variant="success" disabled={open.isPending || releasing} onClick={() => open.mutate()}>
             <Smartphone aria-hidden /> Check out on this device
           </Button>
           <Button size="lg" variant="outline" onClick={() => setElsewhere(true)}>
@@ -148,8 +142,14 @@ export function CheckoutPage({
             computer is easiest.
           </p>
         )}
-        <Button variant="ghost" className="w-full" disabled={release.isPending} onClick={() => release.mutate()}>
-          Release it, I'll book it myself
+        <Button variant="ghost" className="w-full" disabled={releasing} onClick={release}>
+          {releasing ? (
+            <>
+              <Loader2 className="motion-safe:animate-spin" aria-hidden /> Releasing…
+            </>
+          ) : (
+            "Release it, I'll book it myself"
+          )}
         </Button>
       </Card>
     </div>

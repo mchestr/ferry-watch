@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeSettings } from "@/test/fixtures";
 import { FakeWebSocket } from "@/test/fake-websocket";
 import { jsonResponse, mockFetch, renderWithProviders } from "@/test/render";
+import type { QueryClient } from "@tanstack/react-query";
+import { MY_STATE_KEY } from "./api";
 import { MtApp } from "./MtApp";
 import type { MyState } from "./schema";
 
@@ -312,6 +314,60 @@ describe("pausing a trip", () => {
     expect(await screen.findByRole("heading", { name: "Your account" })).toBeInTheDocument();
     expect(screen.queryByText(/Pause all/)).toBeNull();
     expect(screen.queryByRole("switch", { name: /pause/i })).toBeNull();
+  });
+});
+
+describe("releasing a held cart", () => {
+  beforeEach(() => {
+    localStorage.setItem("fw.token", "t-1");
+  });
+
+  /** ferry-web only passes a release on: the cart is still held when it answers. */
+  function api() {
+    return mockFetch((r) =>
+      r.url === "/api/state" || r.url.startsWith("/api/trips/")
+        ? jsonResponse(myState())
+        : jsonResponse({ terminals: [] }),
+    );
+  }
+
+  /** The browser lets the cart go (or holds another one). */
+  function cartIs(queryClient: QueryClient, cart: MyState["trips"][number]["browser"]["cart"]) {
+    const base = myState().trips[0];
+    if (!base) throw new Error("no trip");
+    queryClient.setQueryData(MY_STATE_KEY, myState({ trips: [{ ...base, browser: { ...base.browser, cart } }] }));
+  }
+
+  it("says it's releasing on the card until the cart is let go", async () => {
+    const { requests } = api();
+    const { user, queryClient } = renderWithProviders(<MtApp />);
+    await user.click(await screen.findByRole("button", { name: "Release" }));
+    expect(await screen.findByText("Releasing the cart")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Releasing…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Open checkout/ })).toBeDisabled();
+    expect(requests.filter((r) => r.url.endsWith("/cart/release")).map((r) => r.body)).toEqual([{ cart_id: "cart1" }]);
+
+    const held = myState().trips[0]?.browser.cart;
+    if (!held) throw new Error("no cart");
+    cartIs(queryClient, { ...held, id: "cart2" }); // a new cart can be released again
+    expect(await screen.findByRole("button", { name: "Release" })).toBeEnabled();
+    cartIs(queryClient, null);
+    await waitFor(() => expect(screen.queryByRole("button", { name: /Releas/ })).toBeNull());
+  });
+
+  it("stays on the checkout page, and the card says so too", async () => {
+    history.replaceState(null, "", `/c/${TRIP_ID}`);
+    api();
+    const { user } = renderWithProviders(<MtApp />);
+    await user.click(await screen.findByRole("button", { name: "Release it, I'll book it myself" }));
+    expect(await screen.findByText("Releasing the cart")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Releasing…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Check out on this device/ })).toBeDisabled();
+    expect(location.pathname).toBe(`/c/${TRIP_ID}`);
+
+    await user.click(screen.getByRole("button", { name: "Your trips" }));
+    expect(await screen.findByRole("heading", { name: "Your trips" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Releasing…" })).toBeDisabled();
   });
 });
 
