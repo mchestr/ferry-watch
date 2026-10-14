@@ -459,6 +459,29 @@ async def test_a_viewed_hold_without_a_booking_pauses_the_trip(rig: Rig, agent: 
     assert [r["outcome"] for r in await rig.fetch("SELECT outcome FROM hold_outcomes")] == ["expired"]
 
 
+async def test_a_release_the_user_asked_for_asks_nothing(rig: Rig, agent: Agent) -> None:
+    """They pressed Release (or an admin did): they know they didn't book it. The outcome is still recorded."""
+    bye = Bye(**agent.client.envelope(), reason="hold_ended", outcome="released", viewer_was_connected=True)
+    agent.client.send(bye)
+    await until(lambda: agent.client.acked(bye.seq))
+    trip = (await rig.fetch("SELECT paused_reason, archived_at FROM trips"))[0]
+    assert (trip["paused_reason"], trip["archived_at"]) == (None, None)
+    assert await rig.fetch("SELECT kind FROM notifications") == []
+    assert [r["outcome"] for r in await rig.fetch("SELECT outcome FROM hold_outcomes")] == ["released"]
+
+
+@pytest.mark.parametrize(
+    ("reason", "outcome"),
+    [("drained", "released"), ("deadline", "released"), ("hold_ended", "payment_left_to_site")],
+)
+async def test_a_viewed_hold_that_ended_otherwise_still_asks(rig: Rig, agent: Agent, reason: str, outcome: str) -> None:
+    bye = Bye(**agent.client.envelope(), reason=reason, outcome=outcome, viewer_was_connected=True)  # type: ignore[arg-type]
+    agent.client.send(bye)
+    await until(lambda: agent.client.acked(bye.seq))
+    assert (await rig.fetch("SELECT paused_reason FROM trips"))[0]["paused_reason"] == "after_checkout"
+    assert [r["kind"] for r in await rig.fetch("SELECT kind FROM notifications")] == ["booked_it"]
+
+
 async def test_a_booking_archives_the_trip(rig: Rig, agent: Agent) -> None:
     bye = Bye(**agent.client.envelope(), reason="hold_ended", outcome="booked", viewer_was_connected=True)
     agent.client.send(bye)

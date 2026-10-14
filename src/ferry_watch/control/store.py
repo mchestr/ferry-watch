@@ -344,6 +344,10 @@ class ControlStore:
             )
             if inserted is None or not bye.viewer_was_connected:
                 return
+            if bye.reason == "hold_ended" and bye.outcome == "released":
+                # Released on request (the user's Release, an admin's, or the trip's search edited): they know
+                # they didn't book it, so nothing to ask. Expired, lost and drained holds still ask.
+                return
             if bye.outcome == "booked":
                 await conn.execute(
                     "UPDATE trips SET archived_at = now(), updated_at = now() WHERE id = $1", binding.trip_id
