@@ -45,7 +45,6 @@ CartId = Annotated[str, msgspec.Meta(pattern=r"^[a-z0-9]{1,32}$")]
 Boot = Annotated[str, msgspec.Meta(pattern=r"^[a-f0-9]{8,32}$")]
 TerminalCode = Annotated[str, msgspec.Meta(pattern=r"^[A-Z]{3}$")]
 PodName = Annotated[str, msgspec.Meta(pattern=r"^fw-[a-z0-9]{1,32}-g\d{1,6}$")]
-ImageDigest = Annotated[str, msgspec.Meta(pattern=r"^sha256:[a-f0-9]{64}$")]
 Version = Annotated[str, msgspec.Meta(max_length=64, pattern=r"^[\w.+-]+$")]
 Price = Annotated[str, msgspec.Meta(max_length=24, pattern=r"^[\w$.,\- ]*$")]
 Label = Annotated[str, msgspec.Meta(max_length=64)]
@@ -322,7 +321,6 @@ class Hello(_Message, tag="hello", frozen=True, kw_only=True):
 
     proto: Annotated[list[Annotated[int, msgspec.Meta(ge=1)]], msgspec.Meta(min_length=1, max_length=4)]
     agent_version: Version
-    image_digest: ImageDigest
     pod_name: PodName
     gen: Seq
     applied_rev: Seq

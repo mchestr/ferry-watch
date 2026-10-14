@@ -74,10 +74,10 @@ class Agent:
         self.settings = settings
         self.lockdown = lockdown
         self.store = OneTripStore(settings.trip_id)
-        identity = Identity(settings.trip_id, settings.pod_name, settings.gen, settings.image_digest, agent_version)
+        identity = Identity(settings.trip_id, settings.pod_name, settings.gen, agent_version)
         self.hub = HubClient(
             http,
-            settings.control_url,
+            settings.hub_url,
             settings.token_path,
             identity,
             self._handle,
@@ -221,7 +221,7 @@ def _probes() -> web.Application:
         return web.Response(text="ok\n")
 
     app = web.Application()
-    app.router.add_get("/healthz", ok, allow_head=False)
+    app.router.add_get("/livez", ok, allow_head=False)
     app.router.add_get("/readyz", ok, allow_head=False)
     return app
 

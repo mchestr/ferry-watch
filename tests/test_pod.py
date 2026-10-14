@@ -56,9 +56,8 @@ ENV = {
     "FW_TRIP_ID": TRIP_ID,
     "FW_POD_NAME": f"fw-{TRIP_ID}-g3",
     "FW_OWNER": "user-7",
-    "FW_IMAGE_DIGEST": "sha256:" + "a" * 64,
     "FW_DEADLINE_AT": "1790000000",
-    "FW_CONTROL_URL": "ws://ferry-control.ferry-watch.svc.cluster.local.:8766/agent/v1",
+    "FW_HUB_URL": "ws://ferry-control.ferry-watch.svc.cluster.local.:8766/agent/v1",
     "FW_VNC_ORIGIN": ORIGIN,
     "FW_VNC_PUBKEYS": f"k1:{b64(RAW_KEY)}",
 }
@@ -81,9 +80,8 @@ def test_settings_from_the_pod_spec() -> None:
         {"FW_TRIP_ID": "../x"},
         {"FW_POD_NAME": "fw-ffffffffffffffff-g3"},  # another trip's pod name
         {"FW_OWNER": "User 7"},
-        {"FW_IMAGE_DIGEST": "latest"},
         {"FW_DEADLINE_AT": "tomorrow"},
-        {"FW_CONTROL_URL": "https://ferry-control/agent/v1"},
+        {"FW_HUB_URL": "https://ferry-control/agent/v1"},
         {"FW_VNC_ORIGIN": "http://ferry-checkout.chestr.dev"},
         {"FW_VNC_ORIGIN": "https://ferry-checkout.chestr.dev/path"},
         {"FW_VNC_PUBKEYS": "k1:short"},
@@ -292,7 +290,7 @@ async def test_a_pod_carts_opens_the_checkout_and_drains(aiohttp_server: Callabl
     xvnc.path.parent.mkdir()
     await xvnc.start()
     settings = replace(
-        AgentSettings.from_env(ENV | {"FW_CONTROL_URL": str(server.make_url("/agent/v1")).replace("http", "ws", 1)}),
+        AgentSettings.from_env(ENV | {"FW_HUB_URL": str(server.make_url("/agent/v1")).replace("http", "ws", 1)}),
         token_path=tmp_path / "token",
         deadline_at=1e12,
         tmp=tmp_path,
@@ -315,7 +313,7 @@ async def test_a_pod_carts_opens_the_checkout_and_drains(aiohttp_server: Callabl
 
             # The probes answer.
             assert agent.probe_port is not None
-            async with http.get(f"http://127.0.0.1:{agent.probe_port}/healthz") as response:
+            async with http.get(f"http://127.0.0.1:{agent.probe_port}/livez") as response:
                 assert response.status == 200
 
             # The owner opens the checkout with a ticket and sees the screen.
@@ -360,7 +358,7 @@ async def test_the_operator_can_drain_and_revoke(aiohttp_server: Callable[..., A
     server: TestServer = await aiohttp_server(app)
     (tmp_path / "token").write_text(operator.token)
     settings = replace(
-        AgentSettings.from_env(ENV | {"FW_CONTROL_URL": str(server.make_url("/agent/v1")).replace("http", "ws", 1)}),
+        AgentSettings.from_env(ENV | {"FW_HUB_URL": str(server.make_url("/agent/v1")).replace("http", "ws", 1)}),
         token_path=tmp_path / "token",
         deadline_at=1e12,
         tmp=tmp_path,

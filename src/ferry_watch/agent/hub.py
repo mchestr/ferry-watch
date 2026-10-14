@@ -63,7 +63,6 @@ class Identity:
     trip_id: str
     pod_name: str
     gen: int
-    image_digest: str
     agent_version: str
 
 
@@ -195,7 +194,6 @@ class HubClient:
                 **self.envelope(),
                 proto=[VERSION],
                 agent_version=identity.agent_version,
-                image_digest=identity.image_digest,
                 pod_name=identity.pod_name,
                 gen=identity.gen,
                 applied_rev=max(self._rev(), 0),

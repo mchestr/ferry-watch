@@ -37,9 +37,7 @@ from ferry_watch.protocol import (
 )
 
 TRIP = Trip(id="3f9c0a1b2c3d4e5f", origin="SWB", destination="TSA", date=date(2026, 10, 14))
-IDENTITY = Identity(
-    trip_id=TRIP.id, pod_name=f"fw-{TRIP.id}-g1", gen=1, image_digest="sha256:" + "a" * 64, agent_version="0.6.0"
-)
+IDENTITY = Identity(trip_id=TRIP.id, pod_name=f"fw-{TRIP.id}-g1", gen=1, agent_version="0.6.0")
 HOLD = HoldLimits(unclaimed_s=1800, session_s=1800, viewer_gone_s=600, hard_s=3600)
 
 

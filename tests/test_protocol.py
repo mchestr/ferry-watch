@@ -82,7 +82,6 @@ def test_agent_messages_round_trip() -> None:
             **ENVELOPE,
             proto=[1],
             agent_version="0.6.0",
-            image_digest="sha256:" + "a" * 64,
             pod_name="fw-3f9c0a1b2c3d4e5f-g7",
             gen=7,
             applied_rev=2,
