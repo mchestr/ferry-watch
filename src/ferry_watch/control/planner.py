@@ -7,6 +7,7 @@ pods to start, which to drain, and where the rest wait. The loop applies it; tes
   raised `maxActiveBrowsers`). The warm browser moves to a nearer trip only while its pod is Watching;
   a pod that is starting, holding or draining stays where it is.
 - Every other eligible trip gets a *short check* when due: a pod that checks once and exits.
+- In a user's quiet hours their trips are treated as paused, except one whose quiet hours they lifted.
 - A trip has at most one pod. Holding pods are never displaced.
 - Caps: total pods, with `short_check_slots` kept free of warm pods; at most 2 starting; 30 starts an
   hour; a user's starts at least 20 s apart. Nothing is created that would wait as Pending.
@@ -21,7 +22,7 @@ from datetime import datetime, timedelta
 from typing import Literal
 
 from ferry_watch.models import PACIFIC, Trip
-from ferry_watch.polling import PollPolicy, time_until
+from ferry_watch.polling import PollPolicy, QuietHours, time_until
 from ferry_watch.protocol import CommandReason, Mode
 
 PodPhase = Literal["creating", "starting", "watching", "holding", "draining", "failed", "gone"]
@@ -35,8 +36,12 @@ USER_START_SPACING_S = 20.0
 class UserView:
     id: str
     active: bool = True  # not suspended
-    paused: bool = False  # the user paused everything
+    paused: bool = False  # for a release: "Pause all" from a ferry-web before 0004, until ferry-web moves it
     max_active_browsers: int = 1
+    quiet: QuietHours | None = None  # their trips aren't checked then
+
+    def quiet_now(self, at: datetime) -> bool:
+        return self.quiet is not None and self.quiet.contains(at)
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,10 +54,14 @@ class TripView:
     backoff_until: float | None = None
     needs_attention: bool = False
     queued_since: float | None = None
+    quiet_lifted_until: float | None = None  # the user lifted their quiet hours for it (a manual check, a hold)
 
     @property
     def id(self) -> str:
         return self.trip.id
+
+    def quiet_lifted(self, now: float) -> bool:
+        return self.quiet_lifted_until is not None and now < self.quiet_lifted_until
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,11 +114,13 @@ def _ineligible(
     view: TripView, user: UserView | None, fleet: FleetView, now: float, at: datetime
 ) -> CommandReason | None:
     """Why this trip may not have a browser now (None: it may)."""
+    quiet = user is not None and user.quiet_now(at) and not view.quiet_lifted(now)
     reasons: list[tuple[bool, CommandReason]] = [
         (fleet.maintenance, "maintenance"),
         (user is None or not user.active, "suspended"),
         (user is not None and user.paused, "paused"),
         (not view.trip.enabled or view.paused_reason is not None, "paused"),
+        (quiet, "paused"),  # the user's quiet hours: not checked at all, as if paused
         (view.archived, "deleted"),
         (time_until(view.trip, at) is None, "past"),
         (view.needs_attention or (view.backoff_until is not None and view.backoff_until > now), "limit"),
@@ -190,8 +201,8 @@ class _Planner:
                 if warm.trip_id in self.eligible and warm.trip_id not in nearest_ids and warm.phase == "watching":
                     self.result.drain.append(Drain(warm.name, "superseded"))  # a nearer trip takes the browser
                     leaving = True
-                elif warm.phase == "draining" or warm.trip_id not in self.eligible:
-                    leaving = True
+                elif warm.phase == "draining" or (warm.trip_id not in self.eligible and warm.phase != "holding"):
+                    leaving = True  # drained this pass or already; a held cart keeps its pod until it's let go
             # Every warm pod counts until it's gone, so a user never has more than their warm browsers.
             room = max(user.max_active_browsers - len(warm_pods), 0)
             for view in nearest:

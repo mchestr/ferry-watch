@@ -60,7 +60,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
       - run: uv sync --locked
-      - name: KasmVNC's web client, for the checkout edge tests
+      # KasmVNC's web client for the checkout tests, and its Xvnc with matchbox, installed as the browser image
+      # installs them, so test_checkout_screen.py can run the pod's real screen.
+      - name: KasmVNC and matchbox, for the checkout tests
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
           version="$(sed -n 's/^ARG KASMVNC_VERSION=//p' vnc-edge/Dockerfile)"
           sum="$(sed -n 's/^ARG KASMVNC_SHA256=//p' vnc-edge/Dockerfile)"
@@ -68,8 +72,10 @@ jobs:
           python3 -I -c 'import sys, urllib.request; urllib.request.urlretrieve(sys.argv[1], sys.argv[2])' \
             "https://github.com/kasmtech/KasmVNC/releases/download/v${version}/kasmvncserver_noble_${version}_amd64.deb" "$deb"
           echo "${sum}  ${deb}" | sha256sum -c -
-          dpkg-deb -x "$deb" "$RUNNER_TEMP/kasmvnc"
-          echo "FW_KASMVNC_WWW=$RUNNER_TEMP/kasmvnc/usr/share/kasmvnc/www" >> "$GITHUB_ENV"
+          apt-get update
+          apt-get install -y --no-install-recommends matchbox-window-manager "$deb"
+          for tool in Xvnc matchbox-window-manager; do command -v "$tool"; done
+          echo "FW_KASMVNC_WWW=/usr/share/kasmvnc/www" >> "$GITHUB_ENV"
       - run: uv run pytest -m browser
 
   deploy:

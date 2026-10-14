@@ -9,6 +9,7 @@ import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from datetime import time as dt_time
 from typing import Any
 
 import aiohttp
@@ -17,6 +18,7 @@ import pytest
 from aiohttp.test_utils import TestClient
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from ferry_watch import __version__
 from ferry_watch.control.limits import Limits
 from ferry_watch.models import PACIFIC
 from ferry_watch.polling import PollPolicy
@@ -40,11 +42,17 @@ def soon(days: int = 3) -> str:
     return (datetime.now(PACIFIC).date() + timedelta(days=days)).isoformat()  # the server's "today" is Pacific
 
 
+def today_at(hour: int, minute: int = 0) -> float:
+    """A fixed time of day today, Pacific: for what depends on the hour, whenever the tests run."""
+    return datetime.combine(datetime.now(PACIFIC).date(), dt_time(hour, minute), PACIFIC).timestamp()
+
+
 @dataclass
 class Rig:
     client: TestClient
     db: Database
     tokens: dict[str, str]
+    clock: list[float]  # what ferry-web takes as now; 0: the real time
 
     async def call(self, method: str, path: str, user: str = ANN, **kw: Any) -> aiohttp.ClientResponse:
         headers = {"Authorization": f"Bearer {self.tokens[user]}"} | kw.pop("headers", {})
@@ -75,12 +83,13 @@ async def rig(db: Database, aiohttp_client: Callable[..., Any]) -> AsyncIterator
     pool = await asyncpg.create_pool(db.dsn(ROLES.web), min_size=1, max_size=4)
     accounts = Accounts(pool, IdentityPolicy(bootstrap_admins=BOOTSTRAP))
     tokens = {uid: await accounts.create_session(uid, Principal(ISSUER, uid), None) for uid in (ANN, BOB)}
+    clock = [0.0]
     async with aiohttp.ClientSession() as http:
         oidc = OidcClient(http, OidcSettings(issuer="https://idp", client_id="c", client_secret="s", redirect_uri="x"))
         app = build(
             accounts,
             oidc,
-            WebStore(pool, Limits(), PollPolicy(), clock=time.time),
+            WebStore(pool, Limits(), PollPolicy(), clock=lambda: clock[0] or time.time()),
             CheckoutSigner(KEY, "k1", ORIGIN),
             pool=pool,
             limits=Limits(),
@@ -89,7 +98,7 @@ async def rig(db: Database, aiohttp_client: Callable[..., Any]) -> AsyncIterator
         )
         client: TestClient = await aiohttp_client(app)
         try:
-            yield Rig(client, db, tokens)
+            yield Rig(client, db, tokens, clock)
         finally:
             await client.close()  # stops the change feed, which holds a pool connection
             await pool.close()
@@ -155,8 +164,11 @@ async def test_editing_and_removing(rig: Rig) -> None:
     assert row["rev"] == 2
     assert json.loads(row["spec"])["adults"] == 2
     assert await rig.sql("SELECT * FROM alert_memory") == []  # a new search forgets what was alerted
+    await rig.sql("UPDATE trips SET paused_reason = 'after_checkout'")
     assert (await rig.call("DELETE", f"/api/trips/{trip_id}")).status == 200
-    assert (await rig.sql("SELECT archived_at FROM trips"))[0]["archived_at"] is not None
+    archived = await rig.sql("SELECT archived_at IS NOT NULL AS archived, enabled, paused_reason, rev FROM trips")
+    assert [tuple(r) for r in archived] == [(True, False, None, 3)]
+    assert (await rig.call("DELETE", f"/api/trips/{trip_id}")).status == 404
 
 
 # ---- what users ask of their browser
@@ -273,11 +285,12 @@ async def test_no_hold_is_offered_for_a_sailing_already_held_once(rig: Rig) -> N
     )
 
 
-async def test_a_paused_account_offers_no_hold(rig: Rig) -> None:
+async def test_a_paused_trip_offers_no_hold(rig: Rig) -> None:
     trip_id = await rig.add()
     await seen(rig, trip_id, sailing("09:00"))  # what the last check saw, before the pause
-    await rig.call("PATCH", "/api/me", json={"paused": True})
-    state = await (await rig.call("GET", "/api/state")).json()
+    response = await rig.call("PATCH", f"/api/trips/{trip_id}", json={"enabled": False})
+    assert response.status == 200
+    state = await response.json()
     assert state["trips"][0]["hold"] == {
         "reason": "paused",
         "can_request": False,
@@ -320,10 +333,8 @@ async def test_the_state_says_why_a_trip_wouldnt_be_held(rig: Rig) -> None:
     trip_id = await rig.add(auto_cart=False)
     state = await (await rig.call("GET", "/api/state")).json()
     hold = state["trips"][0]["hold"]
-    # Quiet hours come first when it's night where the ferries are; this runs at any hour.
-    expected = "quiet_hours" if state["quiet_hours"]["now"] else "auto_cart_off"
     assert hold == {
-        "reason": expected,
+        "reason": "auto_cart_off",  # at any hour: there are no quiet hours unless the user sets some
         "can_request": True,
         "holdable": [],
         "requested_at": None,
@@ -336,24 +347,173 @@ async def test_the_state_says_why_a_trip_wouldnt_be_held(rig: Rig) -> None:
     assert trip_id
 
 
+async def after_checkout(rig: Rig, trip_id: str) -> None:
+    """A viewed hold ended without a booking seen: its outcome is recorded, and the trip asks "Did you book it?"."""
+    await rig.sql(
+        "INSERT INTO hold_outcomes (user_id, trip_id, day, outcome) VALUES ($1, $2, now(), 'expired')", ANN, trip_id
+    )
+    await rig.sql("UPDATE trips SET paused_reason = 'after_checkout' WHERE id = $1", trip_id)
+
+
+async def archived(rig: Rig, trip_id: str) -> tuple[Any, ...]:
+    (trip,) = await rig.sql(
+        "SELECT t.archived_at IS NOT NULL AS archived, t.enabled, t.paused_reason, t.rev,"
+        " t.updated_at > t.created_at AS updated, rt.hold_requested_until FROM trips t"
+        " JOIN trip_runtime rt ON rt.trip_id = t.id WHERE t.id = $1",
+        trip_id,
+    )
+    return tuple(trip)
+
+
+async def answers(rig: Rig) -> list[str | None]:
+    return [r["answer_reason"] for r in await rig.sql("SELECT answer_reason FROM hold_outcomes ORDER BY id")]
+
+
 async def test_did_you_book_it(rig: Rig) -> None:
     trip_id = await rig.add()
-    assert (await rig.call("POST", f"/api/trips/{trip_id}/booked", json={"booked": False})).status == 409
-    await rig.sql("UPDATE trips SET paused_reason = 'after_checkout'")
-    response = await rig.call(
-        "POST", f"/api/trips/{trip_id}/booked", json={"booked": False, "reason": "needed_account"}
-    )
+    path = f"/api/trips/{trip_id}/booked"
+    assert (await rig.call("POST", path, json={"booked": False})).status == 409
+    await after_checkout(rig, trip_id)
+    response = await rig.call("POST", path, json={"booked": False, "reason": "needed_account"})
     assert response.status == 200
     assert (await rig.sql("SELECT paused_reason FROM trips"))[0]["paused_reason"] is None
-    await rig.sql("UPDATE trips SET paused_reason = 'after_checkout'")
-    await rig.call("POST", f"/api/trips/{trip_id}/booked", json={"booked": True})
-    assert (await rig.sql("SELECT archived_at FROM trips"))[0]["archived_at"] is not None
+    await after_checkout(rig, trip_id)
+    await rig.sql("UPDATE trip_runtime SET hold_requested_until = now() + interval '5 minutes'")
+    assert (await rig.call("POST", path, json={"booked": True})).status == 200
+    assert await archived(rig, trip_id) == (True, False, None, 3, True, None)  # as a removed trip is
+    assert await answers(rig) == ["needed_account", "booked"]
 
 
-async def test_pausing_everything(rig: Rig) -> None:
-    response = await rig.call("PATCH", "/api/me", json={"paused": True})
-    assert (await response.json())["me"]["paused"] is True
-    assert (await rig.call("PATCH", "/api/me", json={"is_admin": True})).status == 400
+async def test_no_cancel_stops_watching_the_trip(rig: Rig) -> None:
+    """ "Did you book it?" "No, cancel": not booked, and not wanted any more."""
+    trip_id, other = await rig.add(), await rig.add()
+    await after_checkout(rig, trip_id)
+    await rig.sql("UPDATE trip_runtime SET hold_requested_until = now() + interval '5 minutes'")
+    path = f"/api/trips/{trip_id}/booked"
+    for body in ({"booked": True, "stop": True}, {"booked": False, "stop": "yes"}):
+        response = await rig.call("POST", path, json=body)
+        assert (response.status, (await response.json())["field"]) == (400, "stop")
+    response = await rig.call("POST", path, json={"booked": False, "stop": True})
+    assert response.status == 200
+    assert [t["trip"]["id"] for t in (await response.json())["trips"]] == [other]  # its slot is free again
+    assert await archived(rig, trip_id) == (True, False, None, 2, True, None)
+    assert await answers(rig) == ["cancelled"]
+    assert (await rig.call("POST", path, json={"booked": False, "stop": True})).status == 409  # answered
+
+
+async def test_pausing_and_resuming_one_trip(rig: Rig) -> None:
+    """Trips are paused one at a time ("pause all" is gone); resuming one checks it soon."""
+    trip_id, other = await rig.add(), await rig.add()
+    state = await (await rig.call("PATCH", f"/api/trips/{trip_id}", json={"enabled": False})).json()
+    assert [(t["trip"]["id"], t["trip"]["enabled"]) for t in state["trips"]] == [(trip_id, False), (other, True)]
+    assert state["me"]["paused"] is False  # kept a release for the old dashboard; always false
+    await rig.sql("UPDATE trip_runtime SET next_check_at = now() + interval '6 hours'")
+    assert (await rig.call("PATCH", f"/api/trips/{trip_id}", json={"enabled": True})).status == 200
+    rows = await rig.sql("SELECT trip_id, next_check_at IS NULL AS now FROM trip_runtime ORDER BY trip_id = $1", other)
+    assert [(r["trip_id"], r["now"]) for r in rows] == [(trip_id, True), (other, False)]
+
+
+async def test_the_old_account_pause_moves_onto_each_trip(rig: Rig) -> None:
+    """A "Pause all" from a ferry-web before 0004 (users.paused) becomes each live trip paused, as 0004 did,
+    the next time the user's state is read; the account itself is never shown paused."""
+    trip_id, other = await rig.add(), await rig.add()
+    await rig.call("PATCH", f"/api/trips/{other}", json={"enabled": False})
+    await rig.sql("UPDATE users SET paused = true WHERE id = $1", ANN)  # as a ferry-web before 0004 could
+    before = {r["id"]: r["rev"] for r in await rig.sql("SELECT id, rev FROM trips")}
+    state = await (await rig.call("GET", "/api/state")).json()
+    assert state["me"]["paused"] is False
+    assert [t["trip"]["enabled"] for t in state["trips"]] == [False, False]
+    rows = await rig.sql("SELECT id, enabled, spec->>'enabled' AS spec, rev FROM trips ORDER BY id = $1", trip_id)
+    assert [(r["enabled"], r["spec"], r["rev"] - before[r["id"]]) for r in rows] == [
+        (False, "false", 0),  # already paused: untouched
+        (False, "false", 1),
+    ]
+    assert [r["paused"] for r in await rig.sql("SELECT paused FROM users")] == [False, False]
+    assert (await rig.call("POST", f"/api/trips/{trip_id}/hold")).status == 409  # paused
+    await make_admin(rig)
+    people = await (await rig.call("GET", "/api/admin/users")).json()
+    assert [u["paused"] for u in people["users"]] == [False, False]  # kept a release; always false
+
+
+# ---- quiet hours
+
+
+NOT_QUIET = {"start": "23:00", "end": "06:00", "now": False}  # for a 0.6.2 dashboard, which needs an object
+
+
+async def test_quiet_hours_are_each_users_own(rig: Rig) -> None:
+    state = await (await rig.call("GET", "/api/state")).json()
+    assert (state["settings"], state["quiet_hours"]) == ({"quiet_hours": None}, NOT_QUIET)  # none, by default
+    night = {"start": "23:00", "end": "06:30"}
+    response = await rig.call("PATCH", "/api/me", json={"quiet_hours": night})
+    assert response.status == 200, await response.text()
+    state = await response.json()
+    assert state["settings"] == {"quiet_hours": night}
+    assert {k: v for k, v in state["quiet_hours"].items() if k != "now"} == night
+    rows = await rig.sql("SELECT user_id, quiet_start, quiet_end FROM user_settings")
+    assert [tuple(r) for r in rows] == [(ANN, dt_time(23, 0), dt_time(6, 30))]
+    bob = await (await rig.call("GET", "/api/state", BOB)).json()
+    assert (bob["settings"], bob["quiet_hours"]) == ({"quiet_hours": None}, NOT_QUIET)
+    state = await (await rig.call("PATCH", "/api/me", json={"quiet_hours": None})).json()
+    assert (state["settings"], state["quiet_hours"]) == ({"quiet_hours": None}, NOT_QUIET)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {},
+        {"paused": True},  # pausing is per trip now
+        {"quiet_hours": None, "paused": False},
+        {"quiet_hours": "23:00-06:00"},
+        {"quiet_hours": {"start": "23:00"}},
+        {"quiet_hours": {"start": "23:00", "end": "06:00", "days": "weekdays"}},
+        {"quiet_hours": {"start": "24:00", "end": "06:00"}},
+        {"quiet_hours": {"start": "7:00", "end": "09:00"}},
+        {"quiet_hours": {"start": "23:00:00", "end": "06:00"}},
+        {"quiet_hours": {"start": 2300, "end": "06:00"}},
+        {"quiet_hours": {"start": "06:00", "end": "06:00"}},  # covers nothing
+    ],
+)
+async def test_quiet_hours_are_two_different_times_of_day(rig: Rig, body: dict[str, Any]) -> None:
+    response = await rig.call("PATCH", "/api/me", json=body)
+    assert (response.status, (await response.json())["field"]) == (400, "quiet_hours")
+    assert await rig.sql("SELECT * FROM user_settings") == []
+
+
+async def test_in_quiet_hours_a_trip_isnt_checked_until_lifted(rig: Rig) -> None:
+    checked, asked = await rig.add(), await rig.add()
+    await seen(rig, checked, sailing("09:00"))
+    await seen(rig, asked, sailing("09:00"))
+    await rig.call("PATCH", "/api/me", json={"quiet_hours": {"start": "23:00", "end": "06:00"}})
+    rig.clock[0] = today_at(23, 30)
+
+    async def trips() -> dict[str, dict[str, Any]]:
+        state = await (await rig.call("GET", "/api/state")).json()
+        return {t["trip"]["id"]: t for t in state["trips"]}
+
+    state = await (await rig.call("GET", "/api/state")).json()
+    assert state["quiet_hours"] == {"start": "23:00", "end": "06:00", "now": True}
+    for trip in (await trips()).values():
+        assert trip["quiet"] is True
+        # Not held for the quiet hours, but "Hold it for me" lifts them.
+        assert (trip["hold"]["reason"], trip["hold"]["can_request"]) == ("quiet_hours", True)
+
+    assert (await rig.call("POST", f"/api/trips/{checked}/check")).status == 200  # a manual check lifts them
+    (row,) = await rig.sql("SELECT quiet_lifted_until FROM trip_runtime WHERE trip_id = $1", checked)
+    assert row["quiet_lifted_until"].timestamp() == rig.clock[0] + 600
+    assert (await rig.call("POST", f"/api/trips/{asked}/hold")).status == 200  # and so does asking for a hold
+    for trip in (await trips()).values():
+        assert (trip["quiet"], trip["hold"]["reason"]) == (False, None)  # checked, and it may hold a cart
+
+    rig.clock[0] += 601
+    assert [t["quiet"] for t in (await trips()).values()] == [True, True]  # 10 minutes, then quiet again
+    await rig.sql("UPDATE trip_runtime SET next_check_at = to_timestamp($1)", today_at(23, 45))
+    morning = datetime.combine(datetime.now(PACIFIC).date() + timedelta(days=1), dt_time(6), PACIFIC).timestamp()
+    assert [t["browser"]["next_check_at"] for t in (await trips()).values()] == [morning, morning]
+    rig.clock[0] = today_at(12)
+    state = await (await rig.call("GET", "/api/state")).json()
+    assert state["quiet_hours"]["now"] is False
+    assert [(t["quiet"], t["hold"]["reason"]) for t in state["trips"]] == [(False, None), (False, None)]
 
 
 # ---- checkout
@@ -536,6 +696,49 @@ async def test_the_overview_shows_the_fleet_and_what_needs_attention(rig: Rig) -
     await rig.sql("INSERT INTO fleet_state (key, value) VALUES ('control_alive_at', '2000')")
     overview = await (await rig.call("GET", "/api/admin/overview")).json()
     assert overview["control_seen"] == 2_000.0
+
+
+async def test_the_overview_shows_what_versions_run(rig: Rig) -> None:
+    await make_admin(rig)
+
+    async def versions() -> dict[str, Any]:
+        return dict((await (await rig.call("GET", "/api/admin/overview")).json())["versions"])
+
+    assert await versions() == {"web": {"version": __version__}, "control": None, "browsers": []}
+    report = {"at": 1_000.0, "browsers": {"max": 7, "live": 3}}  # from a ferry-control too old to say
+    await rig.sql("INSERT INTO fleet_state (key, value) VALUES ('fleet_report', $1)", json.dumps(report))
+    assert (await versions())["control"] is None
+    await rig.sql(
+        "UPDATE fleet_state SET value = $1 WHERE key = 'fleet_report'", json.dumps(report | {"version": "9.9"})
+    )
+    image = "ghcr.io/mchestr/ferry-watch-browser:0.6.3@sha256:" + "b" * 64
+    for gen, version, ended in [(1, "0.6.2", True), (2, "0.6.3", False)]:  # the same trip's old pod and its new one
+        await rig.sql(
+            "INSERT INTO browser_pods (name, trip_id, user_id, gen, mode, deadline_at, image_digest, agent_version,"
+            " ended_at) VALUES ($1, $2, $3, $4, 'warm', now(), $5, $6, CASE WHEN $7 THEN now() END)",
+            f"fw-{'1' * 16}-g{gen}",
+            "1" * 16,
+            BOB,
+            gen,
+            image,
+            version,
+            ended,
+        )
+    for trip_id, said in [("2" * 16, "0.6.3"), ("3" * 16, None)]:  # None: it hasn't said hello yet
+        await rig.sql(
+            "INSERT INTO browser_pods (name, trip_id, user_id, gen, mode, deadline_at, image_digest, agent_version)"
+            " VALUES ($1, $2, $3, 1, 'short_check', now(), $4, $5)",
+            f"fw-{trip_id}-g1",
+            trip_id,
+            BOB,
+            image,
+            said,
+        )
+    assert await versions() == {
+        "web": {"version": __version__},
+        "control": {"version": "9.9", "at": 1_000.0},
+        "browsers": [{"version": "0.6.3", "image": image, "pods": 2}, {"version": None, "image": image, "pods": 1}],
+    }
 
 
 async def held(rig: Rig, trip_id: str, user: str = BOB) -> str:

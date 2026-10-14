@@ -7,9 +7,11 @@ only while that pod holds their cart.
 
 from __future__ import annotations
 
+import re
 import secrets
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import time as dt_time
 from typing import Any
 
 from aiohttp import web
@@ -19,6 +21,7 @@ from ferry_watch.bcferries.errors import BookingError, RouteRejected
 from ferry_watch.bcferries.terminals import TerminalDirectory, Terminals
 from ferry_watch.bcferries.urls import search_url
 from ferry_watch.models import Trip, ValidationError
+from ferry_watch.polling import QuietHours
 from ferry_watch.tickets import TTL_SECONDS, Display, mint
 
 from .auth import signed_in
@@ -30,6 +33,7 @@ STORE = web.AppKey("store", WebStore)
 TERMINALS = web.AppKey("terminals", TerminalDirectory)
 PUBLIC = web.AppKey("public", dict[str, Any])  # what every snapshot carries: links, the push key
 MAX_CART_ID = 32
+_HHMM = re.compile(r"([01][0-9]|2[0-3]):[0-5][0-9]")  # 00:00 to 23:59
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,23 +140,42 @@ async def dismiss_cart(request: web.Request) -> web.Response:
 
 
 async def answer_booked(request: web.Request) -> web.Response:
+    """ "Did you book it?": {booked, reason?, stop?}. {booked: false, stop: true} is "No, cancel"."""
     body = await json_body(request)
-    booked, reason = body.get("booked"), body.get("reason")
+    booked, reason, stop = body.get("booked"), body.get("reason"), body.get("stop", False)
     if not isinstance(booked, bool):
         raise ApiError(400, "Did you book it: yes or no?", "booked")
     if reason is not None and not isinstance(reason, str):
         raise ApiError(400, "Not a reason", "reason")
-    await request.app[STORE].answer_booked(signed_in(request).uid, _trip_id(request), booked, reason)
+    if not isinstance(stop, bool):
+        raise ApiError(400, "Stop watching it: yes or no?", "stop")
+    if booked and stop:
+        raise ApiError(400, "A booked trip stops being watched anyway", "stop")
+    await request.app[STORE].answer_booked(signed_in(request).uid, _trip_id(request), booked, reason, stop=stop)
     await request.app[STORE].notify(signed_in(request).uid)
     return await get_state(request)
 
 
+def _quiet_hours(value: Any) -> QuietHours | None:
+    """{"start": "HH:MM", "end": "HH:MM"} (Pacific), or None for no quiet hours."""
+    if value is None:
+        return None
+    if not isinstance(value, dict) or set(value) != {"start", "end"}:
+        raise ApiError(400, "Quiet hours need a start and an end", "quiet_hours")
+    start, end = value["start"], value["end"]
+    if not (isinstance(start, str) and _HHMM.fullmatch(start) and isinstance(end, str) and _HHMM.fullmatch(end)):
+        raise ApiError(400, "Quiet hours are times like 23:00", "quiet_hours")
+    if start == end:
+        raise ApiError(400, "Quiet hours must start and end at different times", "quiet_hours")
+    return QuietHours(dt_time.fromisoformat(start), dt_time.fromisoformat(end))
+
+
 async def update_me(request: web.Request) -> web.Response:
+    """The user's own settings: their quiet hours, the only one there is."""
     body = await json_body(request)
-    paused = body.get("paused")
-    if set(body) != {"paused"} or not isinstance(paused, bool):
-        raise ApiError(400, "Only paused can be changed", "paused")
-    await request.app[STORE].set_paused(signed_in(request).uid, paused)
+    if set(body) != {"quiet_hours"}:
+        raise ApiError(400, "Only quiet hours can be changed", "quiet_hours")
+    await request.app[STORE].set_settings(signed_in(request).uid, quiet=_quiet_hours(body["quiet_hours"]))
     await request.app[STORE].notify(signed_in(request).uid)
     return await get_state(request)
 

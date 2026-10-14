@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import json
+
 import asyncpg
 import pytest
 
 from ferry_watch.control.config import ControlConfig, PodConfig
 from ferry_watch.control.db import migrate, migrations
 from ferry_watch.control.main import run_migrate
-from tests.postgres import ROLES, Database, Server
+from tests.postgres import OWNER, ROLES, Database, Server
 
 USER = "u5yq2kz7m4c3x8a1b2d3e"[:20]
 TRIP = "3f9c0a1b2c3d4e5f"
@@ -118,15 +120,101 @@ async def test_web_cannot_write_what_agents_report(db: Database) -> None:
             "INSERT INTO hold_claims (user_id, trip_id, pod) VALUES ('u5yq2kz7m4c3x8a1b2d3', '3f9c0a1b2c3d4e5f', 'x')",
             "UPDATE browser_pods SET phase = 'gone'",
             "UPDATE browser_pods SET vnc_seconds = 0",
+            "UPDATE browser_pods SET agent_version = '0.6.3'",
             "UPDATE trip_runtime SET failures = 0",
             "INSERT INTO hold_outcomes (user_id, trip_id, day, outcome) VALUES ('x', 'y', now(), 'booked')",
         ):
             with pytest.raises(asyncpg.InsufficientPrivilegeError):
                 await web.execute(statement)
-        # What it may do to the runtime: make a check due now, and ask for a hold.
-        await web.execute("UPDATE trip_runtime SET next_check_at = now(), hold_requested_until = now()")
+        # What it may do to the runtime: make a check due now, ask for a hold, and lift quiet hours.
+        await web.execute(
+            "UPDATE trip_runtime SET next_check_at = now(), hold_requested_until = now(), quiet_lifted_until = now()"
+        )
     finally:
         await web.close()
+
+
+async def test_web_keeps_each_users_settings_and_control_only_reads_them(db: Database) -> None:
+    await seed(db)
+    web = await db.connect(ROLES.web)
+    try:
+        await web.execute(
+            "INSERT INTO user_settings (user_id, quiet_start, quiet_end) VALUES ($1, '23:00', '06:00')", USER
+        )
+        with pytest.raises(asyncpg.CheckViolationError):  # a start needs an end
+            await web.execute("UPDATE user_settings SET quiet_end = NULL")
+        with pytest.raises(asyncpg.CheckViolationError):  # hours that start and end together cover nothing
+            await web.execute("UPDATE user_settings SET quiet_start = '06:00'")
+        await web.execute("UPDATE user_settings SET quiet_start = NULL, quiet_end = NULL")  # none
+    finally:
+        await web.close()
+    control = await db.connect(ROLES.control)
+    try:
+        assert await control.fetchval("SELECT count(*) FROM user_settings WHERE quiet_start IS NULL") == 1
+        for statement in (
+            "INSERT INTO user_settings (user_id) VALUES ('bbbbbbbbbbbbbbbbbbbb')",
+            "UPDATE user_settings SET quiet_start = '22:00', quiet_end = '07:00'",
+            "DELETE FROM user_settings",
+        ):
+            with pytest.raises(asyncpg.InsufficientPrivilegeError):
+                await control.execute(statement)
+    finally:
+        await control.close()
+    web = await db.connect(ROLES.web)
+    try:
+        assert await web.execute("DELETE FROM user_settings") == "DELETE 1"
+    finally:
+        await web.close()
+
+
+async def test_0004_pauses_each_trip_of_whoever_paused_everything(
+    pg_server: Server, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ "Pause all my trips" is gone: an account paused before 0004 keeps every live trip paused, one by one."""
+    every = migrations()
+    name = "fw_before_0004"
+    admin = await asyncpg.connect(pg_server.dsn(pg_server.admin, "postgres"))
+    try:
+        await admin.execute(f"DROP DATABASE IF EXISTS {name}")
+        await admin.execute(f"CREATE DATABASE {name} OWNER {OWNER}")
+        owner = await asyncpg.connect(pg_server.dsn(OWNER, name))
+        try:
+            monkeypatch.setattr("ferry_watch.control.db.migrations", lambda: [m for m in every if m[0] < "0004"])
+            await migrate(owner)
+            await owner.execute(
+                "INSERT INTO users (id, username, paused) VALUES ('aaaaaaaaaaaaaaaaaaaa', 'ann', true),"
+                " ('bbbbbbbbbbbbbbbbbbbb', 'bob', false)"
+            )
+            for trip_id, user, spec, enabled, archived in [
+                ("1111111111111111", "a" * 20, {"adults": 1}, True, False),  # Ann's, live
+                ("2222222222222222", "a" * 20, {"enabled": False}, False, False),  # already paused
+                ("3333333333333333", "a" * 20, {}, True, True),  # archived
+                ("4444444444444444", "b" * 20, {}, True, False),  # Bob didn't pause
+            ]:
+                await owner.execute(
+                    "INSERT INTO trips (id, user_id, spec, enabled, archived_at)"
+                    " VALUES ($1, $2, $3, $4, CASE WHEN $5 THEN now() END)",
+                    trip_id,
+                    user,
+                    json.dumps(spec),
+                    enabled,
+                    archived,
+                )
+            monkeypatch.setattr("ferry_watch.control.db.migrations", lambda: every)
+            assert await migrate(owner) == [v for v, _ in every if v >= "0004"]
+            rows = await owner.fetch("SELECT enabled, spec, rev FROM trips ORDER BY id")
+            assert [(r["enabled"], json.loads(r["spec"]), r["rev"]) for r in rows] == [
+                (False, {"adults": 1, "enabled": False}, 2),  # paused, and a new rev so its pod hears at once
+                (False, {"enabled": False}, 1),
+                (True, {}, 1),
+                (True, {}, 1),
+            ]
+            assert await owner.fetchval("SELECT count(*) FROM users WHERE paused") == 0
+        finally:
+            await owner.close()
+    finally:
+        await admin.execute(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)")
+        await admin.close()
 
 
 async def test_web_flips_only_the_maintenance_switches(db: Database) -> None:
@@ -161,6 +249,7 @@ async def test_web_deletes_a_user_and_everything_theirs(db: Database) -> None:
     web = await db.connect(ROLES.web)
     try:
         await web.execute("INSERT INTO events (user_id, kind, code) VALUES ($1, 'agent', 'cart_added')", USER)
+        await web.execute("INSERT INTO user_settings (user_id) VALUES ($1)", USER)
         await web.execute(
             "INSERT INTO sessions (token_hash, user_id, iss, sub, idle_expires_at, expires_at)"
             " VALUES ($1, $2, 'i', 's', now(), now())",
@@ -173,7 +262,7 @@ async def test_web_deletes_a_user_and_everything_theirs(db: Database) -> None:
         await web.close()
     owner = await db.connect()
     try:
-        for table in ("trips", "trip_state", "hold_claims", "notifications", "sessions", "events"):
+        for table in ("trips", "trip_state", "hold_claims", "notifications", "sessions", "events", "user_settings"):
             assert await owner.fetchval(f"SELECT count(*) FROM {table}") == 0, table  # noqa: S608 - fixed names
         assert await owner.fetchval("SELECT count(*) FROM hold_outcomes") == 1  # the record stays
     finally:

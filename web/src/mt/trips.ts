@@ -1,6 +1,6 @@
 /** How a trip reads on the dashboard (docs/multi-tenant/design-reference.md §10, item 5). */
 import type { Sailing, Terminal } from "@/lib/schema";
-import { clock, everyLabel, longDate } from "@/lib/time";
+import { longDate } from "@/lib/time";
 import type { MyTrip, SailingInfo } from "./schema";
 
 export type Tone = "success" | "warning" | "danger" | "soft" | "outline";
@@ -19,27 +19,26 @@ export function routeTitle(trip: MyTrip, terminals: readonly Terminal[] | undefi
 export const tripTitle = (trip: MyTrip, terminals: readonly Terminal[] | undefined): string =>
   `${routeTitle(trip, terminals)}, ${longDate(trip.trip.date) ?? trip.trip.date}`;
 
-/** The plain-words status of a trip's browser. */
+/** A trip's status in a word or two. The card says the rest (the question, the cart, what's bookable). */
 export function tripBadge(trip: MyTrip): TripBadge {
   const b = trip.browser;
-  if (trip.paused_reason === "after_checkout") return { text: "Did you book it?", tone: "warning" };
-  if (!trip.trip.enabled) return { text: "Paused", tone: "outline" };
-  if (b.cart?.status === "ready") return { text: "Holding a cart", tone: "success" };
-  if (b.cart?.status === "adding") return { text: "Holding it…", tone: "success" };
-  if (b.phase === "queued") {
-    return { text: `Waiting for a free browser${b.queue_position ? ` (#${b.queue_position})` : ""}`, tone: "soft" };
+  // Until they say whether they booked it: "Did you book it?" asks just below.
+  if (trip.paused_reason === "after_checkout") return { text: "Paused", tone: "warning" };
+  if (!trip.trip.enabled || trip.paused_reason !== null || trip.hold.reason === "paused") {
+    return { text: "Paused", tone: "outline" };
   }
-  if (b.consecutive_errors >= 3) return { text: "Having trouble checking", tone: "danger" };
-  if (unheld(trip).length > 0) return { text: "Bookable now", tone: "warning" };
-  if (b.phase === "starting" || b.phase === "creating") return { text: "Starting", tone: "soft" };
-  if (b.mode === "warm") {
-    return { text: b.effective_interval ? `Every ${everyLabel(b.effective_interval)}` : "Watching", tone: "success" };
-  }
-  if (b.mode === "short_check" || b.next_check_at !== null) {
-    const next = b.next_check_at ? ` · next ${clock(b.next_check_at * 1000)}` : "";
-    return { text: `Checked every 6 h${next}`, tone: "soft" };
-  }
-  return { text: "Checking soon", tone: "soft" };
+  if (b.cart?.status === "ready") return { text: "Held", tone: "success" };
+  if (b.cart?.status === "adding") return { text: "Holding", tone: "success" };
+  if (b.consecutive_errors >= 3) return { text: "Problem", tone: "danger" };
+  if (unheld(trip).length > 0) return { text: "Bookable", tone: "warning" };
+  if (trip.quiet) return { text: "Quiet hours", tone: "soft" };
+  if (b.mode === "warm") return { text: "Checking", tone: "success" };
+  return { text: "Scheduled", tone: "soft" };
+}
+
+/** When a scheduled trip (the badge's "Scheduled") is next checked, in epoch seconds; null for any other. */
+export function nextCheck(trip: MyTrip): number | null {
+  return tripBadge(trip).text === "Scheduled" ? trip.browser.next_check_at : null;
 }
 
 /** The agent's sailings, as the shared sailings list shows them. */
@@ -76,7 +75,7 @@ export function unheld(trip: MyTrip): string[] {
 }
 
 const NOT_HELD: Record<string, string> = {
-  quiet_hours: "We don't hold carts overnight.",
+  quiet_hours: "You're in your quiet hours.",
   auto_cart_off: "Auto-hold is off for this trip.",
   holding_elsewhere: "You're already holding a cart on another trip.",
   no_holds_left: "You've used today's holds.",

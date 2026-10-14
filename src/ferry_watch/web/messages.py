@@ -24,7 +24,7 @@ SHOWN_TIMES = 3
 BOOK_IT_YOURSELF = "Or book it yourself on bcferries.com"
 # Why a bookable sailing wasn't held (ferry-control's `held_back`), and what the user can do about it.
 HELD_BACK = {
-    "quiet_hours": "We don't hold carts overnight. Open Ferry Watch to hold it now.",
+    "quiet_hours": "It's in your quiet hours, so we didn't hold it. Open Ferry Watch to hold it now.",
     "auto_cart_off": "Auto-hold is off for this trip. Open Ferry Watch to hold it now.",
     "holding_elsewhere": "You're holding a cart on another trip, so we didn't hold this one.",
     "no_holds_left": "You've used today's holds, so we didn't hold it.",

@@ -13,10 +13,12 @@ behind both documents is in [research/](research/). Code refs are `file:line` un
 **Revised for your round-3 answers** (design-reference.md Appendix D rows 61-75):
 - **Polling:** trips at most 30 days ahead; your nearest trip within 7 days gets your one warm browser, which
   checks every 5 min a week out, down to every 30 s in the last 6 hours; other trips get a short check every
-  6 hours from a pod that checks once and exits. Quiet hours 23:00-06:00 alert only. The numbers live in
-  `src/ferry_watch/polling.py`.
+  6 hours from a pod that checks once and exits. Each user may set their own quiet hours (none by default;
+  0.6.3 replaced the fleet-wide 23:00-06:00), in which their trips aren't checked at all. The numbers live
+  in `src/ferry_watch/polling.py`.
 - **Checkout:** public HTTPS egress opens while a cart is held, so any bank's 3-D Secure works; the 3DS
-  allowlist and S-3DS are gone. After a checkout we can't confirm, the trip waits for "Did you book it?".
+  allowlist and S-3DS are gone. After a checkout we can't confirm, the trip waits for "Did you book it?"
+  (not after a Release the user asked for).
 - **Sign-in:** `one_factor` for Ferry Watch, so no second-factor enrolment.
 - **Settled:** the VNC race, no iOS takeover, 20 checks/min and the desktop UA, Talos releases, admin access,
   the Postgres Secret, the CI runner, the geo-block. The old M3 is merged into M2. Section 9 lists what is
@@ -125,8 +127,8 @@ the quota, open hold egress on any pod, and read itineraries and emails (design-
 | (round 2) "Can we use oidc?" | Yes: ferry-web is an OIDC client of Authelia (confidential, PKCE), verifies the `id_token`, then gives the SPA its own bearer token instead of a cookie, so the route drops every Cookie header. | About 3-4 days; residuals R17-R21 (section 6). |
 | (round 2) why the sandbox; no pre-cart window; no spike, no one-way doors | Sandbox explained in section 6; optional hardening is Q1. VNC strictly cart-gated. No spike tests guest checkout; fixtures from your use, production detection, an alert-only switch, the legacy app restorable, every guest choice a two-way door (section 3). | Your first real guest checkout is the end-to-end proof. |
 | (round 2) checkout host name | `ferry-checkout.chestr.dev` everywhere; covered by the `*.chestr.dev` cert and tunnel rule. | None. |
-| (round 3) "be good users of the api": poll less when far off, more when close; 30-day horizon; quiet hours alert only | The warm browser checks on your curve; other trips get 6-hourly short checks; trips ≤ 30 days; 23:00-06:00 alert only. Canonical: `src/ferry_watch/polling.py`. | A trip that isn't your nearest is seen every 6 h until it is. |
-| (round 3) pause until "Did you book it?" is answered | The trip stays paused; "Yes" archives, "No" resumes; the viewed sailing is never re-carted. | A user who never answers stops that trip being watched. |
+| (round 3) "be good users of the api": poll less when far off, more when close; 30-day horizon; quiet hours alert only | The warm browser checks on your curve; other trips get 6-hourly short checks; trips ≤ 30 days; 23:00-06:00 alert only (0.6.3: quiet hours are each user's own, none by default, and stop their checks). Canonical: `src/ferry_watch/polling.py`. | A trip that isn't your nearest is seen every 6 h until it is. |
+| (round 3) pause until "Did you book it?" is answered | The trip stays paused; "Yes" and "No, cancel" archive, "No" resumes; the viewed sailing is never re-carted. A Release the user asked for doesn't ask. | A user who never answers stops that trip being watched. |
 | (round 3) open public HTTPS egress while a cart is held | A second Cilium policy keyed on a pod label only ferry-control can change, and only that label (section 3). | A tenant can browse other sites from your IP during their own hold; code in a holding pod can reach any HTTPS host (R22). |
 | (round 3) `one_factor` for Ferry Watch | The ferry client is password-only; other clients keep `two_factor` and still get group restrictions before anyone new joins lldap. | The generated password is an invitee's only factor. |
 | (round 3) the rest | R3 race accepted; no iOS takeover; 20/min (40) with the desktop UA; Talos releases holds with an alert; no admin VNC, exec or screenshots; the Postgres Secret stays; the runner stays; the geo-block stays and onboarding says Canada/US. | Stated residuals (section 6). |
@@ -148,7 +150,8 @@ the quota, open hold egress on any pod, and read itineraries and emails (design-
   an opening and you hold no cart, it carts it and stays for checkout.
 - **One hold per user:** before carting, a pod asks ferry-control for a cart claim, granted atomically only
   if you hold nothing, so a warm and a short-check pod can't both cart.
-- **Quiet hours** 23:00-06:00 Pacific: checks continue, openings only alert (no cart overnight).
+- **Quiet hours** are each user's own (Pacific, none by default): in them their trips aren't checked at all.
+  A manual check or "Hold it for me" lifts them for that trip for 10 minutes.
 - Load on BC Ferries: typically 2-5 checks/min for the whole fleet, about 14 in the worst case (7 users all
   within 6 hours of a sailing), against today's 12/min for your trips alone. Above 20/min every interval
   stretches proportionally.
@@ -219,8 +222,9 @@ Detail: design-reference.md §3.5-3.6 (data flows), §6.2 (sign-in) and §8.1 (s
    dials the operator, walks the booking form (maybe through Queue-it) and checks: on the curve if warm, once
    if a short check.
 5. **Sailing opens.** The agent carts it as a guest if the user has holds left, holds no other cart (the cart
-   claim), it isn't quiet hours and carting isn't paused; otherwise a "bookable" alert links to the trip's
-   page, which says why nothing was held, offers "Hold it for me" and links to bcferries.com.
+   claim) and carting isn't paused (in the user's quiet hours nothing is checked); otherwise a "bookable"
+   alert links to the trip's page, which says why nothing was held, offers "Hold it for me" and links to
+   bcferries.com.
    ferry-control flips the pod's egress label to `hold`.
 6. **Alert.** Web Push plus email: "Held for you: 7:00 am Tsawwassen -> Swartz Bay, Fri Aug 1. Check out as a
    guest by 3:42 pm." Reminder at 15 min; released at 30 min if nobody opens it (a warm pod keeps watching).
@@ -231,8 +235,9 @@ Detail: design-reference.md §3.5-3.6 (data flows), §6.2 (sign-in) and §8.1 (s
    wherever they live. Phone sleep or a switch to the bank app reconnects with the same nonce. Session and
    viewer-gone clocks pause on payment pages; the 60 min hard cap never pauses.
 9. **Booked.** If the agent sees BC Ferries' confirmation page, the trip is archived and the user sees
-   "Booked!" (with the Ko-fi link). Otherwise "Did you book it?" with optional reasons, and **the trip stays
-   paused until they answer**: "Yes" archives, "No" resumes. The viewed sailing is never re-carted.
+   "Booked!" (with the Ko-fi link). If they released it themselves, nothing is asked. Otherwise "Did you book
+   it?" with optional reasons, and **the trip stays paused until they answer**: "Yes" and "No, cancel"
+   archive, "No" resumes. The viewed sailing is never re-carted.
 
 ---
 
@@ -251,11 +256,11 @@ mandatory reason. Polling values are fleet-wide, from `polling.py`, changed by v
 | `tripHorizonDays` | 30 | your rule | `polling.py:41` |
 | warm poll curve | 5 min / 2 min / 60 s / 30 s from 7 d / 3 d / 24 h / 6 h out | floor 30 s (compiled) | ±15 % jitter; `polling.py:34-39` |
 | short check, other trips | every 6 h | up to 24 h | one check per pod; `polling.py:40` |
-| quiet hours | 23:00-06:00 Pacific | fleet-wide | polling continues, alert only |
+| quiet hours | none | per user, set in the app | no checks for that user's trips; `polling.quietStart`/`quietEnd` ignored |
 | `maxHoldsPerDay` / `maxCartAttemptsPerDay` | 4 / 6 | 10 / 12 | Pacific day |
 | `vncMinutesPerDay` | 60 | 120 | checked before carting |
 | hold: unclaimed / session / viewer gone / hard cap | 30 / 30 / 10 / 60 min | 45 / 45 / 15 / 90 (compiled) | tuned from telemetry |
-| "Did you book it?" | trip paused until answered | — | no automatic resume |
+| "Did you book it?" | trip paused until answered | — | no automatic resume; not asked after a Release |
 | app session | 7 d idle / 30 d; re-checked every 24 h | re-check 1-24 h | silent while Authelia's session lives |
 | `checksPerMinute` (whole fleet) | 20 | 40 | typically 2-5 used, ~14 worst case |
 | `browserMemoryBudget` / `podMemory` | 12 GiB / 1.5 GiB | LimitRange = `podMemory` | `podMemory` to measured p95 x 1.2 |
@@ -269,9 +274,11 @@ minutes of the short-check slot every 6 hours; one slot serves about 40 users wh
 
 - **Fleet page:** memory vs budget, warm and short-check browsers, queue, short checks overdue, checks/min
   against the curve's demand, brake and breaker, live holds, hold outcomes by fare and vehicle type, an
-  attention list (including hold-egress flips failing and `guest_checkout_failing`). Actions: maintenance,
-  **pause carting** (before Talos upgrades; also the alert-only switch), close the breaker, release a cart,
-  recycle a pod.
+  attention list (including hold-egress flips failing and `guest_checkout_failing`), and the versions
+  running (ferry-web, ferry-control, browser pods by agent version and image, the dashboard). Actions:
+  maintenance ("Pause everything": no browsers run), **pause carting** (before Talos upgrades; also the
+  alert-only switch), close the breaker, release a cart, recycle a pod. Users pause their own trips one at a
+  time; there is no per-user "pause all".
 - **Users page:** state, invitations, effective limits with their source, usage, push/email health, sessions,
   unmatched sign-ins. Actions: add person, suspend (revokes sessions, drains pods), revoke sessions,
   overrides, make admin, delete user. Remove someone by suspending here first, then changing lldap
@@ -286,8 +293,8 @@ minutes of the short-check slot every 6 hours; one slot serves about 40 users wh
 - A short-check pod exits after its one check, unless it carted.
 - After **any viewed hold** the pod exits, so nothing a viewer did persists.
 - A warm pod is recycled after about 24 h (only while idle); hard `activeDeadlineSeconds` of 26 h.
-- Trip disabled, paused, past or deleted, a nearer trip taking the warm slot, user suspended, or limit lowered:
-  drained (never during a hold).
+- Trip disabled, paused, past or deleted, the user's quiet hours, a nearer trip taking the warm slot, user
+  suspended, or limit lowered: drained (never during a hold).
 - Startup with no first check in 15 min; Watching pod silent 5 min; 6 consecutive failures; repeated failures
   back off (5-60 min) and then "Needs attention". Orphans swept every 60 s.
 
@@ -528,7 +535,8 @@ Pushover for users, SMS in v1, CRDs, namespace per tenant, an HA control plane, 
   checkout host `ferry-checkout.chestr.dev`.
 - Round 3: the VNC first-connection race accepted for invite-only; no iOS takeover ticket; a trip paused until
   "Did you book it?" is answered; the 30-day horizon, the warm-browser curve, 6-hourly short checks and quiet
-  hours alert only (`polling.py`), with the other per-user defaults as proposed and one hold at a time; 20
+  hours alert only (`polling.py`; 0.6.3 made quiet hours each user's own, with no checks in them), with the
+  other per-user defaults as proposed and one hold at a time; 20
   checks/min (ceiling 40) and the desktop UA; Talos upgrades release holds with an alert; `one_factor` for
   Ferry Watch, with the other clients restricted before anyone joins lldap; no admin VNC, exec or screenshots;
   open public HTTPS during holds; the Postgres Secret kept; the runner left as is; the geo-block unchanged.

@@ -5,7 +5,7 @@ from datetime import UTC, date, datetime, time, timedelta
 import pytest
 
 from ferry_watch.models import PACIFIC, Trip
-from ferry_watch.polling import PollPolicy, Tier, time_until, warm_trip
+from ferry_watch.polling import PollPolicy, QuietHours, Tier, quiet_hours, time_until, warm_trip
 
 NOW = datetime(2026, 10, 11, 12, 0, tzinfo=PACIFIC)
 POLICY = PollPolicy()
@@ -48,17 +48,55 @@ def test_time_until_the_first_departure() -> None:
     assert time_until(earlier, NOW) is None  # every departure in the window has left
 
 
+NIGHT = QuietHours(time(23, 0), time(6, 0))
+
+
 @pytest.mark.parametrize(
     ("hour", "minute", "quiet"),
     [(22, 59, False), (23, 0, True), (2, 30, True), (5, 59, True), (6, 0, False), (12, 0, False)],
 )
 def test_quiet_hours_wrap_past_midnight(hour: int, minute: int, quiet: bool) -> None:
-    assert POLICY.quiet(datetime(2026, 10, 11, hour, minute, tzinfo=PACIFIC)) is quiet
+    assert NIGHT.contains(datetime(2026, 10, 11, hour, minute, tzinfo=PACIFIC)) is quiet
+
+
+@pytest.mark.parametrize(
+    ("hour", "minute", "quiet"),
+    [(12, 59, False), (13, 0, True), (14, 30, True), (15, 0, False), (0, 0, False)],
+)
+def test_quiet_hours_within_a_day(hour: int, minute: int, quiet: bool) -> None:
+    nap = QuietHours(time(13, 0), time(15, 0))
+    assert nap.contains(datetime(2026, 10, 11, hour, minute, tzinfo=PACIFIC)) is quiet
 
 
 def test_quiet_hours_are_pacific_whatever_the_clock_zone() -> None:
-    assert POLICY.quiet(datetime(2026, 10, 12, 6, 30, tzinfo=UTC)) is True  # 23:30 Pacific (PDT)
-    assert POLICY.quiet(datetime(2026, 10, 11, 19, 0, tzinfo=UTC)) is False  # noon Pacific
+    assert NIGHT.contains(datetime(2026, 10, 12, 6, 30, tzinfo=UTC)) is True  # 23:30 Pacific (PDT)
+    assert NIGHT.contains(datetime(2026, 10, 11, 19, 0, tzinfo=UTC)) is False  # noon Pacific
+
+
+def pacific(year: int, month: int, day: int, hour: int, minute: int) -> datetime:
+    return datetime(year, month, day, hour, minute, tzinfo=PACIFIC)
+
+
+@pytest.mark.parametrize(
+    ("at", "end"),
+    [
+        (pacific(2026, 10, 11, 23, 30), pacific(2026, 10, 12, 6, 0)),  # before midnight: tomorrow's 6:00
+        (pacific(2026, 10, 12, 2, 0), pacific(2026, 10, 12, 6, 0)),
+        (pacific(2026, 10, 12, 7, 0), pacific(2026, 10, 12, 7, 0)),  # not quiet: unchanged
+        (pacific(2026, 10, 31, 23, 30), pacific(2026, 11, 1, 6, 0)),  # across the end of daylight time
+    ],
+)
+def test_quiet_hours_end(at: datetime, end: datetime) -> None:
+    assert NIGHT.end_after(at) == end
+    nap = QuietHours(time(13, 0), time(15, 0))
+    assert nap.end_after(pacific(2026, 10, 11, 14, 0)) == pacific(2026, 10, 11, 15, 0)
+
+
+def test_quiet_hours_cover_something() -> None:
+    with pytest.raises(ValueError, match="different times"):
+        QuietHours(time(6, 0), time(6, 0))
+    assert quiet_hours(time(23, 0), time(6, 0)) == NIGHT  # as stored
+    assert quiet_hours(None, None) is None  # none: the default
 
 
 def test_horizon_is_thirty_days() -> None:

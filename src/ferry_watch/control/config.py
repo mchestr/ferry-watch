@@ -76,6 +76,8 @@ class PollingConfig(_Config, kw_only=True):
     tiers: list[TierConfig] | None = None
     short_check_interval: str = "6h"
     horizon_days: Annotated[int, msgspec.Meta(ge=7, le=120)] = 30
+    # Deprecated and ignored: quiet hours are each user's own setting now. Still accepted for a release, so a
+    # deployment that sets them keeps starting.
     quiet_start: str = "23:00"
     quiet_end: str = "06:00"
 

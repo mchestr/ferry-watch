@@ -12,6 +12,7 @@ from typing import Any
 import asyncpg
 import pytest
 
+from ferry_watch import __version__
 from ferry_watch.control.configure import HubSettings, curve_interval
 from ferry_watch.control.fleet import (
     EGRESS_GIVE_UP_S,
@@ -141,6 +142,7 @@ async def test_a_trip_within_a_week_gets_a_warm_pod(rig: Rig) -> None:
     assert report.started == [name]
     (row,) = await rig.pods()
     assert (row["name"], row["mode"], row["phase"], row["uid"]) == (name, "warm", "starting", "uid-1")
+    assert row["image_digest"] == PARAMS.image  # what it runs, for the admin page
     assert rig.cluster.specs[name]["spec"]["containers"][0]["env"][1] == {"name": "FW_OWNER", "value": ANN}
     assert (await rig.fleet.reconcile()).started == []  # one pod per trip
 
@@ -285,6 +287,40 @@ async def test_a_paused_trip_s_pod_is_drained(rig: Rig) -> None:
     assert rig.hub.commands == [(name, "drain", "paused")]
 
 
+async def test_the_old_account_pause_stops_everything_until_moved(rig: Rig) -> None:
+    """A "Pause all" from a ferry-web before 0004 (users.paused) still stops the user's trips until ferry-web
+    moves it onto each trip."""
+    await rig.add_trip(NEAR)
+    await rig.run("UPDATE users SET paused = true")  # as a ferry-web from before 0004 could still set it
+    assert (await rig.fleet.reconcile()).started == []
+    await rig.run("UPDATE users SET paused = false")
+    assert (await rig.fleet.reconcile()).started == [f"fw-{NEAR.id}-g1"]
+
+
+async def test_quiet_hours_stop_a_users_browsers_until_lifted(rig: Rig) -> None:
+    await rig.add_trip(NEAR)
+    await rig.run("INSERT INTO user_settings (user_id, quiet_start, quiet_end) VALUES ($1, '23:00', '06:00')", ANN)
+    await rig.run("INSERT INTO trip_runtime (trip_id) VALUES ($1)", NEAR.id)
+    rig.clock[0] = datetime(2026, 10, 12, 23, 30, tzinfo=PACIFIC).timestamp()
+
+    async def lift(column: str) -> None:
+        await rig.run(f"UPDATE trip_runtime SET {column} = $1", datetime.fromtimestamp(rig.clock[0] + 600, UTC))  # noqa: S608
+
+    assert (await rig.fleet.reconcile()).started == []  # Ann's quiet hours: nothing is checked
+    await lift("hold_requested_until")  # "Hold it for me"
+    name = f"fw-{NEAR.id}-g1"
+    assert (await rig.fleet.reconcile()).started == [name]
+    await rig.run("UPDATE browser_pods SET phase = 'watching'")
+    rig.hub.connected.add(name)
+    rig.advance(601)  # the request lapsed
+    rig.hub.heard[name] = rig.clock[0]
+    assert (await rig.fleet.reconcile()).drained == [name]
+    assert rig.hub.commands == [(name, "drain", "paused")]
+    rig.cluster.set_phase(name, "Succeeded", "drained -")
+    await lift("quiet_lifted_until")  # a manual check
+    assert (await rig.fleet.reconcile()).started == [f"fw-{NEAR.id}-g2"]
+
+
 async def test_a_disconnected_pod_is_deleted_instead(rig: Rig) -> None:
     await rig.add_trip(NEAR)
     await rig.fleet.reconcile()
@@ -324,6 +360,7 @@ async def test_each_pass_reports_what_it_knew(rig: Rig) -> None:
     interval = curve_interval(NEAR, datetime.fromtimestamp(NOW, PACIFIC), PollPolicy())
     assert report.summary == {
         "at": NOW,
+        "version": __version__,
         "browsers": {"max": 7, "live": 2},
         "memory": {"pod": "1536Mi", "pod_mb": 1536, "requested_mb": 3072, "budget_mb": 7 * 1536},
         "queued": 0,

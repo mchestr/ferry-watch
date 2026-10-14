@@ -18,6 +18,7 @@ import { cn, plural } from "@/lib/utils";
 import {
   ADMIN_KEYS,
   adminApi,
+  browserVersions,
   LIMIT_LABELS,
   quantityGiB,
   USAGE_LABELS,
@@ -41,18 +42,33 @@ const OUTCOMES: readonly [string, string][] = [
   ["payment_left_to_site", "Paid on bcferries.com"],
   ["none", "Ended without an answer"],
 ];
-const SWITCHES: readonly { name: FleetSwitch; label: string; on: string; off: string }[] = [
+interface FleetSwitchCopy {
+  name: FleetSwitch;
+  label: string;
+  /** What it does while on: always shown, and asked before turning it on. */
+  on: string;
+  /** What turning it off does. */
+  off: string;
+  /** The reason dialog's title, turning it on and off. */
+  ask: readonly [on: string, off: string];
+  done: readonly [on: string, off: string];
+}
+const SWITCHES: readonly FleetSwitchCopy[] = [
   {
     name: "maintenance",
-    label: "Maintenance",
-    on: "No browsers run. Trips wait until it's off.",
-    off: "Browsers start as trips need them.",
+    label: "Pause everything",
+    on: "Runs no browsers, so nothing is checked. Holds already in progress finish.",
+    off: "Browsers start again as trips need them.",
+    ask: ["Pause everything?", "Run everything again?"],
+    done: ["Everything is paused", "Everything runs again"],
   },
   {
     name: "pause_carting",
     label: "Pause carting",
     on: "Alerts only: nobody's sailing is put in a cart (for a Talos upgrade, or if guest checkout breaks).",
-    off: "Bookable sailings go into a guest cart for their owner.",
+    off: "Bookable sailings go into a guest cart for their owner again.",
+    ask: ["Pause carting?", "Cart sailings again?"],
+    done: ["Carting is paused", "Carting is back on"],
   },
 ];
 
@@ -171,7 +187,10 @@ export function AdminPage({ meId }: { meId: string }) {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
-        <h1 className="text-xl font-bold tracking-tight">Admin</h1>
+        <div className="min-w-0">
+          <h1 className="text-xl font-bold tracking-tight">Admin</h1>
+          <Versions />
+        </div>
         <div className="flex gap-1 rounded-xl bg-muted p-1" role="group" aria-label="Admin pages">
           {(["fleet", "people"] as const).map((name) => (
             <Button
@@ -194,6 +213,39 @@ export function AdminPage({ meId }: { meId: string }) {
         <Loading error={people.error} />
       )}
     </div>
+  );
+}
+
+/**
+ * Which release each part runs: this page, ferry-web, ferry-control and the browsers. A page left open across
+ * a deploy keeps its old code, so it offers a reload when it's older than ferry-web.
+ */
+function Versions() {
+  const overview = useQuery({ queryKey: ADMIN_KEYS.overview, queryFn: ({ signal }) => adminApi.overview(signal) });
+  const versions = overview.data?.versions;
+  const web = versions?.web?.version ?? null;
+  const parts = [`Dashboard ${__APP_VERSION__}`];
+  if (versions) {
+    parts.push(`Web ${web ?? "—"}`, `Control ${versions.control?.version ?? "—"}`);
+    const browsers = browserVersions(versions.browsers);
+    if (browsers) parts.push(`Browsers ${browsers}`);
+  }
+  return (
+    <p className="text-sm text-muted-foreground">
+      {parts.join(" · ")}
+      {web !== null && web !== __APP_VERSION__ && (
+        <>
+          {" · "}
+          <button
+            type="button"
+            className="font-medium text-foreground underline underline-offset-2"
+            onClick={() => location.reload()}
+          >
+            Reload to update
+          </button>
+        </>
+      )}
+    </p>
   );
 }
 
@@ -296,18 +348,18 @@ function Fleet({ users }: { users: readonly AdminUser[] | undefined }) {
                   <p id={`switch-${s.name}`} className="text-sm font-medium">
                     {s.label}
                   </p>
-                  <p className="text-sm text-muted-foreground">{on ? s.on : s.off}</p>
+                  <p className="text-sm text-muted-foreground">{s.on}</p>
                 </div>
                 <Switch
                   aria-labelledby={`switch-${s.name}`}
                   checked={on}
                   onCheckedChange={(next) =>
                     ask({
-                      title: `Turn ${s.label.toLowerCase()} ${next ? "on" : "off"}?`,
+                      title: next ? s.ask[0] : s.ask[1],
                       description: next ? s.on : s.off,
                       confirmLabel: next ? "Turn on" : "Turn off",
                       danger: next,
-                      done: `${s.label} is ${next ? "on" : "off"}`,
+                      done: next ? s.done[0] : s.done[1],
                       run: (reason) => adminApi.setSwitch(s.name, next, reason),
                     })
                   }
@@ -740,7 +792,6 @@ function PersonCard({
             {user.is_admin && <Badge variant="outline">Admin</Badge>}
             {user.bootstrap && <Badge variant="outline">Bootstrap</Badge>}
             {suspended && <Badge variant="danger">Suspended</Badge>}
-            {user.paused && <Badge variant="muted">Paused</Badge>}
           </h2>
           <p className="text-sm text-muted-foreground">
             {user.email ? `${user.email} · ` : ""}

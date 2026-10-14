@@ -192,6 +192,45 @@ describe("TripSheet", () => {
     });
   });
 
+  describe("route", () => {
+    const blank = () =>
+      renderSheet({
+        mode: { kind: "adding" },
+        state: makeState({ trip_defaults: makeSettings({ from: "", to: "" }) }),
+      });
+    const choose = async (user: ReturnType<typeof renderSheet>["user"], label: string, option: string) => {
+      await user.click(screen.getByRole("combobox", { name: label }));
+      await user.click(await screen.findByRole("option", { name: option }));
+    };
+
+    it("picks a destination when From is chosen on a blank trip, without an error", async () => {
+      const { user } = blank();
+      await choose(user, "From", "Vancouver (Tsawwassen)");
+      const to = screen.getByRole("combobox", { name: "To" });
+      expect(to).toHaveTextContent("Nanaimo (Duke Point)");
+      expect(to).not.toHaveAttribute("aria-invalid");
+      expect(screen.queryByText("Choose a destination.")).not.toBeInTheDocument();
+    });
+
+    it("moves the destination to the new From's list", async () => {
+      const { user } = renderSheet();
+      await choose(user, "From", "Vancouver (Horseshoe Bay)");
+      const to = screen.getByRole("combobox", { name: "To" });
+      expect(to).toHaveTextContent("Nanaimo (Departure Bay)");
+      expect(to).not.toHaveAttribute("aria-invalid");
+    });
+
+    it("still flags an empty To on Save", async () => {
+      const { requests } = mockFetch(() => jsonResponse(makeState()));
+      const { user } = blank();
+      await user.click(screen.getByRole("button", { name: "Add trip" }));
+      const to = screen.getByRole("combobox", { name: "To" });
+      expect(to).toHaveAttribute("aria-invalid", "true");
+      expect(to).toHaveAccessibleDescription("Choose a destination.");
+      expect(requests).toHaveLength(0);
+    });
+  });
+
   describe("date", () => {
     it("can't be in the past", async () => {
       const { requests } = mockFetch(() => jsonResponse(makeState()));

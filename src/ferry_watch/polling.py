@@ -5,8 +5,8 @@ The aim is to be a good citizen of bcferries.com (docs/multi-tenant/decisions.md
 - each user's nearest trip within 7 days gets a browser kept warm between checks, and is checked on a
   curve that tightens as the sailing approaches;
 - every other trip gets a short check every 6 hours;
-- overnight ("quiet hours") checks carry on, but an opening only alerts, since nobody is awake to
-  check out.
+- in a user's own quiet hours (none unless they set some) their trips aren't checked at all, unless they
+  lift them for a trip (a manual check, or "Hold it for me").
 """
 
 from __future__ import annotations
@@ -39,7 +39,9 @@ class PollPolicy:
     )
     short_check_interval: timedelta = timedelta(hours=6)  # trips without a warm browser
     horizon: timedelta = timedelta(days=30)  # how far ahead a trip may be
-    quiet_start: time = time(23, 0)  # Pacific
+    # Deprecated and unused: quiet hours are each user's own (QuietHours). Kept a release, so a deployment's
+    # polling.quietStart and quietEnd still parse.
+    quiet_start: time = time(23, 0)
     quiet_end: time = time(6, 0)
 
     def __post_init__(self) -> None:
@@ -74,16 +76,41 @@ class PollPolicy:
                 return tier.interval
         return None
 
-    def quiet(self, at: datetime) -> bool:
-        """Whether `at` falls in quiet hours (Pacific), when an opening only alerts."""
-        now = at.astimezone(PACIFIC).time()
-        if self.quiet_start <= self.quiet_end:
-            return self.quiet_start <= now < self.quiet_end
-        return now >= self.quiet_start or now < self.quiet_end
-
     def within_horizon(self, trip_date: date, today: date) -> bool:
         """Whether a trip on `trip_date` may be watched (not past, and not too far ahead)."""
         return today <= trip_date <= today + timedelta(days=self.horizon.days)
+
+
+@dataclass(frozen=True, slots=True)
+class QuietHours:
+    """A user's quiet hours, Pacific like the ferries: from `start` until `end`, which may be past midnight."""
+
+    start: time
+    end: time
+
+    def __post_init__(self) -> None:
+        if self.start == self.end:
+            raise ValueError("Quiet hours must start and end at different times")
+
+    def contains(self, at: datetime) -> bool:
+        """Whether `at` falls in these quiet hours."""
+        now = at.astimezone(PACIFIC).time()
+        if self.start < self.end:
+            return self.start <= now < self.end
+        return now >= self.start or now < self.end
+
+    def end_after(self, at: datetime) -> datetime:
+        """When the quiet hours `at` falls in end (`at` itself, outside them)."""
+        if not self.contains(at):
+            return at
+        local = at.astimezone(PACIFIC)
+        end = datetime.combine(local.date(), self.end, tzinfo=PACIFIC)
+        return end if end > local else datetime.combine(local.date() + timedelta(days=1), self.end, tzinfo=PACIFIC)
+
+
+def quiet_hours(start: time | None, end: time | None) -> QuietHours | None:
+    """A user's quiet hours as stored (`user_settings`): None unless both times are set."""
+    return QuietHours(start, end) if start is not None and end is not None else None
 
 
 def time_until(trip: Trip, now: datetime) -> timedelta | None:

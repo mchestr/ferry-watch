@@ -10,10 +10,11 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { configureBearerAuth, errorMessage, hasStatus, type AuthReason } from "@/lib/api";
 import type { TripSettings } from "@/lib/schema";
+import { timeLabel } from "@/lib/time";
 import { AccountCard } from "./AccountCard";
 import { AdminPage } from "./AdminPage";
 import { MY_STATE_KEY, myApi } from "./api";
-import { completeSignIn, isSignedOut, markSignedOut, startSignIn, token } from "./auth";
+import { completeSignIn, isSignedOut, markSignedOut, signOut, startSignIn, token } from "./auth";
 import { CheckoutPage } from "./CheckoutPage";
 import { useMyLive } from "./live";
 import { MyTripCard } from "./MyTripCard";
@@ -147,13 +148,6 @@ function SignedIn() {
     );
   }
 
-  const signOut = () => {
-    void myApi.logout().finally(() => {
-      markSignedOut();
-      location.assign("/");
-    });
-  };
-
   return (
     <div className="min-h-screen">
       <header className="border-b bg-card">
@@ -173,7 +167,7 @@ function SignedIn() {
             <Button variant="ghost" size="icon" aria-label="Settings" onClick={() => navigate("/settings")}>
               <Settings aria-hidden />
             </Button>
-            <Button variant="ghost" size="icon" aria-label="Sign out" onClick={signOut}>
+            <Button variant="ghost" size="icon" aria-label="Sign out" onClick={() => void signOut()}>
               <LogOut aria-hidden />
             </Button>
           </div>
@@ -189,41 +183,41 @@ function SignedIn() {
             <AccountCard state={state} />
           </div>
         ) : (
-          <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
-            <div className="min-w-0 space-y-4">
-              <div className="flex items-end justify-between gap-4">
-                <div>
-                  <h1 className="text-xl font-bold tracking-tight">Your trips</h1>
-                  <p className="text-sm text-muted-foreground">
-                    {state.trips.length} of {state.limits.maxTrips?.value ?? 3} watched
-                    {state.me.paused && " · all paused"}
-                  </p>
-                </div>
-                <Button onClick={() => setSheet({ kind: "adding" })} disabled={!state.capacity.can_add}>
-                  <Plus aria-hidden /> Add trip
-                </Button>
+          <div className="mx-auto max-w-3xl space-y-4">
+            <div className="flex items-end justify-between gap-4">
+              <div>
+                <h1 className="text-xl font-bold tracking-tight">Your trips</h1>
+                <p className="text-sm text-muted-foreground">
+                  {state.trips.length} of {state.limits.maxTrips?.value ?? 3} watched
+                  {state.quiet_hours?.now && (
+                    <>
+                      {" · "}
+                      <span className="whitespace-nowrap">quiet until {timeLabel(state.quiet_hours.end)} PT</span>
+                    </>
+                  )}
+                </p>
               </div>
-              {state.trips.length ? (
-                state.trips.map((trip) => (
-                  <MyTripCard
-                    key={trip.trip.id}
-                    trip={trip}
-                    terminals={terminals.data}
-                    onEdit={() => setSheet({ kind: "editing", tripId: trip.trip.id })}
-                  />
-                ))
-              ) : (
-                <Card className="px-6 py-16 text-center">
-                  <h2 className="font-semibold">No trips yet</h2>
-                  <p className="mx-auto mt-1 max-w-sm text-sm text-muted-foreground">
-                    Add a route and a date within the next 30 days, and you'll hear the moment a reservation opens up.
-                  </p>
-                </Card>
-              )}
+              <Button onClick={() => setSheet({ kind: "adding" })} disabled={!state.capacity.can_add}>
+                <Plus aria-hidden /> Add trip
+              </Button>
             </div>
-            <aside className="space-y-6">
-              <AccountCard state={state} />
-            </aside>
+            {state.trips.length ? (
+              state.trips.map((trip) => (
+                <MyTripCard
+                  key={trip.trip.id}
+                  trip={trip}
+                  terminals={terminals.data}
+                  onEdit={() => setSheet({ kind: "editing", tripId: trip.trip.id })}
+                />
+              ))
+            ) : (
+              <Card className="px-6 py-16 text-center">
+                <h2 className="font-semibold">No trips yet</h2>
+                <p className="mx-auto mt-1 max-w-sm text-sm text-muted-foreground">
+                  Add a route and a date within the next 30 days, and you'll hear the moment a reservation opens up.
+                </p>
+              </Card>
+            )}
           </div>
         )}
       </main>

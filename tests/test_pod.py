@@ -32,7 +32,7 @@ from ferry_watch.agent.lockdown import (
     unix_listeners,
 )
 from ferry_watch.agent.main import Agent, termination_line
-from ferry_watch.agent.processes import Processes, Spec, xvnc_argv
+from ferry_watch.agent.processes import MATCHBOX_ARGV, Processes, Spec, xvnc_argv
 from ferry_watch.agent.settings import AgentSettings, SettingsError
 from ferry_watch.agent.watch import Finish
 from ferry_watch.models import Trip
@@ -232,8 +232,18 @@ def test_xvnc_listens_on_its_unix_socket_only() -> None:
     argv = xvnc_argv(":99", (1280, 1000), Path("/tmp/kasm/rfb.sock"))
     assert argv[argv.index("-rfbunixpath") + 1] == "/tmp/kasm/rfb.sock"
     assert argv[argv.index("-rfbunixmode") + 1] == "0600"
-    for flag in ("-websocketPort", "-interface", "-httpd", "-AlwaysShared", "-DisableBasicAuth", "-MaxIdleTime"):
+    for flag in ("-websocketPort", "-interface", "-httpd", "-AlwaysShared", "-MaxIdleTime"):
         assert flag not in argv
+
+
+def test_xvnc_lets_the_gates_client_see_the_screen_and_use_it() -> None:
+    # Without it, a client with no kasmpasswd user (the gate's, on the unix socket) gets no frames and no input.
+    assert "-DisableBasicAuth" in xvnc_argv(":99", (1280, 1000), Path("/tmp/kasm/rfb.sock"))
+
+
+def test_matchbox_has_no_key_bindings() -> None:
+    # Its default kbdconfig closes the window on Alt+C, under the checkout viewer's keys.
+    assert MATCHBOX_ARGV[MATCHBOX_ARGV.index("-kbdconfig") + 1] == "/dev/null"
 
 
 async def test_processes_start_report_a_death_and_stop() -> None:

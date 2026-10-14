@@ -36,6 +36,11 @@ def xvnc_argv(display: str, screen: tuple[int, int], rfb_socket: Path) -> list[s
         "0600",
         "-SecurityTypes",
         "None",
+        # Despite its name, this is what gives the gate's unix-socket client view and input rights: without it
+        # KasmVNC looks a user up in ~/.kasmpasswd, finds none, and never sends a frame (a black checkout).
+        # With -rfbunixpath there's no WebSocket or HTTP listener, so there's no basic auth to disable; access
+        # stays the socket's 0600 mode and the gate.
+        "-DisableBasicAuth",
         "-NeverShared",
         "-DisconnectClients=0",
         "-SendCutText=0",
@@ -57,7 +62,9 @@ def xvnc_argv(display: str, screen: tuple[int, int], rfb_socket: Path) -> list[s
     ]
 
 
-MATCHBOX_ARGV = ["matchbox-window-manager", "-use_titlebar", "no"]
+# No title bar, and none of matchbox's key bindings (its default /etc/matchbox/kbdconfig): over the checkout
+# viewer, Alt+C would close the checkout window, Alt+N/Alt+Tab switch windows and Ctrl+Alt+X start a terminal.
+MATCHBOX_ARGV = ["matchbox-window-manager", "-use_titlebar", "no", "-kbdconfig", "/dev/null"]
 
 
 @dataclass(frozen=True, slots=True)

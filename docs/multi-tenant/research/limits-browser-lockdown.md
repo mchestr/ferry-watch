@@ -240,6 +240,7 @@ All three Max* settings kill Xvnc, and `wait -n; exit 1` (entrypoint.sh:38-39) t
 **View-only:**
 - With BasicAuth on, kasmpasswd users carry read/write/owner permissions.
 - With `-DisableBasicAuth`, every client is read+write (VNCSConnectionST.cxx L1241-1249).
+- Without it, a client that isn't a kasmpasswd user gets no rights at all: no frames and no input (VNCSConnectionST.cxx L91-108, L1006). A unix-socket client has no user, so the pod's Xvnc (`-rfbunixpath`, no WebSocket listener) needs `-DisableBasicAuth` for its one viewer to see or use the screen.
 - Server-wide view-only is possible at runtime: `kasmvncconfig -set AcceptPointerEvents=0` (and `AcceptKeyEvents=0`, after adding it to `-AllowOverride`). The default AllowOverride list is "desktop,AcceptPointerEvents,SendCutText,AcceptCutText,SendPrimary,SetPrimary" (vncExtInit.cc L109-111, L572-575).
 
 **Kicking viewers:**
