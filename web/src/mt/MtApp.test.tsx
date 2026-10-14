@@ -578,7 +578,8 @@ describe("quiet hours", () => {
     });
     mockFetch((r) => (r.url === "/api/state" ? jsonResponse(state) : jsonResponse({ terminals: [] })));
     renderWithProviders(<MtApp />);
-    expect(await screen.findByText(/1 of 3 watched · quiet until 6:00 am/)).toBeInTheDocument();
+    const heading = await screen.findByRole("heading", { name: "Your trips" });
+    expect(heading.nextElementSibling).toHaveTextContent("1 of 3 watched · quiet until 6:00 am");
     expect(statusBadge()).toBe("Quiet hours");
   });
 
