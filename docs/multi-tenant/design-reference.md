@@ -1563,7 +1563,7 @@ the cluster admin can technically see everything (R1).
 | Table | Key columns | Writer(s) |
 |---|---|---|
 | `users` | `id text pk (uid)`, state (active/suspended), username, email, display, is_admin, paused (0004 moved it onto each trip; for 0.6.3 only, while a 0.6.2 ferry-web may still set it, ferry-control pauses all the user's trips on it and ferry-web moves it onto each trip on the next state read; a later release drops it), created_at, last_seen_at | web |
-| `user_settings` | user_id pk, quiet_start, quiet_end (Pacific `time`s, not null, different; default 22:00 and 05:00, which a user without a row has too: `DEFAULT_QUIET_HOURS` in `polling.py`), updated_at. 0005 set the nulls 0.6.3 allowed ("off") to the default and made the times NOT NULL, so a 0.6.3 ferry-web still running during the rollout can't turn quiet hours off (its write fails; nothing changes). | web; control (read) |
+| `user_settings` | user_id pk, quiet_start, quiet_end (Pacific `time`s, both or neither, different; default 22:00 and 05:00, which a user without a row has too: `DEFAULT_QUIET_HOURS` in `polling.py`), updated_at. 0005 set the nulls 0.6.3 allowed ("off") to the default. The times stay nullable for a release, since a 0.6.3 ferry-web still running during the rollout stores nulls for "off"; no times read as the default, and a later release makes them NOT NULL. | web; control (read) |
 | `identities` | (iss, sub) pk, uid (a cache of the derived uid; must equal it, C23), username, email, last_groups, first/last_seen | web |
 | `unmatched_identities` | (iss, sub) pk, preferred_username, email, first_seen, last_seen | web |
 | `invites` | id, match_claim, match_value, email, limit overrides jsonb, reason, created_by, created_at, expires_at, used_by_uid, used_at | web |

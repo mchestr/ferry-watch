@@ -321,9 +321,13 @@ async def test_quiet_hours_stop_a_users_browsers_until_lifted(rig: Rig) -> None:
     assert (await rig.fleet.reconcile()).started == [f"fw-{NEAR.id}-g2"]
 
 
-async def test_without_quiet_hours_of_their_own_a_user_has_the_default(rig: Rig) -> None:
-    """10 pm to 5 am: Ann never changed hers, so her trips aren't checked overnight."""
+@pytest.mark.parametrize("stored_off", [False, True])
+async def test_without_quiet_hours_of_their_own_a_user_has_the_default(rig: Rig, stored_off: bool) -> None:
+    """10 pm to 5 am: Ann never changed hers, so her trips aren't checked overnight. A row without times (what a
+    0.6.3 ferry-web stores for "off" during the rollout) is the default too."""
     await rig.add_trip(NEAR)
+    if stored_off:
+        await rig.run("INSERT INTO user_settings (user_id, quiet_start, quiet_end) VALUES ($1, NULL, NULL)", ANN)
     rig.clock[0] = datetime(2026, 10, 12, 23, 0, tzinfo=PACIFIC).timestamp()
     assert (await rig.fleet.reconcile()).started == []
     rig.clock[0] = datetime(2026, 10, 13, 12, 0, tzinfo=PACIFIC).timestamp()

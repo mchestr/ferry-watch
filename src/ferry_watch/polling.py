@@ -109,7 +109,8 @@ DEFAULT_QUIET_HOURS = QuietHours(time(22, 0), time(5, 0))
 
 
 def quiet_hours(start: time | None, end: time | None) -> QuietHours:
-    """A user's quiet hours as stored (`user_settings`): the default when they have no row."""
+    """A user's quiet hours as stored (`user_settings`): the default when they have no row, or no times (what a
+    0.6.3 ferry-web stores for "off" during the rollout)."""
     return QuietHours(start, end) if start is not None and end is not None else DEFAULT_QUIET_HOURS
 
 

@@ -467,6 +467,14 @@ async def test_quiet_hours_are_each_users_own(rig: Rig) -> None:
     assert state["quiet_hours"]["now"] is False  # Ann's start at 11 pm
 
 
+async def test_quiet_hours_a_063_ferry_web_turned_off_are_the_default(rig: Rig) -> None:
+    """During the rollout a 0.6.3 ferry-web can still store "off" (no times): everyone has quiet hours now."""
+    await rig.sql("INSERT INTO user_settings (user_id, quiet_start, quiet_end) VALUES ($1, NULL, NULL)", ANN)
+    rig.clock[0] = today_at(23)
+    state = await (await rig.call("GET", "/api/state")).json()
+    assert (state["settings"], state["quiet_hours"]) == ({"quiet_hours": DEFAULT}, DEFAULT | {"now": True})
+
+
 async def test_quiet_hours_cant_be_turned_off(rig: Rig) -> None:
     for body in ({"quiet_hours": None}, {}):
         response = await rig.call("PATCH", "/api/me", json=body)

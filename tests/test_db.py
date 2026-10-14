@@ -166,9 +166,8 @@ async def test_web_keeps_each_users_settings_and_control_only_reads_them(db: Dat
         await web.execute(
             "INSERT INTO user_settings (user_id, quiet_start, quiet_end) VALUES ($1, '23:00', '06:00')", USER
         )
-        for statement in ("UPDATE user_settings SET quiet_end = NULL", "UPDATE user_settings SET quiet_start = NULL"):
-            with pytest.raises(asyncpg.NotNullViolationError):  # everyone has quiet hours
-                await web.execute(statement)
+        with pytest.raises(asyncpg.CheckViolationError):  # a start needs an end
+            await web.execute("UPDATE user_settings SET quiet_end = NULL")
         with pytest.raises(asyncpg.CheckViolationError):  # hours that start and end together cover nothing
             await web.execute("UPDATE user_settings SET quiet_start = '06:00'")
         await web.execute("UPDATE user_settings SET quiet_start = '22:30'")
@@ -247,8 +246,13 @@ async def test_0005_gives_everyone_quiet_hours(pg_server: Server) -> None:
             (bob, time(23, 30), time(6, 15)),
             (cat, time(22), time(5)),
         ]
-        with pytest.raises(asyncpg.NotNullViolationError):  # and nobody can turn them off any more
-            await owner.execute("UPDATE user_settings SET quiet_start = NULL, quiet_end = NULL")
+        # A 0.6.3 ferry-web still running during the rollout can store "off" (it reads as the default): the times
+        # become NOT NULL a release later.
+        await owner.execute(
+            "INSERT INTO user_settings (user_id, quiet_start, quiet_end) VALUES ($1, NULL, NULL) ON CONFLICT (user_id)"
+            " DO UPDATE SET quiet_start = NULL, quiet_end = NULL, updated_at = now()",
+            bob,
+        )
 
 
 async def test_web_flips_only_the_maintenance_switches(db: Database) -> None:
