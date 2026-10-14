@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
+from collections.abc import AsyncIterator
+from datetime import time
 
 import asyncpg
 import pytest
@@ -14,6 +17,28 @@ from tests.postgres import OWNER, ROLES, Database, Server
 
 USER = "u5yq2kz7m4c3x8a1b2d3e"[:20]
 TRIP = "3f9c0a1b2c3d4e5f"
+
+
+@contextlib.asynccontextmanager
+async def migrated_up_to(pg_server: Server, version: str) -> AsyncIterator[asyncpg.Connection]:
+    """A new database with the migrations before `version`, as its owner: `migrate()` applies the rest."""
+    name = f"fw_before_{version}"
+    admin = await asyncpg.connect(pg_server.dsn(pg_server.admin, "postgres"))
+    try:
+        await admin.execute(f"DROP DATABASE IF EXISTS {name}")
+        await admin.execute(f"CREATE DATABASE {name} OWNER {OWNER}")
+        owner = await asyncpg.connect(pg_server.dsn(OWNER, name))
+        try:
+            earlier = [m for m in migrations() if m[0] < version]
+            with pytest.MonkeyPatch.context() as patch:
+                patch.setattr("ferry_watch.control.db.migrations", lambda: earlier)
+                await migrate(owner)
+            yield owner
+        finally:
+            await owner.close()
+    finally:
+        await admin.execute(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)")
+        await admin.close()
 
 
 async def seed(db: Database) -> None:
@@ -141,16 +166,17 @@ async def test_web_keeps_each_users_settings_and_control_only_reads_them(db: Dat
         await web.execute(
             "INSERT INTO user_settings (user_id, quiet_start, quiet_end) VALUES ($1, '23:00', '06:00')", USER
         )
-        with pytest.raises(asyncpg.CheckViolationError):  # a start needs an end
-            await web.execute("UPDATE user_settings SET quiet_end = NULL")
+        for statement in ("UPDATE user_settings SET quiet_end = NULL", "UPDATE user_settings SET quiet_start = NULL"):
+            with pytest.raises(asyncpg.NotNullViolationError):  # everyone has quiet hours
+                await web.execute(statement)
         with pytest.raises(asyncpg.CheckViolationError):  # hours that start and end together cover nothing
             await web.execute("UPDATE user_settings SET quiet_start = '06:00'")
-        await web.execute("UPDATE user_settings SET quiet_start = NULL, quiet_end = NULL")  # none
+        await web.execute("UPDATE user_settings SET quiet_start = '22:30'")
     finally:
         await web.close()
     control = await db.connect(ROLES.control)
     try:
-        assert await control.fetchval("SELECT count(*) FROM user_settings WHERE quiet_start IS NULL") == 1
+        assert await control.fetchval("SELECT quiet_start FROM user_settings") == time(22, 30)
         for statement in (
             "INSERT INTO user_settings (user_id) VALUES ('bbbbbbbbbbbbbbbbbbbb')",
             "UPDATE user_settings SET quiet_start = '22:00', quiet_end = '07:00'",
@@ -167,54 +193,62 @@ async def test_web_keeps_each_users_settings_and_control_only_reads_them(db: Dat
         await web.close()
 
 
-async def test_0004_pauses_each_trip_of_whoever_paused_everything(
-    pg_server: Server, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_0004_pauses_each_trip_of_whoever_paused_everything(pg_server: Server) -> None:
     """ "Pause all my trips" is gone: an account paused before 0004 keeps every live trip paused, one by one."""
-    every = migrations()
-    name = "fw_before_0004"
-    admin = await asyncpg.connect(pg_server.dsn(pg_server.admin, "postgres"))
-    try:
-        await admin.execute(f"DROP DATABASE IF EXISTS {name}")
-        await admin.execute(f"CREATE DATABASE {name} OWNER {OWNER}")
-        owner = await asyncpg.connect(pg_server.dsn(OWNER, name))
-        try:
-            monkeypatch.setattr("ferry_watch.control.db.migrations", lambda: [m for m in every if m[0] < "0004"])
-            await migrate(owner)
+    async with migrated_up_to(pg_server, "0004") as owner:
+        await owner.execute(
+            "INSERT INTO users (id, username, paused) VALUES ('aaaaaaaaaaaaaaaaaaaa', 'ann', true),"
+            " ('bbbbbbbbbbbbbbbbbbbb', 'bob', false)"
+        )
+        for trip_id, user, spec, enabled, archived in [
+            ("1111111111111111", "a" * 20, {"adults": 1}, True, False),  # Ann's, live
+            ("2222222222222222", "a" * 20, {"enabled": False}, False, False),  # already paused
+            ("3333333333333333", "a" * 20, {}, True, True),  # archived
+            ("4444444444444444", "b" * 20, {}, True, False),  # Bob didn't pause
+        ]:
             await owner.execute(
-                "INSERT INTO users (id, username, paused) VALUES ('aaaaaaaaaaaaaaaaaaaa', 'ann', true),"
-                " ('bbbbbbbbbbbbbbbbbbbb', 'bob', false)"
+                "INSERT INTO trips (id, user_id, spec, enabled, archived_at)"
+                " VALUES ($1, $2, $3, $4, CASE WHEN $5 THEN now() END)",
+                trip_id,
+                user,
+                json.dumps(spec),
+                enabled,
+                archived,
             )
-            for trip_id, user, spec, enabled, archived in [
-                ("1111111111111111", "a" * 20, {"adults": 1}, True, False),  # Ann's, live
-                ("2222222222222222", "a" * 20, {"enabled": False}, False, False),  # already paused
-                ("3333333333333333", "a" * 20, {}, True, True),  # archived
-                ("4444444444444444", "b" * 20, {}, True, False),  # Bob didn't pause
-            ]:
-                await owner.execute(
-                    "INSERT INTO trips (id, user_id, spec, enabled, archived_at)"
-                    " VALUES ($1, $2, $3, $4, CASE WHEN $5 THEN now() END)",
-                    trip_id,
-                    user,
-                    json.dumps(spec),
-                    enabled,
-                    archived,
-                )
-            monkeypatch.setattr("ferry_watch.control.db.migrations", lambda: every)
-            assert await migrate(owner) == [v for v, _ in every if v >= "0004"]
-            rows = await owner.fetch("SELECT enabled, spec, rev FROM trips ORDER BY id")
-            assert [(r["enabled"], json.loads(r["spec"]), r["rev"]) for r in rows] == [
-                (False, {"adults": 1, "enabled": False}, 2),  # paused, and a new rev so its pod hears at once
-                (False, {"enabled": False}, 1),
-                (True, {}, 1),
-                (True, {}, 1),
-            ]
-            assert await owner.fetchval("SELECT count(*) FROM users WHERE paused") == 0
-        finally:
-            await owner.close()
-    finally:
-        await admin.execute(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)")
-        await admin.close()
+        assert await migrate(owner) == [v for v, _ in migrations() if v >= "0004"]
+        rows = await owner.fetch("SELECT enabled, spec, rev FROM trips ORDER BY id")
+        assert [(r["enabled"], json.loads(r["spec"]), r["rev"]) for r in rows] == [
+            (False, {"adults": 1, "enabled": False}, 2),  # paused, and a new rev so its pod hears at once
+            (False, {"enabled": False}, 1),
+            (True, {}, 1),
+            (True, {}, 1),
+        ]
+        assert await owner.fetchval("SELECT count(*) FROM users WHERE paused") == 0
+
+
+async def test_0005_gives_everyone_quiet_hours(pg_server: Server) -> None:
+    """Quiet hours turned off in 0.6.3 become the default, 10 pm to 5 am; times someone chose stay."""
+    async with migrated_up_to(pg_server, "0005") as owner:
+        ann, bob, cat = "a" * 20, "b" * 20, "c" * 20
+        await owner.execute(
+            "INSERT INTO users (id, username) VALUES ($1, 'ann'), ($2, 'bob'), ($3, 'cat')", ann, bob, cat
+        )
+        await owner.execute(
+            "INSERT INTO user_settings (user_id, quiet_start, quiet_end)"
+            " VALUES ($1, NULL, NULL), ($2, '23:30', '06:15')",
+            ann,
+            bob,
+        )
+        assert await migrate(owner) == [v for v, _ in migrations() if v >= "0005"]
+        await owner.execute("INSERT INTO user_settings (user_id) VALUES ($1)", cat)  # a row starts at the default
+        rows = await owner.fetch("SELECT user_id, quiet_start, quiet_end FROM user_settings ORDER BY user_id")
+        assert [tuple(r) for r in rows] == [
+            (ann, time(22), time(5)),  # had turned them off
+            (bob, time(23, 30), time(6, 15)),
+            (cat, time(22), time(5)),
+        ]
+        with pytest.raises(asyncpg.NotNullViolationError):  # and nobody can turn them off any more
+            await owner.execute("UPDATE user_settings SET quiet_start = NULL, quiet_end = NULL")
 
 
 async def test_web_flips_only_the_maintenance_switches(db: Database) -> None:

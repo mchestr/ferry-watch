@@ -17,7 +17,7 @@ running until cutover.
 | Module | What |
 |---|---|
 | `protocol.py` | Agent ↔ ferry-control messages, v1 plus the round-3 additions (`mode`, `cart_claim`, `short_check_done`). Closed vocabulary; a schema test proves no field can carry a URL, cookie, script or selector. |
-| `polling.py` | The poll curve, the warm window, short checks, the 30-day horizon, and `QuietHours` (each user's own, Pacific, past midnight if need be). |
+| `polling.py` | The poll curve, the warm window, short checks, the 30-day horizon, and `QuietHours` (each user's own, Pacific, past midnight if need be; `DEFAULT_QUIET_HOURS`, 22:00-05:00, until they change them). |
 | `holds.py` | The four hold clocks and the payment guard. |
 | `tickets.py` | Ed25519 checkout tickets (`fw1.<kid>.<payload>.<sig>`), with the signed display fields. |
 | `bcferries/urls.py` | `BASE_URL`, the user agent, `search_url`, and `checkout_view()` (what a held cart's checkout shows, from URLs only). |
@@ -36,7 +36,7 @@ running until cutover.
 
 | Module | What |
 |---|---|
-| `migrations/0001_init.sql` … `0004_settings.sql`, `db.py` | The schema (expand only), and per-role grants with row-level security (§6.4). 0004 adds `user_settings` (quiet hours), `trip_runtime.quiet_lifted_until` and `browser_pods.agent_version`, and moves "pause all" onto each trip. |
+| `migrations/0001_init.sql` … `0005_quiet_hours.sql`, `db.py` | The schema (expand/contract), and per-role grants with row-level security (§6.4). 0004 adds `user_settings` (quiet hours), `trip_runtime.quiet_lifted_until` and `browser_pods.agent_version`, and moves "pause all" onto each trip. 0005 gives everyone quiet hours: 22:00-05:00 where they had none, and the times can't be null (so a 0.6.3 ferry-web can't turn them off during the rollout). |
 | `hub.py`, `store.py` | The hub endpoint: TokenReview binding, idempotent recording, cart claims (one hold per user), configure pushes (`active=false` in the user's quiet hours unless lifted), commands, NOTIFY on change. A viewed hold asks "Did you book it?" unless it was released on request. |
 | `planner.py`, `fleet.py`, `pods.py`, `kube.py` | The fleet loop: warm and short-check pods (none in a user's quiet hours, unless lifted for the trip), admission and fairness, reaping timers, hold egress, the pod template, and `fleet_report` (with ferry-control's version) for the admin page. |
 | `configure.py`, `limits.py`, `config.py`, `main.py` | Cart gating (with the user's quiet hours), the curve with the budget stretch, per-user limits, the deployment's config (`polling.quietStart`/`quietEnd` deprecated and ignored), `migrate` and `run`. |
@@ -60,7 +60,7 @@ running until cutover.
 | `MyTripCard.tsx`, `trips.ts` | Each trip in plain words (every 2 minutes, checked every 6 h, waiting for a free browser, bookable now, holding a cart, "Did you book it?"), the held cart, release and dismiss, check now, the shared trip editor. |
 | `NotHeld.tsx` | A bookable sailing nothing holds, on the card and on `/c/<trip>`: why (`hold.reason`), "Hold it for me" (`POST /api/trips/{id}/hold`) and "Book on bcferries.com" (`booking_url`). |
 | `CheckoutPage.tsx` | `/c/<trip>`: never opens the checkout by itself; "Check out on this device" mints the one-minute link. With nothing held it shows `NotHeld`, so a "Bookable" alert lands somewhere useful. |
-| `AccountCard.tsx`, `push.ts`, `public/sw.js` | Web Push for the device, a test alert, the user's quiet hours, sign out everywhere, the Ko-fi link. |
+| `AccountCard.tsx`, `push.ts`, `public/sw.js` | Web Push for the device, a test alert, the user's quiet hours (a start and an end; always on), sign out everywhere, the Ko-fi link. |
 | `live.ts`, `api.ts`, `schema.ts` | The per-user socket (first-message auth) and the bearer API. |
 | `AdminPage.tsx`, `admin.ts`, `ReasonDialog.tsx` | `/admin`, for admins. Fleet: the switches and the breaker, capacity and budget from ferry-control's last pass, holds now (cart summary only) with release and recycle, the attention list, the week's outcomes. People: limits and where each comes from, sessions, devices, today's usage, sign out everywhere, make or remove admin, suspend (releasing a held cart or letting it finish), reinstate, delete, invitations, sign-ins turned away. Every change asks why. |
 

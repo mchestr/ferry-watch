@@ -321,6 +321,15 @@ async def test_quiet_hours_stop_a_users_browsers_until_lifted(rig: Rig) -> None:
     assert (await rig.fleet.reconcile()).started == [f"fw-{NEAR.id}-g2"]
 
 
+async def test_without_quiet_hours_of_their_own_a_user_has_the_default(rig: Rig) -> None:
+    """10 pm to 5 am: Ann never changed hers, so her trips aren't checked overnight."""
+    await rig.add_trip(NEAR)
+    rig.clock[0] = datetime(2026, 10, 12, 23, 0, tzinfo=PACIFIC).timestamp()
+    assert (await rig.fleet.reconcile()).started == []
+    rig.clock[0] = datetime(2026, 10, 13, 12, 0, tzinfo=PACIFIC).timestamp()
+    assert (await rig.fleet.reconcile()).started == [f"fw-{NEAR.id}-g1"]
+
+
 async def test_a_disconnected_pod_is_deleted_instead(rig: Rig) -> None:
     await rig.add_trip(NEAR)
     await rig.fleet.reconcile()

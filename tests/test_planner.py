@@ -118,12 +118,15 @@ def test_a_suspended_user_and_maintenance_stop_everything() -> None:
 def test_quiet_hours_stop_a_users_trips_unless_lifted() -> None:
     """In a user's quiet hours their trips are treated as paused: nothing starts, and a browser that holds no
     cart is drained. A trip they lifted them for (a manual check, "Hold it for me") is checked as usual."""
-    ann, bob = UserView("ann", quiet=QuietHours(time(23, 0), time(6, 0))), UserView("bob")
+    ann, bob = (
+        UserView("ann", quiet=QuietHours(time(23, 0), time(6, 0))),
+        UserView("bob", quiet=QuietHours(time(1), time(5))),
+    )
     near, later, bobs = trip(1, 2), trip(2, 10), trip(3, 2, user="bob")
     night = NOW + 11.5 * 3600  # 23:30 Pacific
 
     result = plan([ann, bob], [near, later, bobs], [], FleetView(), POLICY, night)
-    assert result.start == [Start(bobs.id, "bob", "warm")]  # quiet hours are Ann's own
+    assert result.start == [Start(bobs.id, "bob", "warm")]  # quiet hours are Ann's own: Bob's start at 1 am
     result = plan([ann], [near, later], [pod(near)], FleetView(), POLICY, night)
     assert result.drain == [Drain(f"fw-{near.id}-g1", "paused")]
     assert plan([ann], [near], [pod(near, "holding")], FleetView(), POLICY, night).drain == []
@@ -133,6 +136,20 @@ def test_quiet_hours_stop_a_users_trips_unless_lifted() -> None:
     assert plan([ann], [lifted, later], [], FleetView(), POLICY, night).start == [Start(near.id, "ann", "warm")]
     lapsed = replace(near, quiet_lifted_until=night - 1)
     assert plan([ann], [lapsed], [pod(near)], FleetView(), POLICY, night).drain == [Drain(f"fw-{near.id}-g1", "paused")]
+
+
+def test_everyone_has_quiet_hours_from_10_pm_to_5_am_unless_they_change_them() -> None:
+    """A user who never changed their quiet hours has the default: their trips aren't checked overnight."""
+    near = trip(1, 2)
+
+    def at(hour: int) -> float:
+        return datetime.combine(NOW_AT.date(), time(hour), PACIFIC).timestamp()
+
+    assert ANN.quiet == QuietHours(time(22), time(5))
+    assert plan([ANN], [near], [], FleetView(), POLICY, at(23)).start == []
+    assert plan([ANN], [near], [pod(near)], FleetView(), POLICY, at(23)).drain == [Drain(f"fw-{near.id}-g1", "paused")]
+    for hour in (5, 12, 21):
+        assert plan([ANN], [near], [], FleetView(), POLICY, at(hour)).start == [Start(near.id, "ann", "warm")]
 
 
 def test_a_cart_held_for_a_quiet_trip_leaves_a_lifted_trip_to_short_checks() -> None:

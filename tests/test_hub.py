@@ -332,7 +332,7 @@ async def test_a_claim_waiting_for_its_cart_is_kept(rig: Rig, agent: Agent) -> N
 
 
 async def quiet_hours(rig: Rig, start: time = time(23, 0), end: time = time(6, 0)) -> None:
-    """The user's own quiet hours (there are none unless they set some)."""
+    """Quiet hours the user chose (without any, they have the default: 10 pm to 5 am)."""
     owner = await rig.db.connect()
     try:
         await owner.execute(
@@ -358,8 +358,10 @@ async def test_no_carts_in_the_users_quiet_hours(rig: Rig, agent: Agent) -> None
     assert await rig.fetch("SELECT * FROM hold_claims") == []
 
 
-async def test_no_quiet_hours_unless_the_user_sets_some(rig: Rig, agent: Agent) -> None:
-    rig.clock[0] = NIGHT
+async def test_a_user_who_never_chose_quiet_hours_has_the_default(rig: Rig, agent: Agent) -> None:
+    rig.clock[0] = datetime(2026, 10, 15, 22, 0, tzinfo=PACIFIC).timestamp()  # 10 pm to 5 am
+    assert await agent.client.claim("09:00", "saver") is False
+    rig.clock[0] = datetime(2026, 10, 16, 5, 0, tzinfo=PACIFIC).timestamp()
     assert await agent.client.claim("09:00", "saver") is True
 
 
