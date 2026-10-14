@@ -1,6 +1,6 @@
-"""The chart's admission policies and RBAC on a real API server (docs/multi-tenant/design-reference.md §7.3, §7.5).
+"""The deployment's admission policies and RBAC on a real API server (docs/multi-tenant/design-reference.md §7.3, §7.5).
 
-The pod ferry-control builds (pods.py, from the config the chart renders for it) must be admitted, and every
+The pod ferry-control builds (pods.py, from the config the deployment renders for it) must be admitted, and every
 change to it denied, so the two can't drift. Then: once running, only the egress label moves, and only for
 ferry-control; and no ferry identity holds a verb §7.3 doesn't list.
 """
@@ -11,13 +11,13 @@ import copy
 import json
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
-import msgspec
 import pytest
 
 from ferry_watch.control.pods import browser_pod
-from ferry_watch.web.config import WebConfig
+from ferry_watch.web.config import load
 from tests.apiserver.cluster import (
     BREAK_GLASS,
     BROWSERS,
@@ -68,11 +68,16 @@ def env(pod: dict[str, Any]) -> list[dict[str, Any]]:
 # ---- the pod ferry-control builds
 
 
-def test_both_configs_load_as_the_apps_read_them(cluster: Cluster) -> None:
+def test_both_configs_load_as_the_apps_read_them(cluster: Cluster, tmp_path: Path) -> None:
     """ferry-control's is loaded by the `pod` fixture; ferry-web's has its own strict loader."""
     data = cluster.get("configmap", "ferry-web-config", f"--namespace={RELEASE_NAMESPACE}")["data"]
-    web = msgspec.json.decode(data["config.json"], type=WebConfig).check()
+    (tmp_path / "config.json").write_text(data["config.json"])
+    web = load(tmp_path / "config.json", client_id="from-the-secret")  # FW_OIDC_CLIENT_ID_FILE
     assert web.checkout.origin == control_config(cluster).pod.vnc_origin
+    # The migrate hook reads its own copy of ferry-control's config.
+    migrate = cluster.get("configmap", "ferry-migrate-config", f"--namespace={RELEASE_NAMESPACE}")["data"]
+    control = cluster.get("configmap", "ferry-control-config", f"--namespace={RELEASE_NAMESPACE}")["data"]
+    assert migrate == control
 
 
 def test_ferry_controls_pod_is_admitted(cluster: Cluster, pod: dict[str, Any]) -> None:
@@ -201,7 +206,8 @@ CHANGES: dict[str, tuple[Callable[[dict[str, Any]], None], str | tuple[str, ...]
         _set("spec", "securityContext", "seccompProfile", value={"type": "Localhost", "localhostProfile": "x.json"}),
         "security context",
     ),
-    "more memory": (_set(*_C, "resources", "limits", "memory", value="2Gi"), "resources"),
+    # The LimitRange (max = the fleet's pod memory) may refuse it before the policy does.
+    "more memory": (_set(*_C, "resources", "limits", "memory", value="2Gi"), ("resources", "maximum memory usage")),
     "an exec probe": (_set(*_C, "livenessProbe", value={"exec": {"command": ["true"]}, "periodSeconds": 30}), "probe"),
     "a probe of another host": (_set(*_C, "readinessProbe", "httpGet", "host", value="10.0.0.1"), "probe"),
     "another port": (_append(*_C, "ports", item={"name": "debug", "containerPort": 9222}), "ports"),
@@ -291,7 +297,8 @@ def test_nobody_gets_a_shell(cluster: Cluster, running: str) -> None:
 
 SERVICE_ACCOUNTS = {
     name: f"system:serviceaccount:{RELEASE_NAMESPACE}:{name}"
-    for name in ("ferry-web", "ferry-control", "vnc-edge", "ferry-migrate")
+    # default: the db hook Job's, since a pre-install hook runs before the release's own exist.
+    for name in ("ferry-web", "ferry-control", "vnc-edge", "default")
 } | {"ferry-browser": f"system:serviceaccount:{BROWSERS}:ferry-browser"}
 
 NEVER = [
@@ -345,7 +352,7 @@ def test_only_ferry_control_touches_pods_and_only_in_the_browser_namespace(clust
     assert cluster.can(control, "create", "tokenreviews.authentication.k8s.io")
     assert not cluster.can(control, "create", "subjectaccessreviews.authorization.k8s.io")
     assert cluster.can(control, "list", "nodes")
-    for name in ("ferry-web", "vnc-edge", "ferry-migrate", "ferry-browser"):
+    for name in ("ferry-web", "vnc-edge", "default", "ferry-browser"):
         for verb in ("create", "get", "list", "patch", "delete"):
             assert not cluster.can(SERVICE_ACCOUNTS[name], verb, "pods", BROWSERS), (name, verb)
 

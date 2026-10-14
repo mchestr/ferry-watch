@@ -31,7 +31,7 @@ MAX_CHECKS_PER_MINUTE = 40  # the owner's ceiling for the budget
 
 @dataclass(frozen=True, slots=True)
 class HubSettings:
-    """Chart values the hub applies to every pod."""
+    """Deployment values the hub applies to every pod."""
 
     policy: PollPolicy = field(default_factory=PollPolicy)
     hold: HoldLimits = field(

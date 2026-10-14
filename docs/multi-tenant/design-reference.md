@@ -1905,7 +1905,8 @@ case:
 
 PSA `restricted` stays on as an independent fence (it allows `Localhost` seccomp profiles).
 
-*As built* (`charts/ferry-watch/templates/cluster/`, proven by `tests/apiserver/` on a real 1.36 API server):
+*As built* (the admission policies in home-cluster's HelmRelease, `deploy/helmrelease.yaml` here, proven by
+`tests/apiserver/` on a real 1.36 API server):
 the owner label is `^[a-z0-9]{20}$`, the users table's own rule. Quantities compare with the quantity library
 (`compareTo`), so `1.5Gi` and `1536Mi` are the same. Fields the API server defaults (probe timings,
 `terminationMessagePath`, the token volume's mode) are checked where they matter and otherwise left alone.
@@ -2078,76 +2079,77 @@ probe the browser's video decoders (a `data:` URL never leaves the page). The la
 ticket in the tab's sessionStorage, strips it from the address bar, and opens the viewer after two seconds or
 on "Open checkout". The client's request for `/package.json` gets the 404 every unlisted path gets.
 
-### 7.10 Helm chart layout and the home-cluster split
+### 7.10 Deployment layout and the home-cluster split
 
-The chart is published from this repo as a **public** OCI chart, `oci://ghcr.io/mchestr/charts/ferry-watch`,
-because flux-local renders it anonymously. Images are referenced as `X.Y.Z@sha256:…` and bumped by Renovate.
+There is no Ferry Watch chart (owner, after M1's build: "use app-template to deploy, not a custom chart").
+home-cluster deploys it with the app-template it uses everywhere, as one HelmRelease. This repo keeps a copy at
+`deploy/helmrelease.yaml`, renders it in CI the way helm-controller does (`tests/deploy.py`, app-template 5.3.0),
+runs kubeconform on the result, and proves its admission policies and RBAC on a real API server
+(`tests/apiserver/`). A change to either copy goes to both; with `FW_HOME_CLUSTER` set, `tests/test_deploy.py`
+checks they match.
 
 ```
-charts/ferry-watch/
-  Chart.yaml  values.yaml  values.schema.json
-  templates/
-    control/   web.yaml control.yaml services.yaml serviceaccounts.yaml rbac.yaml
-               config-configmap.yaml control-config-configmap.yaml db-init-job.yaml db-migrate-job.yaml
-               networkpolicies.yaml ciliumnetworkpolicies.yaml prometheusrule.yaml podmonitors.yaml
-    edge/      vnc-edge.yaml vnc-edge-configmap.yaml
-    routes/    dashboard-httproute.yaml vnc-httproute.yaml     # routes.dashboard.enabled, routes.checkout.enabled
-    browsers/  namespace.yaml serviceaccount.yaml headless-service.yaml policy-params-configmap.yaml
-               resourcequotas.yaml limitrange.yaml networkpolicies.yaml ciliumnetworkpolicy.yaml
-    cluster/   priorityclass.yaml vap-browser-pod.yaml vap-browser-pod-lock.yaml vap-ns-objects.yaml
-               vapbindings.yaml clusterroles.yaml
-  tests/       helm-unittest suites (rbac-forbidden, vap-params == control-config, quota ≤ budget,
-               trusted headers + external dashboard route fails, values combinations)
+kubernetes/apps/ferry-watch/                   namespace ferry-watch, components/common
+  ferry-watch/
+    ks.yaml                                    components/cnpg (APP=ferrywatch), dependsOn cloudnative-pg-cluster,
+                                               wait: true
+    README.md                                  1Password fields, release values, cutover, key rotation
+    app/externalsecret.yaml                    Secret ferry-watch: ticket key, VAPID key, OIDC client id and
+                                               secret, the two role passwords
+    app/helmrelease.yaml                       app-template, upgrade.strategy RetryOnFailure, timeout 10m
+      ferry.*                                  hosts, the browser image, ferry-control's and ferry-web's configs
+      controllers                              ferry-web, ferry-control (Recreate), vnc-edge (RollingUpdate, 2),
+                                               db (pre-install/pre-upgrade hook Job)
+      configMaps                               both configs, and the hook's copy of ferry-control's
+      service, route                           three Services; the dashboard and checkout HTTPRoutes
+      networkpolicies                          default deny for the release's pods; per-workload policies
+      rawResources                             the browser namespace and everything in it, ferry-control's RBAC,
+                                               the PriorityClass, the three admission policies and bindings
 ```
 
-Values `routes.dashboard.enabled` and `routes.checkout.enabled` (both default false) and `routes.dashboardHost`
-let M1 run on `ferry-next.chestr.dev`
-without touching the live `ferry.chestr.dev` route on envoy-internal (two routes for one host would collide in
-UniFi DNS; §12.5). `fw-browser-pod-lock` is always rendered (ferry-control's `pods` patch depends on it);
-`vaps.nsObjects` defaults to false until M2. `polling.*` renders the `PollPolicy` (tiers, short-check
-interval, horizon, quiet hours; §8.2) and `holdEgress.enabled` (default true; false means option B of
-§7.6). `identity.oidc.*` holds the
-issuer, the client id, the scopes, the claim names and the invite-match claim; the client secret comes from
-the ExternalSecret. `identity.trustedHeaders.enabled` defaults to false, needs
-`identity.trustedHeaders.issuer`, and cannot be combined with `routes.dashboard.enabled` (the external
-dashboard route); the checkout route is unaffected.
+- **One source of values.** Each process's `config.json` is `toPrettyJson` of `ferry.control` or `ferry.web`,
+  plus the image, origins, base URL and redirect URI derived from `ferry.browserImage` and `ferry.hosts`. The
+  admission policy's parameters are templated from the same values. The browser quota and the LimitRange's
+  memory maximum are computed from `podMemory`, `cpuRequest` and `maxBrowsersTotal`, so there is no separate
+  budget to keep in step. `tests/apiserver/test_render.py` checks the parameters against the config.
+- **The render refuses** a browser image without a digest, an empty `vncPubkeys` and a `podMemory` not in Mi.
+  home-cluster's flux-local therefore fails until a release fills them in.
+- **One HelmRelease, two namespaces.** `rawResources` keep `metadata.namespace`, so the browser namespace's
+  objects come from the release in `ferry-watch`. Flux's `targetNamespace` rewrites only the HelmRelease
+  itself. The browser namespace gets no `components/common`: its object quota allows no Secret. It is kept
+  on uninstall.
+- **Selectors use app-template's labels**: `app.kubernetes.io/instance: ferry-watch` plus
+  `app.kubernetes.io/controller: <id>`. The release namespace's default deny selects the instance label, so
+  components/cnpg's pg-backups CronJob is not fenced.
+- **The db Job**: the stock `postgres-init` (the only holder of the superuser password) as an init container,
+  then `ferry-control migrate` as the owner role. It uses the namespace's `default` ServiceAccount, because
+  release ServiceAccounts don't exist yet when a pre-install hook runs. Its config is a hook copy of
+  ferry-control's.
+- **The browser image** is `repository:tag@sha256:digest`. The digest is what runs, and `pods.py` accepts the
+  tag. Renovate bumps it together with the control and edge images (one group).
+- **The OIDC client id** is Authelia-generated and lives in 1Password beside the secret. ferry-web reads it
+  from the Secret (`FW_OIDC_CLIENT_ID_FILE`), so the values don't name it.
+- **Running beside the single-tenant app**: the dashboard runs on `ferry-next.chestr.dev` until the cutover
+  (§12.5) moves `ferry.hosts.dashboard`.
 
-**home-cluster owns:**
-- `kubernetes/apps/ferry-watch/`: namespace directory with `components/common`; `ks.yaml` with
-  `components/cnpg` (`APP=ferrywatch`) and `dependsOn: cloudnative-pg-cluster`; the OCIRepository plus
-  HelmRelease (`upgrade.strategy: RetryOnFailure`, `wait: true`) and values: hosts, the FQDN list,
-  `identity.oidc` (issuer, client id reference, scopes, claim names), `bootstrapAdmins`, ceilings,
-  `browserMemoryBudget`, `podMemory`, `polling` (only to change the owner's round-3 numbers),
-  `kofiUrl`, `autoCart`, `alertOnlyFareTypes`/`alertOnlyVehicleTypes`, the public keys.
-- `ExternalSecret ferry-watch` from 1Password item `ferry-watch` (ticket key, VAPID key), item `authelia`
-  (`FERRY_WATCH_OAUTH_CLIENT_ID`, `FERRY_WATCH_OAUTH_CLIENT_SECRET`) and the two role passwords from item
-  `cloudnative-pg`.
-- CNPG managed roles `ferrywatch_web` and `ferrywatch_control` on `postgres17`, with password ExternalSecrets
-  in `database`.
-- The Authelia OIDC client for Ferry Watch and its `authorization_policies` entry, Authelia's ExternalSecret
-  entries for it (M1); the `authorization_policies` for the other clients and the lldap group (M2) (§6.2).
+**Outside the ferry-watch directory, home-cluster has:**
+- CNPG managed roles `ferrywatch_web` and `ferrywatch_control` in `database/cloudnative-pg/cluster/cluster17.yaml`.
+  Their password ExternalSecrets are in `database/cloudnative-pg/roles/`, in a Kustomization without `wait`, so
+  a missing 1Password field holds back only Ferry Watch.
+- The Authelia OIDC client and its `ferry-watch` authorization policy (§6.2.3), and Authelia's ExternalSecret
+  entries.
 - Cilium `dnsProxy.dnsRejectResponseCode: nameError`.
-- The smtp-relay NetworkPolicy rule.
-- Silence CRs for `OomKilled`, `KubePodNotReady`, `KubePodCrashLooping` and `KubeQuota*` in
-  `ferry-watch-browsers`.
-- Fluent Bit `Exclude_Path /var/log/containers/*_ferry-watch-browsers_*.log`.
-- A descheduler namespace exclusion.
-- A Cloudflare Terraform rule turning Rocket Loader and email obfuscation off for the ferry hosts.
-- A GrafanaDashboard for the ferry metrics (as `networking/envoy-gateway/app/grafanadashboard.yaml` does).
-- Renovate: `/ferry-watch/` always opens a PR.
-- Not any more (round 3): `home-cluster-runner` restrictions (left as is, R1) and a `components/cnpg` variant
-  (the standard component stays, R14).
+- The smtp-relay ingress rule for ferry-web.
+- A Silence for `OomKilled`, `KubePodNotReady`, `KubePodCrashLooping`, `KubeContainerWaiting` and `KubeQuota*`
+  in `ferry-watch-browsers`.
+- Fluent Bit's `exclude_path` for the browser namespace.
+- The descheduler exclusion on `RemoveFailedPods`, the only plugin that can touch a bare pod.
+- A Cloudflare configuration rule turning Rocket Loader and email obfuscation off on the ferry hosts.
+- Renovate: a PR (never automerge) for `/ferry-watch/`, and the three images grouped.
+- Not yet: the GrafanaDashboard, the PrometheusRule and the PodMonitors (nothing exports metrics), and the
+  `authorization_policies` for the other OIDC clients and the lldap group (M2, §6.2).
 - Optional (backlog, the owner's call): the Talos `user.max_user_namespaces` sysctl and the
   `machine.seccompProfiles` entry, applied per node (R2).
-
-*As built* (`charts/ferry-watch/`): the layout above, without `prometheusrule.yaml` and `podmonitors.yaml`
-(nothing exports metrics yet) and with `ci/ci-values.yaml` in place of helm-unittest suites: CI's chart job
-lints, renders and runs kubeconform, refuses a fleet that doesn't fit `browserMemoryBudget`, and the
-`apiserver` job proves the admission and RBAC rules. In the release namespace, default deny selects the chart's
-own pods (`app.kubernetes.io/part-of: ferry-watch`), since home-cluster's pg-backups CronJob runs there too.
-db-init and db-migrate are pre-install and pre-upgrade hooks; migrate reads a hook copy of ferry-control's
-config, because hooks run before the release's ConfigMaps exist. CI publishes the chart on each `v*` tag, after
-the images; an image with neither tag nor digest in values defaults to the chart's appVersion.
 
 **Dropped in round 2:** the ext-auth SecurityPolicy, the ReferenceGrant entry for `ferry-watch`, the Authelia
 `access_control` rule for the ferry hosts and the gatus forged-header canary (identity is app-native OIDC).

@@ -1,6 +1,6 @@
 """Per-user limits (docs/multi-tenant/design-reference.md §8.2, §9.1).
 
-`effective = min(override ?? default, ceiling)`. Defaults and ceilings are chart values (GitOps); an
+`effective = min(override ?? default, ceiling)`. Defaults and ceilings are deployment values (GitOps); an
 admin's per-user override never goes past the ceiling, whatever the database says.
 """
 

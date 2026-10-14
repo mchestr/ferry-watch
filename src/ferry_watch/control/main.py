@@ -3,7 +3,7 @@
 - `ferry-control migrate`: apply migrations and grants, as the database owner (the db-migrate Job).
 - `ferry-control run`: the hub endpoint (:8766) and the fleet loop, as `ferrywatch_control`.
 
-Configuration is the chart's JSON (FW_CONTROL_CONFIG); database credentials come from the libpq
+Configuration is the deployment's JSON (FW_CONTROL_CONFIG); database credentials come from the libpq
 variables. Only one `run` works at a time: it takes a Postgres advisory lock, and a second replica idles
 (not ready) until the first goes away.
 """

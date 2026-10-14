@@ -109,6 +109,9 @@ def test_nothing_unexpected_reaches_the_spec(trip: str, owner: str, gen: int) ->
 def test_the_image_is_pinned_by_digest() -> None:
     with pytest.raises(ValueError, match="digest"):
         PodParams(image="ghcr.io/mchestr/ferry-watch-browser:latest", hub_url="", vnc_pubkeys="", vnc_origin="")
+    # A tag may ride along for people and Renovate; the digest still decides what runs.
+    tagged = "ghcr.io/mchestr/ferry-watch-browser:0.6.0@sha256:" + "b" * 64
+    assert PodParams(image=tagged, hub_url="", vnc_pubkeys="", vnc_origin="").image == tagged
 
 
 def test_the_spec_is_stable() -> None:

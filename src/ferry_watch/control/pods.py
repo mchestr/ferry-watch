@@ -33,14 +33,15 @@ _TRIP_ID = re.compile(r"[a-f0-9]{16}")
 _QUANTITY = re.compile(r"(\d+(?:\.\d+)?)(Ki|Mi|Gi|Ti|k|M|G|T)?")
 _QUANTITY_BYTES = {"Ki": 2**10, "Mi": 2**20, "Gi": 2**30, "Ti": 2**40, "k": 10**3, "M": 10**6, "G": 10**9, "T": 10**12}
 _OWNER = re.compile(r"[a-z0-9]{1,63}")
-_IMAGE = re.compile(r"[a-z0-9./-]+@sha256:[a-f0-9]{64}")
+# repository[:tag]@sha256:digest. The digest is what runs; a tag only tells people (and Renovate) which release.
+_IMAGE = re.compile(r"[a-z0-9./-]+(:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?@sha256:[a-f0-9]{64}")
 
 
 @dataclass(frozen=True, slots=True)
 class PodParams:
-    """Values from the chart, rendered into both ferry-control's config and the admission policy's params."""
+    """Values from the deployment, rendered into both ferry-control's config and the admission policy's params."""
 
-    image: str  # ghcr.io/mchestr/ferry-watch-browser@sha256:...
+    image: str  # ghcr.io/mchestr/ferry-watch-browser[:0.6.0]@sha256:...
     hub_url: str
     vnc_pubkeys: str
     vnc_origin: str

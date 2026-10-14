@@ -3,6 +3,8 @@
 It serves the SPA and its API on :8765. It has no Kubernetes access: it reads and writes rows, and
 ferry-control acts on them. Its secrets (the OIDC client secret and the checkout signing key) come from
 mounted files; the database from the libpq environment.
+
+`ferry-web keys` prints a fresh checkout key pair and VAPID key, for setting up a deployment.
 """
 
 from __future__ import annotations
@@ -28,7 +30,7 @@ from ferry_watch.bcferries.urls import USER_AGENT
 from .accounts import Accounts
 from .api import CheckoutSigner
 from .app import build
-from .config import ConfigError, WebConfig, load, read_secret, signing_key
+from .config import ConfigError, WebConfig, load, new_keys, read_secret, signing_key
 from .identity import OidcClient
 from .messages import Messages
 from .outbox import Mailer, Outbox
@@ -129,10 +131,20 @@ def main() -> None:
     )
     logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
     parser = argparse.ArgumentParser(prog="ferry-web")
-    parser.add_argument("command", choices=["run"])
-    parser.parse_args()
+    parser.add_argument("command", choices=["run", "keys"])
+    parser.add_argument("--key-id", default="k1", help="keys: the checkout key's id (k2 when rotating)")
+    args = parser.parse_args()
+    if args.command == "keys":
+        try:
+            sys.stdout.write(new_keys(args.key_id) + "\n")
+        except ConfigError as e:
+            sys.exit(f"ferry-web: {e}")
+        return
     try:
-        config = load(Path(os.environ.get("FW_WEB_CONFIG", "/etc/ferry-web/config.json")))
+        client_id = None
+        if os.environ.get("FW_OIDC_CLIENT_ID_FILE"):  # the IdP's generated id, beside the client secret
+            client_id = read_secret(os.environ, "FW_OIDC_CLIENT_ID_FILE")
+        config = load(Path(os.environ.get("FW_WEB_CONFIG", "/etc/ferry-web/config.json")), client_id=client_id)
         client_secret = read_secret(os.environ, "FW_OIDC_CLIENT_SECRET_FILE")
         checkout_key = read_secret(os.environ, "FW_CHECKOUT_KEY_FILE")
         signing_key(checkout_key)

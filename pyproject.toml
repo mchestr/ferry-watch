@@ -43,6 +43,7 @@ dev = [
   "pytest-socket==0.7.0",
   "pytest-timeout==2.3.1",
   "ruff==0.7.1",
+  "pyyaml==6.0.2",
 ]
 
 [build-system]
@@ -101,7 +102,7 @@ asyncio_default_fixture_loop_scope = "function"
 timeout = 60
 markers = [
   "browser: drives Chromium against saved copies of BC Ferries' pages (never the live site)",
-  "apiserver: the chart's admission policies and RBAC on a real kube-apiserver (envtest binaries)",
+  "apiserver: the deployment's admission policies and RBAC on a real kube-apiserver (envtest binaries, helm)",
 ]
 filterwarnings = ["error"]
 

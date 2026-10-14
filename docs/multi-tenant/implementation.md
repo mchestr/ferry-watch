@@ -39,7 +39,7 @@ running until cutover.
 | `migrations/0001_init.sql`, `db.py` | The schema, and per-role grants with row-level security (§6.4). |
 | `hub.py`, `store.py` | The hub endpoint: TokenReview binding, idempotent recording, cart claims (one hold per user), configure pushes, commands, NOTIFY on change. |
 | `planner.py`, `fleet.py`, `pods.py`, `kube.py` | The fleet loop: warm and short-check pods, admission and fairness, reaping timers, hold egress, the pod template. |
-| `configure.py`, `limits.py`, `config.py`, `main.py` | Cart gating, the curve with the budget stretch, per-user limits, chart config, `migrate` and `run`. |
+| `configure.py`, `limits.py`, `config.py`, `main.py` | Cart gating, the curve with the budget stretch, per-user limits, the deployment's config, `migrate` and `run`. |
 
 ### ferry-web (`ferry_watch.web`)
 
@@ -88,18 +88,25 @@ an expired ticket, no key at all, and the end of the hold.
 CI builds each, smoke-tests it read-only and unprivileged, and pushes it from `main` and tags. The browser
 image's smoke test runs the agent with no network and the lockdown self-test against a real Chromium.
 
-### The chart (`charts/ferry-watch/`)
+### The deployment (`deploy/helmrelease.yaml`, home-cluster's copy)
+
+There is no chart: home-cluster deploys Ferry Watch with app-template, as one HelmRelease
+(`kubernetes/apps/ferry-watch/ferry-watch/app/helmrelease.yaml`; design §7.10). This repo keeps a copy.
 
 | Part | What |
 |---|---|
-| `templates/control/`, `edge/`, `routes/` | ferry-web, ferry-control (Recreate: one holds the lock), vnc-edge, their Services and ServiceAccounts, the db-init and db-migrate hook Jobs, both configs from one set of values, network policies, the two HTTPRoutes (off by default). |
-| `templates/browsers/` | The browser namespace (PSA restricted, kept on uninstall), `ferry-browser`, the headless `browsers` Service, the policy params, the three quotas (the fleet must fit `browserMemoryBudget` or the chart won't render), the LimitRange, default deny and the two Cilium policies (always, and while holding). |
-| `templates/cluster/` | PriorityClass `ferry-browser`, ferry-control's two ClusterRoles, and the admission policies `fw-browser-pod`, `fw-browser-pod-lock` and (off until M2) `fw-ns-objects`. |
+| `ferry.*` values | The hosts, the browser image (`tag@digest`), and ferry-control's and ferry-web's configs. Each `config.json`, the policy parameters, the quota and the LimitRange are rendered from them. The render refuses a missing digest or checkout key. |
+| `controllers`, `service`, `route`, `networkpolicies` | ferry-web, ferry-control (Recreate: one holds the lock), vnc-edge (two, rolling), the db hook Job (postgres-init, then `ferry-control migrate`), their Services, the two HTTPRoutes, default deny and per-workload policies. |
+| `rawResources` | The browser namespace (PSA restricted, kept on uninstall), `ferry-browser`, the headless `browsers` Service, the policy params, the three quotas, the LimitRange, default deny and the two Cilium policies; ferry-control's Role and ClusterRoles; PriorityClass `ferry-browser`; `fw-browser-pod`, `fw-browser-pod-lock` and `fw-ns-objects`. |
 
-`tests/apiserver/` (marker `apiserver`) starts envtest's etcd and kube-apiserver 1.36, applies the rendered
-chart, and checks that the pod `pods.py` builds from the chart's own config is admitted, that 40 different
-changes to it are refused, that only ferry-control moves the egress label and nobody gets a shell, and that no
-ferry identity holds a verb outside §7.3.
+`tests/deploy.py` renders the copy through app-template 5.3.0 as helm-controller would (and refuses anything
+Flux's substitution would change). CI's `deploy` job runs kubeconform on the render. `tests/apiserver/`
+(marker `apiserver`) checks what the render refuses, then starts envtest's etcd and kube-apiserver 1.36 and
+applies the render. It checks that:
+- the pod `pods.py` builds from the rendered config is admitted;
+- 39 different changes to it are refused;
+- only ferry-control moves the egress label, and nobody gets a shell;
+- no ferry identity holds a verb outside §7.3.
 
 ## Where the build departs from the plan's wording
 
@@ -129,6 +136,11 @@ Each is a two-way door.
   one more egress host for ferry-web (`www.bcferries.com:443`), not in §7.6 yet.
 - **The SPA picks its shell at runtime**: `/auth/config` answers on ferry-web and not on the single-container
   app, so one build serves both until cutover.
+- **No chart; app-template in home-cluster** (§7.10, owner's call): the guard rails are `rawResources` in
+  one HelmRelease, and the planned helm-unittest suites are the render and envtest tests above. Two app
+  changes came with it: the browser image may carry a tag before its digest, so Renovate can bump it, and
+  ferry-web may read the OIDC client id from a file (`FW_OIDC_CLIENT_ID_FILE`). `ferry-web keys` prints a
+  fresh checkout key pair and VAPID key for setting up.
 - **vnc-edge has its own Dockerfile** (`vnc-edge/`) rather than a target in one shared Dockerfile (§11.2):
   its build context then holds nothing but the edge's own files. The checkout host and the dashboard origin
   are build arguments.
@@ -145,11 +157,10 @@ Each is a two-way door.
 ## Still to do
 
 - **Frontend** (§10): each person's own session list.
-- **Chart and CI follow-ups** (§7, §11): the chart is pushed to `oci://ghcr.io/mchestr/charts` on each `v*`
-  tag, but GHCR makes a new package private: make `charts/ferry-watch` public once, so flux-local can render
-  it anonymously. Then: the PrometheusRule and PodMonitors once there are metrics; kind-lite (the positive pod-lock cases that need a
-  kubelet, and the egress flip on a running pod); the `agent-e2e` and `fake-bcferries` images and the compose
-  job; the home-cluster PR.
+- **Deployment and CI follow-ups** (§7, §11): release v0.6.0 and fill in home-cluster's image digests and
+  `vncPubkeys` (its README lists the 1Password fields to create first). Then: the PrometheusRule, PodMonitors
+  and GrafanaDashboard once there are metrics; kind-lite (the positive pod-lock cases that need a kubelet,
+  and the egress flip on a running pod); the `agent-e2e` and `fake-bcferries` images and the compose job.
 - **Agent follow-ups**: the smoke trip, the page watchdog (`checkout_host_blocked`), porting the
   disabled login path; `/readyz` reporting the display, Chromium, the loop and lockdown (it answers 200 as
   soon as the probe server is up).

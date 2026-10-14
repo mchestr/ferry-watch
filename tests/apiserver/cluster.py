@@ -1,8 +1,9 @@
-"""A real kube-apiserver (envtest's binaries) with the chart applied, for the admission and RBAC tests.
+"""A real kube-apiserver (envtest's binaries) with the deployment applied, for the admission and RBAC tests.
 
 Set FW_ENVTEST_BIN to a directory holding etcd, kube-apiserver and kubectl (controller-tools' envtest
 release for the cluster's Kubernetes minor), and FW_HELM to a helm binary. Without them these tests skip.
-CI sets both (.github/workflows/ci.yml).
+CI sets both (.github/workflows/ci.yml). The deployment is deploy/helmrelease.yaml rendered through
+app-template (tests/deploy.py).
 
 There is no kubelet, scheduler or controller-manager: pods are admitted and then sit Pending, and the
 fixture fills in the ResourceQuotas' status, which the quota controller would otherwise do.
@@ -10,7 +11,6 @@ fixture fills in the ResourceQuotas' status, which the quota controller would ot
 
 from __future__ import annotations
 
-import base64
 import contextlib
 import json
 import os
@@ -31,26 +31,14 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 
 from ferry_watch.control.config import ControlConfig
 from ferry_watch.control.pods import browser_pod
+from tests.deploy import NAMESPACE, render
 
-ROOT = Path(__file__).resolve().parents[2]
-CHART = ROOT / "charts" / "ferry-watch"
-RELEASE_NAMESPACE = "ferry-watch"
+RELEASE_NAMESPACE = NAMESPACE
 BROWSERS = "ferry-watch-browsers"
 CONTROL_SA = f"system:serviceaccount:{RELEASE_NAMESPACE}:ferry-control"
 BREAK_GLASS = "ferry-watch:break-glass"
-BROWSER_DIGEST = "sha256:" + "2" * 64
-VALUES = {
-    "images": {
-        "control": {"tag": "0.6.0", "digest": "sha256:" + "1" * 64},
-        "browser": {"digests": [BROWSER_DIGEST]},
-        "vncEdge": {"tag": "0.6.0", "digest": "sha256:" + "3" * 64},
-    },
-    "identity": {"oidc": {"issuer": "https://auth.chestr.dev", "clientId": "ferry-watch"}},
-    "checkout": {"publicKeys": "k1:" + base64.urlsafe_b64encode(bytes(32)).decode().rstrip("=")},
-    # Cilium and Gateway API kinds aren't installed here; kubeconform checks those (CI's chart job).
-    "networkPolicies": {"enabled": False},
-    "admission": {"nsObjects": True},
-}
+# Cilium and Gateway API kinds aren't installed here; kubeconform checks those (CI's deploy job).
+NOT_INSTALLED = {"CiliumNetworkPolicy", "HTTPRoute"}
 
 
 class KubectlError(Exception):
@@ -96,7 +84,7 @@ class Cluster:
 
 
 def control_config(cluster: Cluster) -> ControlConfig:
-    """ferry-control's config as the chart rendered it."""
+    """ferry-control's config as the deployment rendered it."""
     data = cluster.get("configmap", "ferry-control-config", f"--namespace={RELEASE_NAMESPACE}")["data"]
     return msgspec.json.decode(data["config.json"], type=ControlConfig).check()
 
@@ -201,7 +189,7 @@ def running_cluster() -> Iterator[Cluster]:
         cluster = Cluster(binaries / "kubectl", kubeconfig)
         try:
             _wait(lambda: cluster.kubectl("get", "--raw", "/readyz") == "ok", "kube-apiserver")
-            _install(cluster, Path(helm), work)
+            _install(cluster, Path(helm))
             yield cluster
         except BaseException:
             for name in ("apiserver.log", "etcd.log"):
@@ -217,23 +205,10 @@ def running_cluster() -> Iterator[Cluster]:
                     process.kill()
 
 
-def _install(cluster: Cluster, helm: Path, work: Path) -> None:
-    """The chart as Flux would apply it: hooks too (the Jobs just sit there), the release namespace first."""
-    (work / "values.json").write_text(json.dumps(VALUES))
-    rendered = subprocess.run(  # noqa: S603 - our own argv
-        [
-            str(helm),
-            "template",
-            "fw",
-            str(CHART),
-            f"--namespace={RELEASE_NAMESPACE}",
-            f"--values={work / 'values.json'}",
-        ],
-        capture_output=True,
-        text=True,
-        check=True,
-        timeout=60,
-    ).stdout
+def _install(cluster: Cluster, helm: Path) -> None:
+    """The deployment as helm-controller would apply it: hooks too (the Job just sits there)."""
+    objects = [doc for doc in render(helm) if doc["kind"] not in NOT_INSTALLED]
+    rendered = json.dumps({"apiVersion": "v1", "kind": "List", "items": objects})
     cluster.kubectl("create", "namespace", RELEASE_NAMESPACE)
     cluster.kubectl("apply", "--server-side", "-f", "-", stdin=rendered)
     # The policies load asynchronously: wait until fw-browser-pod refuses ferry-control's own pod from an admin.

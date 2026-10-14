@@ -1,4 +1,4 @@
-"""ferry-control's configuration: one JSON file rendered by the chart (`ferry-control-config`).
+"""ferry-control's configuration: one JSON file rendered by the deployment (`ferry-control-config`).
 
 The same Helm values render the admission policy's parameters, so the pod shape ferry-control builds and
 the shape the cluster admits can't drift (a CI check compares them). Database credentials come from the

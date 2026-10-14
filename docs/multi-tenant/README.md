@@ -372,9 +372,12 @@ is plaintext once TLS ends). **Not** the operator, ferry-web, Postgres or logs.
 
 ## 7. Changes needed in home-cluster
 
-The app chart creates the browser namespace, VAPs, PriorityClass, quotas, both browser egress policies,
-ferry-web's egress to `auth.chestr.dev` and both HTTPRoutes. home-cluster owns the rest (design-reference.md
-§2.3, §6.2.3, §7.10).
+Ferry Watch's app-template HelmRelease (`kubernetes/apps/ferry-watch/`, copied here as `deploy/helmrelease.yaml`)
+creates the browser namespace, VAPs, PriorityClass, quotas, both browser egress policies, ferry-web's egress to
+`auth.chestr.dev` and both HTTPRoutes. home-cluster owns the rest (design-reference.md §2.3, §6.2.3, §7.10).
+The W0 and M1 items up to the cutover are written on home-cluster's `claude/ferry-watch-multi-tenant-eyxfa0`
+branch, except the 1Password fields, the release values (both listed in its
+`kubernetes/apps/ferry-watch/ferry-watch/README.md`) and the GrafanaDashboard (nothing exports metrics yet).
 
 **W0 (spikes)**
 - [ ] Cilium values: `dnsProxy.dnsRejectResponseCode: nameError` (REFUSED stops glibc's search list; no DNS
@@ -384,7 +387,7 @@ ferry-web's egress to `auth.chestr.dev` and both HTTPRoutes. home-cluster owns t
 
 **M1: you on the new stack**
 - [ ] `kubernetes/apps/ferry-watch/`: namespace with `components/common`; `ks.yaml` with `components/cnpg`
-      (`APP=ferrywatch`), `dependsOn: cloudnative-pg-cluster`; OCIRepository + HelmRelease
+      (`APP=ferrywatch`), `dependsOn: cloudnative-pg-cluster`; an app-template HelmRelease
       (`upgrade.strategy: RetryOnFailure`); values for hosts, FQDN allowlist, `identity.oidc`,
       `bootstrapAdmins`, ceilings, memory budget, `kofiUrl`, `autoCart` and alert-only lists, ticket public keys
       (`polling` only to change your round-3 numbers).
@@ -406,7 +409,7 @@ ferry-web's egress to `auth.chestr.dev` and both HTTPRoutes. home-cluster owns t
 - [ ] Cloudflare: Rocket Loader and email obfuscation off for the ferry hosts. GrafanaDashboard; Renovate
       always opens a PR for `/ferry-watch/`.
 - [ ] Cutover PR (after your first sign-in on `ferry-next`): legacy `default/ferry-watch` to `replicas: 0`, its
-      route off, its PVC `prune: disabled`; `routes.dashboardHost: ferry.chestr.dev`. The revert PR pins the
+      route off, its PVC `prune: disabled`; `ferry.hosts.dashboard: ferry.chestr.dev`. The revert PR pins the
       legacy image by digest.
 - [ ] Only once 14 days have passed, a real guest checkout has worked on the new stack and no forced login
       wall has been seen since: delete `default/ferry-watch`, its reference to the shared `pushover` item,
