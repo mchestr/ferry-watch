@@ -31,8 +31,7 @@ export function tripBadge(trip: MyTrip): TripBadge {
   if (b.phase === "starting" || b.phase === "creating") return { text: "Starting", tone: "soft" };
   if (b.consecutive_errors >= 3) return { text: "Having trouble checking", tone: "danger" };
   if (b.mode === "warm") {
-    const every = b.effective_interval ? ` · every ${everyLabel(b.effective_interval)}` : "";
-    return { text: `Watching closely${every}`, tone: "success" };
+    return { text: b.effective_interval ? `Every ${everyLabel(b.effective_interval)}` : "Watching", tone: "success" };
   }
   if (b.mode === "short_check" || b.next_check_at !== null) {
     const next = b.next_check_at ? ` · next ${clock(b.next_check_at * 1000)}` : "";

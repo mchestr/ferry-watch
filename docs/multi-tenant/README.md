@@ -213,7 +213,7 @@ Detail: design-reference.md §3.5-3.6 (data flows), §6.2 (sign-in) and §8.1 (s
 2. **Sign in.** Authelia issues a code only to groups `ferry-watch` and `admin`; ferry-web verifies the
    `id_token`, binds the invitation and hands the app its session token.
 3. **Add a trip** (at most 30 days ahead; `maxTrips` 3). Its first short check runs within minutes. If it is
-   the user's nearest trip within 7 days it gets the warm browser ("Watching closely · every 2 min");
+   the user's nearest trip within 7 days it gets the warm browser ("Every 2 minutes");
    otherwise "Checked every 6 h · next 2:05 pm". Nothing asks the user to pause another trip.
 4. **Pod starts.** The operator creates `fw-<trip>-g1` (or queues it). The pod runs its lockdown self-tests,
    dials the operator, walks the booking form (maybe through Queue-it) and checks: on the curve if warm, once

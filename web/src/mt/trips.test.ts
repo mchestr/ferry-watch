@@ -31,7 +31,7 @@ function myTrip(browser: Partial<MyTrip["browser"]> = {}, extra: Partial<MyTrip>
 
 describe("trip badges", () => {
   it("speaks plainly", () => {
-    expect(tripBadge(myTrip()).text).toBe("Watching closely · every 2 minutes");
+    expect(tripBadge(myTrip()).text).toBe("Every 2 minutes");
     expect(tripBadge(myTrip({ phase: "queued", queue_position: 2, mode: "off" })).text).toBe(
       "Waiting for a free browser (#2)",
     );

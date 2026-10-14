@@ -2187,7 +2187,7 @@ starts are measured in S-MEM instead), the anchor ConfigMap and the PDBs.
     v
  Queued(position) "Waiting for a free browser (#2)" --slot + start throttle--> Starting
                                                                                   |
- BackingOff(until) <--3 pod failures/30 min-- Starting --first check--> Watching "Watching closely · every 2 min"
+ BackingOff(until) <--3 pod failures/30 min-- Starting --first check--> Watching "Every 2 minutes"
     |  timer                                    | 15 min timeout          |   ^    | a nearer trip takes the warm
     +--> ShortChecks / Queued                   v                         |   |    | browser (only while Watching)
                                              Failed -> recycle            |   |    +--> drain --> ShortChecks
@@ -2552,7 +2552,7 @@ The size is L: about 2-2.5k changed or added lines, including tests [R:map-front
      23:00-06:00 alert only; read-only, round 3), "Signed in
      through Authelia; tick Remember me", my sessions with "Sign out everywhere", delete my data, and the
      Ko-fi link.
-   - Per trip: a "next check" chip and a badge with plain wording: "Watching closely · every 2 min" (warm),
+   - Per trip: a "next check" chip and a badge with plain wording: "Every 2 minutes" (warm),
      "Checked every 6 h · next 2:05 pm" (short checks), "Checking now", "Waiting for a free browser (#2)",
      "Starting", "Holding a cart", "Did you book it?" (paused until answered), "Needs attention". The trip
      form says which trip will get close watching and when ("closely watched from Jul 25, 7 days before").
