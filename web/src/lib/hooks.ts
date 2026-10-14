@@ -34,6 +34,20 @@ export function useTerminals() {
   });
 }
 
+export const ROUTE_MAP_KEY = ["route-map"] as const;
+
+/** The route map's data and maths (lib/route-map), loaded the first time a map is shown. */
+export function useRouteMap() {
+  return useQuery({
+    queryKey: ROUTE_MAP_KEY,
+    queryFn: () => import("./route-map"),
+    staleTime: Infinity,
+    gcTime: Infinity,
+    // It's only a picture: if it can't load, the sheet goes without it.
+    retry: false,
+  });
+}
+
 /** The default handling for a failed mutation. An expired sign-in refetches the state, which raises the sign-in banner. */
 export function reportError(qc: QueryClient, error: unknown): void {
   if (isAuthError(error)) {

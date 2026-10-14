@@ -25,6 +25,7 @@ import {
   type TripDraft,
 } from "@/lib/trip-form";
 import { RemoveTripDialog } from "./RemoveTripDialog";
+import { RouteMap } from "./RouteMap";
 import { Button } from "./ui/button";
 import { ChoiceGroup, Field, Input, Stepper, type Choice } from "./ui/controls";
 import { Select, type Option } from "./ui/select";
@@ -412,6 +413,7 @@ function TripForm({
                 disabled={!terminalList}
               />
             </Field>
+            {terminalList && <RouteMap from={draft.from} to={draft.to} terminals={terminalList} />}
             <Field id={ids.date} label="Departure date" error={shownError("date")}>
               <Input
                 type="date"

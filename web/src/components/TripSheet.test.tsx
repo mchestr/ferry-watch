@@ -220,6 +220,14 @@ describe("TripSheet", () => {
       expect(to).not.toHaveAttribute("aria-invalid");
     });
 
+    it("maps the route, and follows the terminals as they change", async () => {
+      const { user } = renderSheet();
+      expect(await screen.findByRole("img", { name: "Map of the route from Swartz Bay to Tsawwassen" })).toBeVisible();
+      await choose(user, "From", "Vancouver (Tsawwassen)");
+      // Duke Point comes first in Tsawwassen's destinations.
+      expect(await screen.findByRole("img", { name: "Map of the route from Tsawwassen to Duke Point" })).toBeVisible();
+    });
+
     it("still flags an empty To on Save", async () => {
       const { requests } = mockFetch(() => jsonResponse(makeState()));
       const { user } = blank();

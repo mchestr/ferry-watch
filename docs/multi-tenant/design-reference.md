@@ -2602,6 +2602,20 @@ The size is L: about 2-2.5k changed or added lines, including tests [R:map-front
    - `TripSheet` (`TripSheet.tsx:317`, `:470-500`): auto-cart is always available (guest). Remove the
      `BCF_USER` copy. Show 409 limit errors (saved trips, the 30-day horizon); the date picker stops at 30
      days.
+   - *As built* (feedback after 0.6.3): a route map under the From and To pickers (`RouteMap.tsx`, both
+     add and edit, in the single-container app too). It is a non-interactive SVG (`role="img"`, labelled
+     "Map of the route from Tsawwassen to Swartz Bay") of the chosen route, or of everywhere the departure
+     goes before there is a destination, and nothing at all for a terminal the map doesn't know. Its data
+     is bundled, not fetched from a map service, so no third party learns anyone's route and the CSP is
+     unchanged: `scripts/build_route_map.py` clips Natural Earth's public-domain 10m land and minor islands
+     to the service area and writes `web/src/lib/route-map-data.json` (zoom-13 Web Mercator pixels; about
+     35 KB gzipped, in its own chunk with the maths, loaded the first time a map shows). Berths come from a
+     table in the script and must be within 1.5 km of the coast, apart from four documented gaps in
+     Natural Earth (Tsawwassen's causeway, the Duke Point peninsula, Cormorant Island, the head of Cousins
+     Inlet). Each bookable route's path is a least-cost path across a water grid that keeps off the shore,
+     steered through the Inside Passage and north of Gabriola where the real ferries go, smoothed, and
+     checked to stay off the land (as drawn) except near its ends. Colours come from the `--map-*` theme
+     tokens; the dashes move only when reduced motion isn't requested.
    - `Header` (`Header.tsx:59-86`): the global "Watch all trips" switch becomes a user menu (settings,
      sign out, admin; trips are paused one at a time; sign-out ends the app session, sets the "signed out" flag and offers a link
      to Authelia's logout page).
