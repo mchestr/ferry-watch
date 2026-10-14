@@ -495,6 +495,21 @@ async def test_a_viewed_hold_that_ended_otherwise_still_asks(rig: Rig, agent: Ag
     assert [r["kind"] for r in await rig.fetch("SELECT kind FROM notifications")] == ["booked_it"]
 
 
+async def test_a_hold_drained_because_the_trip_was_removed_asks_nothing(rig: Rig, agent: Agent) -> None:
+    """Removing a trip drains its pod, which lets the cart go: no "Did you book it?" about a trip that's gone."""
+    owner = await rig.db.connect()
+    try:
+        await owner.execute("UPDATE trips SET archived_at = now(), enabled = false")
+    finally:
+        await owner.close()
+    bye = Bye(**agent.client.envelope(), reason="drained", outcome="released", viewer_was_connected=True)
+    agent.client.send(bye)
+    await until(lambda: agent.client.acked(bye.seq))
+    assert (await rig.fetch("SELECT paused_reason FROM trips"))[0]["paused_reason"] is None
+    assert await rig.fetch("SELECT kind FROM notifications") == []
+    assert [r["outcome"] for r in await rig.fetch("SELECT outcome FROM hold_outcomes")] == ["released"]
+
+
 async def test_a_booking_archives_the_trip(rig: Rig, agent: Agent) -> None:
     bye = Bye(**agent.client.envelope(), reason="hold_ended", outcome="booked", viewer_was_connected=True)
     agent.client.send(bye)

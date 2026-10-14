@@ -8,7 +8,8 @@ pods to start, which to drain, and where the rest wait. The loop applies it; tes
   a pod that is starting, holding or draining stays where it is.
 - Every other eligible trip gets a *short check* when due: a pod that checks once and exits.
 - In a user's quiet hours their trips are treated as paused, except one whose quiet hours they lifted.
-- A trip has at most one pod. Holding pods are never displaced.
+- A trip has at most one pod. Holding pods are never displaced, but a removed trip's pod is drained even
+  while it holds a cart: nobody can check out of it any more, and draining lets the cart go.
 - Caps: total pods, with `short_check_slots` kept free of warm pods; at most 2 starting; 30 starts an
   hour; a user's starts at least 20 s apart. Nothing is created that would wait as Pending.
 """
@@ -178,10 +179,10 @@ class _Planner:
                 self.eligible[view.id] = view
                 continue
             pod = self.pod_by_trip.get(view.id)
-            if pod is not None and pod.phase not in ("holding", "draining"):
+            if pod is not None and pod.phase != "draining" and (pod.phase != "holding" or reason == "deleted"):
                 self.result.drain.append(Drain(pod.name, reason))
-        for pod in self.pods:  # pods for trips that no longer exist at all
-            if pod.trip_id not in self.trips and pod.phase not in ("holding", "draining"):
+        for pod in self.pods:  # pods for trips that no longer exist at all (removed): holding or not
+            if pod.trip_id not in self.trips and pod.phase != "draining":
                 self.result.drain.append(Drain(pod.name, "deleted"))
 
     def _warm_browsers(self) -> list[TripView]:
@@ -189,6 +190,7 @@ class _Planner:
         by_user: dict[str, list[TripView]] = {}
         for view in self.eligible.values():
             by_user.setdefault(view.user_id, []).append(view)
+        drained = {d.pod for d in self.result.drain}
         want: list[TripView] = []
         for user_id, views in by_user.items():
             user = self.users[user_id]
@@ -201,7 +203,7 @@ class _Planner:
                 if warm.trip_id in self.eligible and warm.trip_id not in nearest_ids and warm.phase == "watching":
                     self.result.drain.append(Drain(warm.name, "superseded"))  # a nearer trip takes the browser
                     leaving = True
-                elif warm.phase == "draining" or (warm.trip_id not in self.eligible and warm.phase != "holding"):
+                elif warm.phase == "draining" or warm.name in drained:
                     leaving = True  # drained this pass or already; a held cart keeps its pod until it's let go
             # Every warm pod counts until it's gone, so a user never has more than their warm browsers.
             room = max(user.max_active_browsers - len(warm_pods), 0)

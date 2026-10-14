@@ -455,6 +455,7 @@ Numbers below are the defaults from the canonical table in §8.2.
      link on the screen it opens).
    - A hold released on request (`bye{hold_ended, released}`: the user's Release, an admin's, or the trip's
      search edited mid-hold) asks nothing: the outcome is recorded and a new pod watches the trip on (0.6.3).
+   - A hold drained because the user removed the trip asks nothing either: the outcome is recorded (0.6.4).
    - Otherwise ferry-control sets `paused_reason='after_checkout'` and inserts a `booked_it` notification
      ("Did you book it?"). **The trip stays paused until the user answers** (owner, round 3: no automatic
      resume). "Yes" archives the trip; "No, cancel" archives it too (answer `cancelled`); "No, keep watching"
@@ -1529,7 +1530,7 @@ the cluster admin can technically see everything (R1).
 | `POST /auth/start`, `POST /auth/redeem` | **Only if S-IOS fails:** the handoff-code fallback (§6.2.4). |
 | `GET /api/me/sessions`, `DELETE /api/me/sessions` | **New.** List my sessions; "sign out everywhere". |
 | `GET /api/state` | Per-user snapshot: `me` (`paused` is kept for one release and is always false), `limits` (effective value plus source), `usage`, `trips[].browser{phase, mode (warm, short_check, off), reason, queue_position, next_check_at, last_check_at, effective_interval, next_due, heartbeat_at, cart, viewer, lockdown_ok}`, `trips[].quiet` (in the user's quiet hours and not lifted: not checked; `next_check_at` is then when they end), `capacity{can_add, reason}`, `settings{quiet_hours: {start, end} or null}`, `quiet_hours{start, end, now}` (for one release always an object, which a 0.6.2 dashboard needs: a user with none gets 23:00-06:00 with `now` false; read the setting from `settings`), `links{kofi}`, events. Drops the global `checkout_url`, `login_configured`, `alerts_configured` and `max_trips` (`views.py:118-143`). |
-| `POST/PATCH/DELETE /api/trips[/{id}]` | Scoped to the user, with transactional limits (§9.2): `maxTrips` and the 30-day horizon. Enabling never fails for `maxActiveBrowsers`; the fleet loop picks the warm trip (§6.6). DELETE sends `drain`; the cart is returned before the row is archived. |
+| `POST/PATCH/DELETE /api/trips[/{id}]` | Scoped to the user, with transactional limits (§9.2): `maxTrips` and the 30-day horizon. Enabling never fails for `maxActiveBrowsers`; the fleet loop picks the warm trip (§6.6). DELETE archives the trip at once, and the fleet loop drains its pod within a pass, even one holding a cart (0.6.4): the drain lets the cart go (one being added too) and frees the user's one hold, and since the trip is gone, ferry-control asks no "Did you book it?". A hold mid-payment is left to the site, as any drain does. |
 | `POST /api/trips/{id}/check` | Replaces `POST /api/check` (`server.py:403-407`). On the warm trip it sends `check_now`; on another trip it makes a short check due now (a pod start). Lifts the user's quiet hours for the trip for 10 minutes (`trip_runtime.quiet_lifted_until`). 6/h per user. |
 | `POST /api/trips/{id}/hold` | "Hold it for me": a bookable sailing in the trip's times that nothing holds. Sets `trip_runtime.hold_requested_until` (now + 10 min) and checks now (counted as a manual check). While it lasts, ferry-control's gate skips quiet hours and the trip's auto-cart off for that trip; nothing else. 409 with the reason when there's nothing to hold, the trip is paused, every bookable departure was held once already (`alert_memory.alerted`: the pod never carts those again), or a limit stands in the way (a claim that lapsed doesn't count as holding elsewhere). Each trip in `GET /api/state` and the live socket's state carries `hold{reason, can_request, holdable, requested_at, requested_until}` and `booking_url`. |
 | `POST /api/trips/{id}/cart/release` and `/dismiss` | Scoped. Inserts an `agent_commands` row. |
@@ -1681,7 +1682,9 @@ and global `maintenance` is off. A trip that is only out for quiet hours is drai
 - Queue order for warm starts: the user with the fewest running browsers, then the nearest sailing, then the
   oldest queued (aging, so nothing starves). Short checks run oldest-due first in the spare slots, then in
   any free slot.
-- No preemption. Holding pods are never displaced, including a short-check pod that carted.
+- No preemption. Holding pods are never displaced, including a short-check pod that carted. The exception is
+  a removed trip: its pod is drained even while holding, which lets the cart go, since nobody can open its
+  checkout any more (0.6.4).
 - A successor pod for a trip is created only after its predecessor is gone, so at most one pod per trip
   exists and the quota needs only one pod of headroom (§8.4).
 

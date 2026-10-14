@@ -294,7 +294,8 @@ minutes of the short-check slot every 6 hours; one slot serves about 40 users wh
 - After **any viewed hold** the pod exits, so nothing a viewer did persists.
 - A warm pod is recycled after about 24 h (only while idle); hard `activeDeadlineSeconds` of 26 h.
 - Trip disabled, paused, past or deleted, the user's quiet hours, a nearer trip taking the warm slot, user
-  suspended, or limit lowered: drained (never during a hold).
+  suspended, or limit lowered: drained (never during a hold, except for a trip the user removed: that lets
+  the cart go).
 - Startup with no first check in 15 min; Watching pod silent 5 min; 6 consecutive failures; repeated failures
   back off (5-60 min) and then "Needs attention". Orphans swept every 60 s.
 

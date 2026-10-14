@@ -367,6 +367,8 @@ class ControlStore:
                     "UPDATE trips SET archived_at = now(), updated_at = now() WHERE id = $1", binding.trip_id
                 )
                 kind = "booked"
+            elif not await conn.fetchval("SELECT archived_at IS NULL FROM trips WHERE id = $1", binding.trip_id):
+                return  # the user removed the trip, which drained the pod: they know, and there's nothing to ask
             else:
                 # Did they book it? The trip stays paused until they answer (owner, round 3).
                 await conn.execute(
