@@ -70,11 +70,12 @@ def _grants(web: str, control: str) -> list[str]:
     return [
         # ---- ferry-web: people, trips, the API's reads, the outbox's sending
         f"GRANT SELECT, INSERT, UPDATE, DELETE ON users, identities, unmatched_identities, invites, sessions,"
-        f" user_limits, push_subscriptions, trips TO {web}",
+        f" user_limits, user_settings, push_subscriptions, trips TO {web}",
         f"GRANT SELECT ON trip_runtime, browser_pods, hold_claims, trip_state, alert_memory TO {web}",
-        # ... and may make a short check due now (a new trip, a re-enable, a manual check) and ask for a
-        # hold ("Hold it for me"), nothing more.
-        f"GRANT INSERT (trip_id), UPDATE (next_check_at, hold_requested_until) ON trip_runtime TO {web}",
+        # ... and may make a short check due now (a new trip, a re-enable, a manual check), ask for a hold
+        # ("Hold it for me") and lift quiet hours for a trip (a manual check), nothing more.
+        f"GRANT INSERT (trip_id), UPDATE (next_check_at, hold_requested_until, quiet_lifted_until) ON trip_runtime"
+        f" TO {web}",
         f"GRANT DELETE ON alert_memory TO {web}",  # an edited search forgets what the old one alerted
         f"GRANT SELECT, INSERT ON agent_commands, events, vnc_mints, notifications TO {web}",
         f"GRANT DELETE ON events TO {web}",  # deleting a user takes their history with them
@@ -88,7 +89,7 @@ def _grants(web: str, control: str) -> list[str]:
         f"GRANT USAGE ON SEQUENCE agent_commands_id_seq, events_id_seq, notifications_id_seq,"
         f" push_subscriptions_id_seq, audit_log_id_seq TO {web}",
         # ---- ferry-control: pods, what agents report, and the trips' pause and archive
-        f"GRANT SELECT ON users, user_limits, trips TO {control}",
+        f"GRANT SELECT ON users, user_limits, user_settings, trips TO {control}",
         f"GRANT UPDATE (paused_reason, archived_at, updated_at) ON trips TO {control}",
         f"GRANT SELECT, INSERT, UPDATE, DELETE ON trip_runtime, browser_pods, hold_claims, trip_state,"
         f" alert_memory TO {control}",
