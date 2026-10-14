@@ -17,7 +17,7 @@ running until cutover.
 | Module | What |
 |---|---|
 | `protocol.py` | Agent ↔ ferry-control messages, v1 plus the round-3 additions (`mode`, `cart_claim`, `short_check_done`). Closed vocabulary; a schema test proves no field can carry a URL, cookie, script or selector. |
-| `polling.py` | The poll curve, the warm window, short checks, the 30-day horizon and quiet hours. |
+| `polling.py` | The poll curve, the warm window, short checks, the 30-day horizon, and `QuietHours` (each user's own, Pacific, past midnight if need be). |
 | `holds.py` | The four hold clocks and the payment guard. |
 | `tickets.py` | Ed25519 checkout tickets (`fw1.<kid>.<payload>.<sig>`), with the signed display fields. |
 | `bcferries/urls.py` | `BASE_URL`, the user agent, `search_url`, and `checkout_view()` (what a held cart's checkout shows, from URLs only). |
@@ -36,18 +36,18 @@ running until cutover.
 
 | Module | What |
 |---|---|
-| `migrations/0001_init.sql`, `db.py` | The schema, and per-role grants with row-level security (§6.4). |
-| `hub.py`, `store.py` | The hub endpoint: TokenReview binding, idempotent recording, cart claims (one hold per user), configure pushes, commands, NOTIFY on change. |
-| `planner.py`, `fleet.py`, `pods.py`, `kube.py` | The fleet loop: warm and short-check pods, admission and fairness, reaping timers, hold egress, the pod template. |
-| `configure.py`, `limits.py`, `config.py`, `main.py` | Cart gating, the curve with the budget stretch, per-user limits, the deployment's config, `migrate` and `run`. |
+| `migrations/0001_init.sql` … `0004_settings.sql`, `db.py` | The schema (expand only), and per-role grants with row-level security (§6.4). 0004 adds `user_settings` (quiet hours), `trip_runtime.quiet_lifted_until` and `browser_pods.agent_version`, and moves "pause all" onto each trip. |
+| `hub.py`, `store.py` | The hub endpoint: TokenReview binding, idempotent recording, cart claims (one hold per user), configure pushes (`active=false` in the user's quiet hours unless lifted), commands, NOTIFY on change. A viewed hold asks "Did you book it?" unless it was released on request. |
+| `planner.py`, `fleet.py`, `pods.py`, `kube.py` | The fleet loop: warm and short-check pods (none in a user's quiet hours, unless lifted for the trip), admission and fairness, reaping timers, hold egress, the pod template, and `fleet_report` (with ferry-control's version) for the admin page. |
+| `configure.py`, `limits.py`, `config.py`, `main.py` | Cart gating (with the user's quiet hours), the curve with the budget stretch, per-user limits, the deployment's config (`polling.quietStart`/`quietEnd` deprecated and ignored), `migrate` and `run`. |
 
 ### ferry-web (`ferry_watch.web`)
 
 | Module | What |
 |---|---|
 | `identity.py`, `accounts.py`, `auth.py` | OIDC (code + PKCE), id_token verification, computed user ids, invite-only admission, cookie-less bearer sessions re-verified every 24 h. |
-| `api.py`, `repo.py` | Each user's API, scoped in SQL; checkout ticket minting. |
-| `admin.py` | Invitations, suspension, limit overrides, the fleet switches, the overview. |
+| `api.py`, `repo.py` | Each user's API, scoped in SQL: trips (paused one at a time), "Did you book it?" (Yes, No, "No, cancel"), quiet hours (`PATCH /api/me`), checkout ticket minting. |
+| `admin.py` | Invitations, suspension, limit overrides, the fleet switches, the overview (with the versions running). |
 | `live.py` | The dashboard socket (first-message auth, NOTIFY-driven). |
 | `outbox.py`, `push.py`, `messages.py` | The alert outbox: Web Push (RFC 8291/8292) and email. |
 | `config.py`, `main.py`, `http.py`, `app.py` | Config and secrets, middleware, the SPA shell. |
@@ -60,7 +60,7 @@ running until cutover.
 | `MyTripCard.tsx`, `trips.ts` | Each trip in plain words (every 2 minutes, checked every 6 h, waiting for a free browser, bookable now, holding a cart, "Did you book it?"), the held cart, release and dismiss, check now, the shared trip editor. |
 | `NotHeld.tsx` | A bookable sailing nothing holds, on the card and on `/c/<trip>`: why (`hold.reason`), "Hold it for me" (`POST /api/trips/{id}/hold`) and "Book on bcferries.com" (`booking_url`). |
 | `CheckoutPage.tsx` | `/c/<trip>`: never opens the checkout by itself; "Check out on this device" mints the one-minute link. With nothing held it shows `NotHeld`, so a "Bookable" alert lands somewhere useful. |
-| `AccountCard.tsx`, `push.ts`, `public/sw.js` | Web Push for the device, a test alert, pause everything, sign out everywhere, the Ko-fi link. |
+| `AccountCard.tsx`, `push.ts`, `public/sw.js` | Web Push for the device, a test alert, the user's quiet hours, sign out everywhere, the Ko-fi link. |
 | `live.ts`, `api.ts`, `schema.ts` | The per-user socket (first-message auth) and the bearer API. |
 | `AdminPage.tsx`, `admin.ts`, `ReasonDialog.tsx` | `/admin`, for admins. Fleet: the switches and the breaker, capacity and budget from ferry-control's last pass, holds now (cart summary only) with release and recycle, the attention list, the week's outcomes. People: limits and where each comes from, sessions, devices, today's usage, sign out everywhere, make or remove admin, suspend (releasing a held cart or letting it finish), reinstate, delete, invitations, sign-ins turned away. Every change asks why. |
 
@@ -122,7 +122,8 @@ Each is a two-way door.
   (TokenReview, and list, create, delete and label-patch of pods), behind a `Cluster` protocol.
 - **Protocol field names**: `configure.trip_spec` and `ack.acked` (the envelope already has `trip` and
   `seq`). `hello` carries no image digest: the pod's eight env vars don't include it, and ferry-control
-  reads it from the pod. `cart_claim.fare` is the trip's fare preference. A `paused` drain reason was added.
+  records the pinned image it started the pod with. `cart_claim.fare` is the trip's fare preference. A
+  `paused` drain reason was added; quiet hours drain with it too.
 - **The gate's rate limit** counts only ticket and nonce failures and never refuses a correct reconnect,
   so a burst of bad attempts can't lock the owner out (§5.5).
 - **Lockdown self-tests**: the unix-socket check requires Xvnc's socket at mode 0600 and logs the
@@ -132,7 +133,9 @@ Each is a two-way door.
 - **Schema details**: `events` and `hold_outcomes` carry `dedup_key` (pod:boot:seq); `notifications`
   gains `next_attempt_at`, and `to_email` for invitations (which have no user yet); the two admin
   switches are seeded. ferry-web may insert a `trip_runtime` row and set `next_check_at` (a short check
-  now), and delete a trip's alert memory, beyond §6.4's grants.
+  now), `hold_requested_until` ("Hold it for me") and `quiet_lifted_until` (a manual check), write
+  `user_settings`, and delete a trip's alert memory, beyond §6.4's grants; ferry-control may read
+  `user_settings`.
 - **ferry-web loads BC Ferries' public terminal list** for route names in alerts and the trip editor:
   one more egress host for ferry-web (`www.bcferries.com:443`), not in §7.6 yet.
 - **The SPA picks its shell at runtime**: `/auth/config` answers on ferry-web and not on the single-container

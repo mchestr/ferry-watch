@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from dataclasses import replace
+from datetime import datetime, time, timedelta
 from typing import Any
 
 from ferry_watch.control.planner import (
@@ -14,7 +15,7 @@ from ferry_watch.control.planner import (
     plan,
 )
 from ferry_watch.models import PACIFIC, Trip
-from ferry_watch.polling import PollPolicy
+from ferry_watch.polling import PollPolicy, QuietHours
 
 NOW_AT = datetime(2026, 10, 11, 12, 0, tzinfo=PACIFIC)
 NOW = NOW_AT.timestamp()
@@ -110,6 +111,26 @@ def test_a_suspended_user_and_maintenance_stop_everything() -> None:
     result = run([a], [pod(a)], maintenance=True)
     assert result.drain == [Drain(f"fw-{a.id}-g1", "maintenance")]
     assert run([a], maintenance=True).start == []
+
+
+def test_quiet_hours_stop_a_users_trips_unless_lifted() -> None:
+    """In a user's quiet hours their trips are treated as paused: nothing starts, and a browser that holds no
+    cart is drained. A trip they lifted them for (a manual check, "Hold it for me") is checked as usual."""
+    ann, bob = UserView("ann", quiet=QuietHours(time(23, 0), time(6, 0))), UserView("bob")
+    near, later, bobs = trip(1, 2), trip(2, 10), trip(3, 2, user="bob")
+    night = NOW + 11.5 * 3600  # 23:30 Pacific
+
+    result = plan([ann, bob], [near, later, bobs], [], FleetView(), POLICY, night)
+    assert result.start == [Start(bobs.id, "bob", "warm")]  # quiet hours are Ann's own
+    result = plan([ann], [near, later], [pod(near)], FleetView(), POLICY, night)
+    assert result.drain == [Drain(f"fw-{near.id}-g1", "paused")]
+    assert plan([ann], [near], [pod(near, "holding")], FleetView(), POLICY, night).drain == []
+    assert plan([ann], [near], [], FleetView(), POLICY, NOW).start == [Start(near.id, "ann", "warm")]  # noon
+
+    lifted = replace(near, quiet_lifted_until=night + 600)
+    assert plan([ann], [lifted, later], [], FleetView(), POLICY, night).start == [Start(near.id, "ann", "warm")]
+    lapsed = replace(near, quiet_lifted_until=night - 1)
+    assert plan([ann], [lapsed], [pod(near)], FleetView(), POLICY, night).drain == [Drain(f"fw-{near.id}-g1", "paused")]
 
 
 def test_a_pod_for_a_deleted_trip_is_drained() -> None:

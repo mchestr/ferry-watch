@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import json
-from datetime import timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from ferry_watch.control.config import ConfigError, duration, load
+from ferry_watch.control.configure import Allowance, Switches, cart_gate
+from ferry_watch.models import PACIFIC, Trip
 
 MINIMAL: dict[str, Any] = {
     "pod": {
@@ -58,6 +60,15 @@ def test_values_override(tmp_path: Path) -> None:
     assert policy.interval(timedelta(hours=1)) == timedelta(seconds=60)
     assert config.user_limits().value("maxTrips", {}) == 5
     assert config.hold_limits().hard_s == 5400
+
+
+def test_the_old_fleet_wide_quiet_hours_still_parse(tmp_path: Path) -> None:
+    """Quiet hours are each user's own now: a deployment that still sets polling.quietStart/quietEnd starts,
+    and they change nothing."""
+    config = load(write(tmp_path, MINIMAL | {"polling": {"quietStart": "22:00", "quietEnd": "07:00"}}))
+    trip = Trip(id="3f9c0a1b2c3d4e5f", origin="SWB", destination="TSA", date=date(2026, 10, 16))
+    night = datetime(2026, 10, 15, 23, 30, tzinfo=PACIFIC)
+    assert cart_gate(trip, Allowance(4, 6, 60), Switches(), config.hub_settings(), night) == "ok"
 
 
 @pytest.mark.parametrize(

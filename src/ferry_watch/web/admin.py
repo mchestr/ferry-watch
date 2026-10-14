@@ -17,6 +17,7 @@ from typing import Any
 import asyncpg
 from aiohttp import web
 
+from ferry_watch import __version__
 from ferry_watch.control.limits import CEILINGS, Limits
 from ferry_watch.models import PACIFIC
 
@@ -127,6 +128,20 @@ def _emails_seen(email: str | None, identities: Iterable[asyncpg.Record]) -> lis
     return sorted({i["email"] for i in identities if i["email"] and i["email"].lower() != on_file})
 
 
+def _versions(fleet: dict[str, Any] | None, browsers: Iterable[asyncpg.Record]) -> dict[str, Any]:
+    """What runs now: this ferry-web, ferry-control as of its last fleet pass (None before its first, or from a
+    ferry-control too old to say), and the live browser pods by agent version and image."""
+    control = None
+    at = _control_seen(None, fleet)
+    if fleet and isinstance(fleet.get("version"), str) and at is not None:
+        control = {"version": fleet["version"], "at": at}
+    return {
+        "web": {"version": __version__},
+        "control": control,
+        "browsers": [{"version": r["agent_version"], "image": r["image_digest"], "pods": r["n"]} for r in browsers],
+    }
+
+
 def _control_seen(alive: Any, fleet: dict[str, Any] | None) -> float | None:
     """When ferry-control was last heard from: its heartbeat if it keeps one, else its last fleet pass."""
     for seen in (alive, fleet.get("at") if fleet else None):
@@ -193,6 +208,10 @@ async def overview(request: web.Request) -> web.Response:
     outcomes = await pool.fetch(
         "SELECT outcome, count(*) AS n FROM hold_outcomes WHERE created_at > now() - interval '7 days' GROUP BY 1"
     )
+    browsers = await pool.fetch(
+        "SELECT agent_version, image_digest, count(*) AS n FROM browser_pods WHERE ended_at IS NULL"
+        " GROUP BY 1, 2 ORDER BY 3 DESC, 1, 2"
+    )
     return web.json_response(
         {
             "pods": [{"mode": r["mode"], "phase": r["phase"], "count": r["n"]} for r in pods],
@@ -215,6 +234,7 @@ async def overview(request: web.Request) -> web.Response:
             "fleet": fleet,
             "control_seen": _control_seen(switches.get("control_alive_at"), fleet),
             "attention": await _attention(pool),
+            "versions": _versions(fleet, browsers),
         }
     )
 
@@ -223,7 +243,7 @@ async def list_users(request: web.Request) -> web.Response:
     admin(request)
     pool, limits, policy = request.app[POOL], request.app[LIMITS], request.app[POLICY]
     users = await pool.fetch(
-        "SELECT u.id, u.username, u.email, u.state, u.is_admin, u.paused, u.created_at, u.last_seen_at,"
+        "SELECT u.id, u.username, u.email, u.state, u.is_admin, u.created_at, u.last_seen_at,"
         " (SELECT count(*) FROM trips t WHERE t.user_id = u.id AND t.archived_at IS NULL) AS trips"
         " FROM users u ORDER BY u.created_at"
     )
@@ -262,7 +282,7 @@ async def list_users(request: web.Request) -> web.Response:
                     "email": u["email"],
                     "state": u["state"],
                     "is_admin": u["is_admin"],
-                    "paused": u["paused"],
+                    "paused": False,  # for a release, for the old dashboard: trips are paused one at a time now
                     "trips": u["trips"],
                     "created_at": u["created_at"].timestamp(),
                     "last_seen_at": u["last_seen_at"].timestamp() if u["last_seen_at"] else None,

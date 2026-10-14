@@ -184,6 +184,7 @@ class HubEndpoint:
             raise Violation("The hello names another trip or pod")
         if VERSION not in hello.proto:
             raise ProtocolError("No protocol version in common")
+        await self._store.record_agent_version(binding, hello.agent_version)  # for the admin page
         peer = Peer(binding, ws, hello.boot)
         old = self._peers.get(binding.pod)
         self._peers[binding.pod] = peer  # one live socket per pod: the newest wins
@@ -244,7 +245,7 @@ class HubEndpoint:
             allowance = await self._store.allowance(binding.user_id, now)
             switches = await self._store.switches()
             at = datetime.fromtimestamp(now, PACIFIC)
-            gate = cart_gate(row.trip, allowance, switches, self._settings, at, requested=row.hold_requested(now))
+            gate = cart_gate(row.trip, allowance, switches, self._settings, at, lifted=row.quiet_lifted(now))
             reason = await self._store.claim(binding, gate, now)
         log.info("%s: cart claim for %s: %s", binding.pod, claim.depart, reason)
         await self._send(
@@ -257,13 +258,12 @@ class HubEndpoint:
         if found is None or not found[1]:
             return "carting_paused"
         row, _ = found
-        requested = row.hold_requested(now)
-        if not row.trip.auto_cart and not requested:
+        if not row.trip.auto_cart and not row.hold_requested(now):
             return "auto_cart_off"
-        allowance = await self._store.allowance(binding.user_id, now)
+        allowance = await self._store.allowance(binding.user_id, now)  # with the user's own quiet hours
         switches = await self._store.switches()
         at = datetime.fromtimestamp(now, PACIFIC)
-        gate = cart_gate(row.trip, allowance, switches, self._settings, at, requested=requested)
+        gate = cart_gate(row.trip, allowance, switches, self._settings, at, lifted=row.quiet_lifted(now))
         if gate != "ok":
             return gate
         return "holding_elsewhere" if await self._store.holding_elsewhere(binding) else "unknown"

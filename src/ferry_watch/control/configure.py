@@ -13,7 +13,7 @@ from datetime import date, datetime
 import msgspec
 
 from ferry_watch.models import PACIFIC, Trip
-from ferry_watch.polling import PollPolicy, time_until
+from ferry_watch.polling import PollPolicy, QuietHours, time_until
 from ferry_watch.protocol import (
     MAX_INTERVAL_S,
     MIN_INTERVAL_S,
@@ -59,7 +59,7 @@ class Switches:
 
 @dataclass(frozen=True, slots=True)
 class Allowance:
-    """A user's limits and today's usage (Pacific day)."""
+    """A user's limits, today's usage (Pacific day) and quiet hours."""
 
     holds_per_day: int
     cart_attempts_per_day: int
@@ -67,6 +67,10 @@ class Allowance:
     holds_today: int = 0
     cart_attempts_today: int = 0
     vnc_seconds_today: int = 0
+    quiet: QuietHours | None = None  # none unless the user set some
+
+    def quiet_now(self, at: datetime) -> bool:
+        return self.quiet is not None and self.quiet.contains(at)
 
 
 def cart_gate(
@@ -76,16 +80,17 @@ def cart_gate(
     settings: HubSettings,
     now: datetime,
     *,
-    requested: bool = False,
+    lifted: bool = False,
 ) -> ClaimReason:
     """Whether a new cart may be put in now ("ok"), or why not. Holding elsewhere is the claim's own check.
 
-    `requested`: the user asked for a hold ("Hold it for me"). Quiet hours keep carts from being held while
-    nobody is awake to check out, so they don't apply to someone who is there asking; everything else does.
+    `lifted`: the user lifted their quiet hours for this trip (a manual check, or "Hold it for me"). Quiet
+    hours are for when they don't want to hear from us, so they don't apply to someone who is there asking;
+    everything else does.
     """
     if switches.maintenance or switches.pause_carting or not settings.auto_cart:
         return "carting_paused"
-    if settings.policy.quiet(now) and not requested:
+    if allowance.quiet_now(now) and not lifted:
         return "quiet_hours"
     if allowance.holds_today >= allowance.holds_per_day:
         return "no_holds_left"
@@ -132,9 +137,14 @@ class TripRow:
     alerted: tuple[str, ...] = ()
     offered: tuple[str, ...] = ()
     hold_requested_until: float | None = None  # "Hold it for me", until then
+    quiet_lifted_until: float | None = None  # a manual check lifted the user's quiet hours for this trip
 
     def hold_requested(self, now: float) -> bool:
         return self.hold_requested_until is not None and now < self.hold_requested_until
+
+    def quiet_lifted(self, now: float) -> bool:
+        """Whether the user's quiet hours are lifted for this trip now (a manual check, or "Hold it for me")."""
+        return self.hold_requested(now) or (self.quiet_lifted_until is not None and now < self.quiet_lifted_until)
 
 
 def build_configure(
@@ -151,11 +161,12 @@ def build_configure(
 ) -> Configure:
     at = datetime.fromtimestamp(now, PACIFIC)
     trip = row.trip
-    requested = row.hold_requested(now)
-    if requested:
+    if row.hold_requested(now):
         trip = replace(trip, auto_cart=True)  # the user asked for this hold, whatever the trip's own setting
+    lifted = row.quiet_lifted(now)
     active = user_active and row.enabled and row.paused_reason is None
     active = active and not switches.maintenance and not switches.brake.paused
+    active = active and (lifted or not allowance.quiet_now(at))  # quiet hours: no checks at all
     interval = interval_s(curve_interval(trip, at, settings.policy), stretch_by, switches.brake)
     return Configure(
         **envelope,  # type: ignore[arg-type]
@@ -163,7 +174,7 @@ def build_configure(
         active=active,
         mode=mode,
         interval_s=interval,
-        auto_cart=cart_gate(trip, allowance, switches, settings, at, requested=requested) == "ok",
+        auto_cart=cart_gate(trip, allowance, switches, settings, at, lifted=lifted) == "ok",
         hold=settings.hold,
         alerted=list(row.alerted)[:100],
         offered=list(row.offered)[:100],
