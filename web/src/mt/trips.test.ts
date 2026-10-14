@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { makeSettings } from "@/test/fixtures";
 import type { MyTrip } from "./schema";
-import { asSailings, minutesLeft, notHeldReason, tripBadge, unheld } from "./trips";
+import { asSailings, minutesLeft, nextCheck, notHeldReason, tripBadge, unheld } from "./trips";
 
 function myTrip(browser: Partial<MyTrip["browser"]> = {}, extra: Partial<MyTrip> = {}): MyTrip {
   return {
@@ -32,30 +32,54 @@ function myTrip(browser: Partial<MyTrip["browser"]> = {}, extra: Partial<MyTrip>
   };
 }
 
+const open = (depart: string, status: "available" | "sold_out" = "available") => ({
+  depart,
+  arrive: "10:35",
+  vessel: "Queen of Oak Bay",
+  status,
+  fares: [],
+});
+
 describe("trip badges", () => {
-  it("speaks plainly", () => {
-    expect(tripBadge(myTrip()).text).toBe("Every 2 minutes");
-    expect(tripBadge(myTrip({ phase: "queued", queue_position: 2, mode: "off" })).text).toBe(
-      "Waiting for a free browser (#2)",
-    );
-    expect(tripBadge(myTrip({ mode: "short_check", phase: "off" })).text).toBe("Checked every 6 h");
-    expect(tripBadge(myTrip({}, { paused_reason: "after_checkout" })).text).toBe("Did you book it?");
-    expect(tripBadge(myTrip({ consecutive_errors: 3 })).tone).toBe("danger");
-    const held = myTrip({
-      cart: {
-        id: "c",
-        status: "ready",
-        depart: "09:00",
-        fare: null,
-        price: null,
-        ready_at: null,
-        unclaimed_deadline: null,
-        session_deadline: null,
-        hard_deadline: null,
-        payment_in_progress: false,
-      },
+  it("say what the trip is doing in a word or two", () => {
+    expect(tripBadge(myTrip())).toEqual({ text: "Checking", tone: "success" }); // the warm browser
+    expect(tripBadge(myTrip({ mode: "short_check", phase: "off", next_check_at: 1 }))).toEqual({
+      text: "Scheduled",
+      tone: "soft",
     });
-    expect(tripBadge(held).text).toBe("Holding a cart");
+    expect(tripBadge(myTrip({ phase: "queued", queue_position: 2, mode: "off" })).text).toBe("Scheduled");
+    expect(tripBadge(myTrip({ phase: "off", mode: "off" })).text).toBe("Scheduled");
+    expect(tripBadge(myTrip({}, { quiet: true }))).toEqual({ text: "Quiet hours", tone: "soft" });
+    expect(tripBadge(myTrip({ sailings: [open("09:00")] }))).toEqual({ text: "Bookable", tone: "warning" });
+    expect(tripBadge(myTrip({ consecutive_errors: 3 }))).toEqual({ text: "Problem", tone: "danger" });
+    expect(tripBadge(myTrip({ cart: cart("adding") }))).toEqual({ text: "Holding", tone: "success" });
+    expect(tripBadge(myTrip({ cart: cart("ready") }))).toEqual({ text: "Held", tone: "success" });
+  });
+
+  it("say Paused for a paused trip, and while it asks whether you booked it", () => {
+    expect(tripBadge(myTrip({}, { paused_reason: "after_checkout" }))).toEqual({ text: "Paused", tone: "warning" });
+    const held = myTrip({ cart: cart("ready") });
+    expect(tripBadge({ ...held, trip: { ...held.trip, enabled: false } })).toEqual({ text: "Paused", tone: "outline" });
+    const trip = myTrip();
+    expect(tripBadge({ ...trip, hold: { ...trip.hold, reason: "paused" } })).toEqual({
+      text: "Paused",
+      tone: "outline",
+    });
+  });
+
+  it("leave a scheduled trip's next check for the card to say", () => {
+    expect(nextCheck(myTrip({ mode: "short_check", phase: "off", next_check_at: 1000 }))).toBe(1000);
+    expect(nextCheck(myTrip({ next_check_at: 1000 }))).toBeNull(); // checking now
+    expect(nextCheck(myTrip({ mode: "off", phase: "off", next_check_at: 1000 }, { quiet: true }))).toBeNull();
+  });
+
+  it("put what matters more first", () => {
+    expect(tripBadge(myTrip({ cart: cart("ready"), consecutive_errors: 3 })).text).toBe("Held");
+    // Trouble checking says more than old results do.
+    expect(tripBadge(myTrip({ sailings: [open("09:00")], consecutive_errors: 3 })).text).toBe("Problem");
+    // During quiet hours, a sailing the last check found is still worth booking.
+    expect(tripBadge(myTrip({ sailings: [open("09:00")] }, { quiet: true })).text).toBe("Bookable");
+    expect(tripBadge(myTrip({ mode: "warm" }, { quiet: true })).text).toBe("Quiet hours");
   });
 });
 
@@ -91,28 +115,16 @@ describe("countdowns", () => {
 });
 
 describe("bookable, not held", () => {
-  const open = (depart: string, status: "available" | "sold_out" = "available") => ({
-    depart,
-    arrive: "10:35",
-    vessel: "Queen of Oak Bay",
-    status,
-    fares: [],
-  });
-
   it("counts only open sailings in the trip's times, with nothing holding them", () => {
     const trip = myTrip({ sailings: [open("06:00"), open("09:00"), open("11:00", "sold_out")] });
     expect(unheld(trip)).toEqual(["09:00"]);
-    expect(tripBadge(trip)).toEqual({ text: "Bookable now", tone: "warning" });
+    expect(tripBadge(trip)).toEqual({ text: "Bookable", tone: "warning" });
     const adding = myTrip({ sailings: [open("09:00")], cart: { ...cart("adding") } });
     expect(unheld(adding)).toEqual([]);
-    expect(tripBadge(adding).text).toBe("Holding it…");
+    expect(tripBadge(adding).text).toBe("Holding");
     expect(unheld(myTrip({ sailings: [open("09:00")] }, { paused_reason: "after_checkout" }))).toEqual([]);
     const pausedAccount = myTrip({ sailings: [open("09:00")] });
     expect(unheld({ ...pausedAccount, hold: { ...pausedAccount.hold, reason: "paused" } })).toEqual([]);
-    // Trouble checking says more than old results do.
-    expect(tripBadge(myTrip({ sailings: [open("09:00")], consecutive_errors: 3 })).text).toBe(
-      "Having trouble checking",
-    );
   });
 
   it("says why", () => {
@@ -127,7 +139,7 @@ describe("bookable, not held", () => {
   });
 });
 
-function cart(status: "adding" | "failed") {
+function cart(status: "adding" | "ready" | "failed") {
   return {
     id: "c1",
     status,

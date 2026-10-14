@@ -14,7 +14,7 @@ import { MY_STATE_KEY, myApi, type BookedReason } from "./api";
 import { navigate } from "./router";
 import type { MyState, MyTrip } from "./schema";
 import { NotHeld } from "./NotHeld";
-import { asSailings, minutesLeft, tripBadge, tripTitle, unheld } from "./trips";
+import { asSailings, minutesLeft, nextCheck, tripBadge, tripTitle, unheld } from "./trips";
 
 const REASONS: readonly { value: BookedReason; label: string }[] = [
   { value: "needed_account", label: "It wanted an account" },
@@ -139,6 +139,7 @@ export function MyTripCard({
   const dismiss = useMyMutation(() => myApi.dismiss(trip.trip.id, failed?.id ?? ""));
   const sailings = asSailings(trip);
   const checked = trip.browser.checked_at;
+  const next = nextCheck(trip);
   return (
     <Card className="space-y-4 p-4 sm:p-5">
       <div className="flex items-start justify-between gap-3">
@@ -147,6 +148,7 @@ export function MyTripCard({
           <p className="text-sm text-muted-foreground">
             {timeLabel(trip.trip.earliest)}–{timeLabel(trip.trip.latest)}
             {checked ? ` · checked ${clock(checked * 1000)}` : ""}
+            {next ? ` · next ${clock(next * 1000)}` : ""}
           </p>
         </div>
         <Badge variant={badge.tone}>{badge.text}</Badge>

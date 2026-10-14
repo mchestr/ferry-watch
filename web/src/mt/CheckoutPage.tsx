@@ -5,6 +5,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Laptop, Loader2, Smartphone } from "lucide-react";
 import { useState } from "react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { errorMessage } from "@/lib/api";
@@ -15,7 +16,7 @@ import { MY_STATE_KEY, myApi } from "./api";
 import { navigate } from "./router";
 import type { MyState } from "./schema";
 import { NotHeld } from "./NotHeld";
-import { holdPending, minutesLeft, tripTitle, unheld } from "./trips";
+import { holdPending, minutesLeft, tripBadge, tripTitle, unheld } from "./trips";
 
 export function CheckoutPage({
   state,
@@ -66,29 +67,36 @@ export function CheckoutPage({
     // Where a "Bookable" alert lands too: the sailing may be open with nothing holding it yet.
     const paused =
       trip.paused_reason === "after_checkout"
-        ? "This trip is paused until you say whether you booked it, on Your trips."
+        ? "Paused until you say whether you booked it, on Your trips."
         : !trip.trip.enabled || trip.paused_reason !== null || trip.hold.reason === "paused"
-          ? "This trip is paused, so nothing is held for it."
+          ? "Paused, so nothing is checked or held."
           : null;
+    const badge = tripBadge(trip);
+    const quietUntil = state.quiet_hours?.end;
     return (
       <div className="mx-auto max-w-xl space-y-4">
         {back}
         <Card className="space-y-4 p-6">
-          <h1 className="text-lg font-bold">{tripTitle(trip, terminals)}</h1>
+          <div className="flex items-start justify-between gap-3">
+            <h1 className="min-w-0 text-lg font-bold">{tripTitle(trip, terminals)}</h1>
+            <Badge variant={badge.tone}>{badge.text}</Badge>
+          </div>
           {paused ? (
             <p className="text-sm text-muted-foreground">{paused}</p>
           ) : unheld(trip).length > 0 || holdPending(trip) ? (
             <NotHeld trip={trip} />
           ) : cart?.status === "adding" ? (
             <p className="flex items-center gap-2 text-sm" role="status">
-              <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden /> Holding it now. This page updates when
+              <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden /> Holding it. This page updates when
               it's held.
             </p>
           ) : (
             <div role="status">
               <h2 className="font-semibold">Nothing is held right now</h2>
               <p className="mt-1 text-sm text-muted-foreground">
-                Nothing in your times is bookable at the moment. We'll alert you when a sailing opens up.
+                {trip.quiet
+                  ? `It's your quiet hours, so this trip isn't checked${quietUntil ? ` until ${timeLabel(quietUntil)}` : ""}.`
+                  : "Nothing in your times is bookable. We'll alert you when a sailing opens up."}
               </p>
             </div>
           )}

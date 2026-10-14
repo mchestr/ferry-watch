@@ -61,6 +61,10 @@ function myState(overrides: Partial<MyState> = {}): MyState {
   };
 }
 
+/** The status badge beside the trip card's title. */
+const statusBadge = () =>
+  screen.getByRole("heading", { level: 2, name: /→/ }).parentElement?.nextElementSibling?.textContent;
+
 beforeEach(() => {
   localStorage.clear();
   sessionStorage.clear();
@@ -124,7 +128,7 @@ describe("signed in", () => {
     );
     renderWithProviders(<MtApp />);
     expect(await screen.findByText("9:00 am is held for you (Saver, $93.45)")).toBeInTheDocument();
-    expect(screen.getByText("Holding a cart")).toBeInTheDocument();
+    expect(statusBadge()).toBe("Held");
     expect(requests.find((r) => r.url === "/api/state")?.headers.get("Authorization")).toBe("Bearer t-1");
   });
 
@@ -262,7 +266,7 @@ describe("pausing a trip", () => {
       url: `/api/trips/${TRIP_ID}`,
       body: { enabled: false },
     });
-    expect(screen.getByText("Paused")).toBeInTheDocument();
+    expect(statusBadge()).toBe("Paused");
     expect(screen.getByRole("button", { name: "Check now" })).toBeDisabled();
 
     await user.click(screen.getByRole("button", { name: "Resume" }));
@@ -397,13 +401,32 @@ describe("quiet hours", () => {
 
   it("say when it's quiet now, on the trips", async () => {
     history.replaceState(null, "", "/");
-    mockFetch((r) =>
-      r.url === "/api/state"
-        ? jsonResponse(myState({ settings: { quiet_hours: NIGHT }, quiet_hours: { ...NIGHT, now: true } }))
-        : jsonResponse({ terminals: [] }),
-    );
+    const base = myState().trips[0];
+    if (!base) throw new Error("no trip");
+    const state = myState({
+      settings: { quiet_hours: NIGHT },
+      quiet_hours: { ...NIGHT, now: true },
+      trips: [{ ...base, quiet: true, browser: { ...base.browser, phase: "off", mode: "off", cart: null } }],
+    });
+    mockFetch((r) => (r.url === "/api/state" ? jsonResponse(state) : jsonResponse({ terminals: [] })));
     renderWithProviders(<MtApp />);
     expect(await screen.findByText(/1 of 3 watched · quiet until 6:00 am/)).toBeInTheDocument();
+    expect(statusBadge()).toBe("Quiet hours");
+  });
+
+  it("say on a quiet trip's checkout page when it's checked again", async () => {
+    history.replaceState(null, "", `/c/${TRIP_ID}`);
+    const base = myState().trips[0];
+    if (!base) throw new Error("no trip");
+    const state = myState({
+      settings: { quiet_hours: NIGHT },
+      quiet_hours: { ...NIGHT, now: true },
+      trips: [{ ...base, quiet: true, browser: { ...base.browser, phase: "off", mode: "off", cart: null } }],
+    });
+    mockFetch((r) => (r.url === "/api/state" ? jsonResponse(state) : jsonResponse({ terminals: [] })));
+    renderWithProviders(<MtApp />);
+    expect(await screen.findByText("It's your quiet hours, so this trip isn't checked until 6:00 am.")).toBeVisible();
+    expect(screen.getByText("Quiet hours")).toBeInTheDocument();
   });
 });
 
@@ -455,7 +478,7 @@ describe("a bookable sailing nothing holds", () => {
     const { user } = renderWithProviders(<MtApp />);
     expect(await screen.findByText("9:00 am is bookable, not held")).toBeInTheDocument();
     expect(screen.getByText("You're in your quiet hours. Hold it for me, or book it yourself.")).toBeInTheDocument();
-    expect(screen.getByText("Bookable now")).toBeInTheDocument();
+    expect(statusBadge()).toBe("Bookable");
     expect(screen.getByRole("link", { name: /Book on bcferries.com/ })).toHaveAttribute("href", BOOK);
     await user.click(screen.getByRole("button", { name: /Hold it for me/ }));
     expect(await screen.findByRole("button", { name: /Holding it/ })).toBeDisabled();
@@ -503,7 +526,7 @@ describe("a bookable sailing nothing holds", () => {
     history.replaceState(null, "", `/c/${TRIP_ID}`);
     mockFetch((r) => (r.url === "/api/state" ? jsonResponse(starting) : jsonResponse({ terminals: [] })));
     renderWithProviders(<MtApp />);
-    expect(await screen.findByText("Checking to hold it for you")).toBeInTheDocument();
+    expect(await screen.findByText("Trying to hold it")).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent("Trying to hold it now.");
   });
 
