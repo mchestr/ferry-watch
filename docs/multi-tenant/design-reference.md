@@ -371,9 +371,14 @@ Numbers below are the defaults from the canonical table in §8.2.
    grants it only if the user holds no cart and has no live claim (one hold per user at a time, owner round
    3), in one SQL statement, so a warm pod and a short-check pod of the same user can never both cart. A
    granted claim also proves ferry-control is reachable, so nobody is carted while alerts can't be
-   delivered. Otherwise the agent records the departure as *offered* and sends a `bookable` alert (quiet
-   hours: "open now, book on bcferries.com"; already holding: "another sailing opened"); an offered departure
-   may still be carted later, once, if it is still open when the limit clears (§5.2). When carting, the agent:
+   delivered. Otherwise the agent records the departure as *offered* and sends a `bookable` alert, whose
+   words say why (ferry-control's `held_back`: quiet hours, auto-cart off, holding elsewhere, a limit); an
+   offered departure may still be carted later if it is still open when the limit clears (§5.2). A departure
+   whose cart failed isn't tried again on its own (each try spends a daily cart attempt): only after the user
+   asks (Check now, "Hold it for me") or once it sells out and reopens. "Hold it for me"
+   (`POST /api/trips/{id}/hold`) lifts quiet hours, and the trip's own auto-cart off, for that trip for
+   10 minutes (`trip_runtime.hold_requested_until`), and checks now; every other limit and the claim still
+   apply, and ferry-control clears the request once a cart is held or fails. When carting, the agent:
    - runs `add_to_cart` (≤40 s, `CART_BUDGET_SECONDS`, `watcher.py:50`);
    - on READY, starts its local hard-cap clock;
    - sends `alert{cart_held, depart, fare, price}` and `state`, buffered until acked.
@@ -1510,6 +1515,7 @@ the cluster admin can technically see everything (R1).
 | `GET /api/state` | Per-user snapshot: `me`, `limits` (effective value plus source), `usage`, `trips[].browser{phase, mode (warm, short_check, off), reason, queue_position, next_check_at, last_check_at, effective_interval, next_due, heartbeat_at, cart, viewer, lockdown_ok}`, `capacity{can_add, reason}`, `quiet_hours{start, end, now}`, `links{kofi}`, events. Drops the global `checkout_url`, `login_configured`, `alerts_configured` and `max_trips` (`views.py:118-143`). |
 | `POST/PATCH/DELETE /api/trips[/{id}]` | Scoped to the user, with transactional limits (§9.2): `maxTrips` and the 30-day horizon. Enabling never fails for `maxActiveBrowsers`; the fleet loop picks the warm trip (§6.6). DELETE sends `drain`; the cart is returned before the row is archived. |
 | `POST /api/trips/{id}/check` | Replaces `POST /api/check` (`server.py:403-407`). On the warm trip it sends `check_now`; on another trip it makes a short check due now (a pod start). 6/h per user. |
+| `POST /api/trips/{id}/hold` | "Hold it for me": a bookable sailing in the trip's times that nothing holds. Sets `trip_runtime.hold_requested_until` (now + 10 min) and checks now (counted as a manual check). While it lasts, ferry-control's gate skips quiet hours and the trip's auto-cart off for that trip; nothing else. 409 with the reason when there's nothing to hold or a limit stands in the way. Each trip in `GET /api/state` carries `hold{reason, can_request, requested_at, requested_until}` and `booking_url`. |
 | `POST /api/trips/{id}/cart/release` and `/dismiss` | Scoped. Inserts an `agent_commands` row. |
 | `POST /api/trips/{id}/cart/self-book` | **New.** Release, then return `search_url` for the user to book directly. |
 | `POST /api/trips/{id}/vnc` | **New.** Ticket mint (§3.6 step 4). A bearer-authenticated JSON POST; the existing Origin and JSON checks still apply. |
@@ -1706,8 +1712,9 @@ recipient; `Message` (`notify.py:31-37`) gains `user_id`, `trip_id` and `kind`; 
 |---|---|---|---|
 | `cart_held` (urgency high, TTL 1800 s) | push + email (same text as subject) | "Held for you: 7:00 am Tsawwassen → Swartz Bay, Fri Aug 1." / "Check out as a guest by 3:42 pm. Have your card and phone ready; your bank may ask you to approve in its app. A computer is easiest." | `/c/<trip>` |
 | `hold_reminder` (unclaimed, at 15 min), `hold_ending` (session, at T−5) | push | route, date, sailing, absolute deadline | `/c/<trip>` |
-| `bookable` (no cart: auto-cart off, alert-only, limit, quiet hours, or a cart already held on another trip) | push | route, date, sailings | `search_url(trip)` on the constant `BASE_URL` (`site.py:72-87`) |
-| `cart_lost`, `cart_expired` (with "Still bookable: book on bcferries.com" when the last check saw it open), `cart_failed`, `failing` (3rd error; suppressed while the breaker is open), `checkout_blocked` | push (+ email for lost, expired) | typed | `/c/<trip>` (or `search_url`) |
+| `bookable` (no cart: auto-cart off, alert-only, limit, quiet hours, or a cart already held on another trip) | push (email when no device works) | route, date, sailings, and why nothing was held (ferry-control's `held_back`, worked out when it records the alert) | `/c/<trip>`, which says why, offers "Hold it for me" and links to `search_url(trip)`; email adds `search_url` as a second link |
+| `cart_failed` (the claim was granted, `add_to_cart` failed; `error_class` says how) | push | route, date, sailings, why BC Ferries refused | `/c/<trip>`, as for `bookable` |
+| `cart_lost`, `cart_expired` (with "Still bookable: book on bcferries.com" when the last check saw it open), `failing` (3rd error; suppressed while the breaker is open), `checkout_blocked` | push (+ email for lost, expired) | typed | `/c/<trip>` (or `search_url`) |
 | `booked_it` ("Did you book it?"), `booked` ("Booked!") | push + email | typed; email links open `/c/<trip>?answer=…`, which asks to confirm (no state change on GET) | `/c/<trip>` |
 | `invited` | email | onboarding steps (§12.5) | `https://ferry.chestr.dev/` |
 | admin: breaker, brake, capacity, delivery failures, `release_unverified`, `checkout_blocked`, `guest_checkout_failing` | admin push + PrometheusRules | typed | `/admin` |
@@ -2240,7 +2247,7 @@ This is the only place numbers are defined; other sections refer here. "Compiled
 | interval floor (`MIN_INTERVAL`, `:21`) | 30 s | compiled, in `polling.py` and in the agent (§5.4) | control, agent |
 | short check: every other eligible trip, one check by a short-lived pod (`short_check_interval`, `:40`) | every 6 h, ±15 % jitter; at once when a trip is added, re-enabled or un-paused | admin-configurable up to 24 h; never more often than the slowest warm tier | fleet loop |
 | `shortCheckSlots`: browser slots kept free of warm pods | 1 | < `maxBrowsersTotal` | fleet loop |
-| quiet hours: normal polling, alert only, no new cart (`quiet_start`/`quiet_end`, `:42-43`; `quiet`, `:77-82`) | 23:00-06:00 Pacific | fleet-wide; not a user setting | control (`auto_cart`, `cart_claim`) |
+| quiet hours: normal polling, alert only, no new cart (`quiet_start`/`quiet_end`, `:42-43`; `quiet`, `:77-82`); lifted for a trip for 10 minutes by "Hold it for me" | 23:00-06:00 Pacific | fleet-wide; not a user setting | control (`auto_cart`, `cart_claim`) |
 | **Hold clocks** | | | |
 | unclaimed, from control ack (reminder at 15 min) | 30 min; tuned from production (kept ≤ BC Ferries' cart TTL − 5 min once `ferrywatch_site_cart_ttl_seconds` shows it) | compiled 45 | agent; operator backstop |
 | checkout session, from first connect (warning at T−5) | 30 min; tuned from production (`ferrywatch_checkout_seconds` p90 + 5 min) | compiled 45 | agent gate |

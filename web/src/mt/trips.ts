@@ -25,6 +25,8 @@ export function tripBadge(trip: MyTrip): TripBadge {
   if (trip.paused_reason === "after_checkout") return { text: "Did you book it?", tone: "warning" };
   if (!trip.trip.enabled) return { text: "Paused", tone: "outline" };
   if (b.cart?.status === "ready") return { text: "Holding a cart", tone: "success" };
+  if (b.cart?.status === "adding") return { text: "Holding it…", tone: "success" };
+  if (unheld(trip).length > 0) return { text: "Bookable now", tone: "warning" };
   if (b.phase === "queued") {
     return { text: `Waiting for a free browser${b.queue_position ? ` (#${b.queue_position})` : ""}`, tone: "soft" };
   }
@@ -55,6 +57,39 @@ export function asSailings(trip: MyTrip): Sailing[] {
       in_window: earliest <= s.depart && s.depart <= latest,
     };
   });
+}
+
+/** The departures ("HH:MM") the trip's last check found open inside its times. */
+export function bookableInWindow(trip: MyTrip): string[] {
+  const { earliest, latest } = trip.trip;
+  return trip.browser.sailings
+    .filter((s) => s.status === "available" && earliest <= s.depart && s.depart <= latest)
+    .map((s) => s.depart);
+}
+
+/** A bookable sailing that nothing is holding (or trying to): what the "not held" panel is for. */
+export function unheld(trip: MyTrip): string[] {
+  const cart = trip.browser.cart;
+  if (!trip.trip.enabled || trip.paused_reason !== null) return [];
+  if (cart && (cart.status === "ready" || cart.status === "adding")) return [];
+  return bookableInWindow(trip);
+}
+
+const NOT_HELD: Record<string, string> = {
+  quiet_hours: "We don't hold carts overnight.",
+  auto_cart_off: "Auto-hold is off for this trip.",
+  holding_elsewhere: "You're already holding a cart on another trip.",
+  no_holds_left: "You've used today's holds.",
+  limit: "You've reached today's limit for holding carts.",
+  carting_paused: "Holding carts is paused right now.",
+};
+
+/** Why nothing is holding the trip's bookable sailings, in plain words. */
+export function notHeldReason(trip: MyTrip): string {
+  const cart = trip.browser.cart;
+  if (cart?.status === "failed") return "We tried to hold it, but BC Ferries didn't let us.";
+  const reason = trip.hold.reason;
+  return reason ? (NOT_HELD[reason] ?? "We couldn't hold it.") : "We couldn't hold it this time.";
 }
 
 /** Whole minutes from now until `deadline` (epoch seconds), never negative. */

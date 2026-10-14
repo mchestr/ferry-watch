@@ -21,7 +21,7 @@ from ferry_watch.control.configure import (
 from ferry_watch.control.kube import AGENT_USERNAME, ObservedPod, pod_identity
 from ferry_watch.control.limits import Effective, Limits
 from ferry_watch.models import PACIFIC, FarePreference, Trip, Vehicle
-from ferry_watch.protocol import Brake
+from ferry_watch.protocol import Brake, Configure
 
 TRIP = Trip(id="3f9c0a1b2c3d4e5f", origin="SWB", destination="TSA", date=date(2026, 10, 16), earliest=time(7))
 NOON = datetime(2026, 10, 15, 12, 0, tzinfo=PACIFIC)
@@ -62,6 +62,20 @@ def test_a_default_above_its_ceiling_is_refused() -> None:
 )
 def test_cart_gate(allowance: Allowance, switches: Switches, at: datetime, expected: str) -> None:
     assert cart_gate(TRIP, allowance, switches, SETTINGS, at) == expected
+
+
+def test_a_hold_the_user_asks_for_is_allowed_in_quiet_hours_only() -> None:
+    """Quiet hours keep holds from waiting on someone asleep; someone asking is awake. Every other limit stays."""
+    night = NOON.replace(hour=23, minute=30)
+    assert cart_gate(TRIP, PLENTY, Switches(), SETTINGS, night, requested=True) == "ok"
+    assert cart_gate(TRIP, PLENTY, Switches(pause_carting=True), SETTINGS, night, requested=True) == "carting_paused"
+    used = Allowance(4, 6, 60, holds_today=4)
+    assert cart_gate(TRIP, used, Switches(), SETTINGS, night, requested=True) == "no_holds_left"
+    assert cart_gate(TRIP, Allowance(4, 6, 60, cart_attempts_today=6), Switches(), SETTINGS, NOON, requested=True) == (
+        "limit"
+    )
+    off = HubSettings(auto_cart=False)
+    assert cart_gate(TRIP, PLENTY, Switches(), off, NOON, requested=True) == "carting_paused"
 
 
 def test_alert_only_fares_and_vehicles() -> None:
@@ -137,6 +151,32 @@ def test_configure() -> None:
         now=NOON.timestamp(),
     )
     assert (paused.active, paused.vnc_allowed) == (False, False)
+
+
+def test_configure_for_a_requested_hold() -> None:
+    """While the user's request lasts, the pod may cart: through quiet hours and the trip's own auto-cart off."""
+    envelope: dict[str, object] = {"seq": 1, "trip": TRIP.id, "boot": "0" * 16, "rev": 3}
+    night = NOON.replace(hour=23, minute=30).timestamp()
+    manual = Trip(id=TRIP.id, origin="SWB", destination="TSA", date=TRIP.date, earliest=time(7), auto_cart=False)
+
+    def configure(trip: Trip, requested_until: float | None) -> Configure:
+        return build_configure(
+            envelope,
+            TripRow(trip, rev=3, enabled=True, paused_reason=None, hold_requested_until=requested_until),
+            mode="warm",
+            user_active=True,
+            allowance=PLENTY,
+            switches=Switches(),
+            settings=SETTINGS,
+            stretch_by=1.0,
+            now=night,
+        )
+
+    assert configure(TRIP, None).auto_cart is False  # quiet hours
+    asked = configure(manual, night + 600)
+    assert (asked.auto_cart, asked.trip_spec.auto_cart) == (True, True)
+    lapsed = configure(manual, night - 1)
+    assert (lapsed.auto_cart, lapsed.trip_spec.auto_cart) == (False, False)
 
 
 # ---- the API server's answers

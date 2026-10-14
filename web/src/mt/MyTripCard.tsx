@@ -13,7 +13,8 @@ import { clock, timeLabel } from "@/lib/time";
 import { MY_STATE_KEY, myApi, type BookedReason } from "./api";
 import { navigate } from "./router";
 import type { MyState, MyTrip } from "./schema";
-import { asSailings, minutesLeft, tripBadge, tripTitle } from "./trips";
+import { NotHeld } from "./NotHeld";
+import { asSailings, minutesLeft, tripBadge, tripTitle, unheld } from "./trips";
 
 const REASONS: readonly { value: BookedReason; label: string }[] = [
   { value: "needed_account", label: "It wanted an account" },
@@ -125,7 +126,8 @@ export function MyTripCard({
 }) {
   const badge = tripBadge(trip);
   const check = useMyMutation(() => myApi.checkNow(trip.trip.id), "Checking now");
-  const failed = trip.browser.cart?.status === "failed" ? trip.browser.cart : null;
+  // A failed cart whose sailing has gone again; while it's still bookable, NotHeld says so instead.
+  const failed = trip.browser.cart?.status === "failed" && unheld(trip).length === 0 ? trip.browser.cart : null;
   const dismiss = useMyMutation(() => myApi.dismiss(trip.trip.id, failed?.id ?? ""));
   const sailings = asSailings(trip);
   const checked = trip.browser.checked_at;
@@ -143,9 +145,10 @@ export function MyTripCard({
       </div>
       <BookedQuestion trip={trip} />
       <HeldCart trip={trip} />
+      <NotHeld trip={trip} />
       {failed && (
         <div className="flex items-center justify-between gap-3 rounded-xl border p-3 text-sm">
-          <span>Couldn't hold {timeLabel(failed.depart)}; book it on bcferries.com.</span>
+          <span>Couldn't hold {timeLabel(failed.depart)}, and it isn't bookable any more.</span>
           <Button size="sm" variant="ghost" onClick={() => dismiss.mutate(undefined)}>
             Dismiss
           </Button>

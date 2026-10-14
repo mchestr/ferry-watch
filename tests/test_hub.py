@@ -317,6 +317,72 @@ async def test_no_carts_in_quiet_hours(rig: Rig, agent: Agent) -> None:
     assert await rig.fetch("SELECT * FROM hold_claims") == []
 
 
+async def request_hold(rig: Rig, minutes: int = 10) -> None:
+    owner = await rig.db.connect()
+    try:
+        await owner.execute(
+            "UPDATE trip_runtime SET hold_requested_until = to_timestamp($1)", rig.clock[0] + minutes * 60
+        )
+    finally:
+        await owner.close()
+
+
+async def test_a_hold_the_user_asks_for_is_claimed_in_quiet_hours(rig: Rig, agent: Agent) -> None:
+    rig.clock[0] = datetime(2026, 10, 15, 23, 30, tzinfo=PACIFIC).timestamp()
+    await request_hold(rig)
+    assert await agent.client.claim("09:00", "saver") is True
+    held = Alert(**agent.client.envelope(), kind="cart_held", params=AlertParams(departures=["09:00"]))
+    agent.client.send(held)
+    await until(lambda: agent.client.acked(held.seq))
+    rows = await rig.fetch("SELECT hold_requested_until FROM trip_runtime")
+    assert rows[0]["hold_requested_until"] is None  # tried: quiet hours apply again
+
+
+async def test_a_lapsed_request_is_quiet_hours_again(rig: Rig, agent: Agent) -> None:
+    rig.clock[0] = datetime(2026, 10, 15, 23, 30, tzinfo=PACIFIC).timestamp()
+    await request_hold(rig, minutes=-1)
+    assert await agent.client.claim("09:00", "saver") is False
+
+
+@pytest.mark.parametrize(
+    ("setup", "held_back"),
+    [
+        ("quiet", "quiet_hours"),
+        ("manual", "auto_cart_off"),
+        ("elsewhere", "holding_elsewhere"),
+        ("nothing", "unknown"),
+    ],
+)
+async def test_a_bookable_alert_says_why_nothing_was_held(rig: Rig, agent: Agent, setup: str, held_back: str) -> None:
+    owner = await rig.db.connect()
+    try:
+        if setup == "quiet":
+            rig.clock[0] = datetime(2026, 10, 15, 23, 30, tzinfo=PACIFIC).timestamp()
+        elif setup == "manual":
+            spec = TRIP.to_json() | {"auto_cart": False}
+            await owner.execute("UPDATE trips SET spec = $1", json.dumps(spec))
+        elif setup == "elsewhere":
+            await owner.execute(
+                "INSERT INTO hold_claims (user_id, trip_id, pod, cart_id) VALUES ($1, 'ffffffffffffffff', 'x', 'c1')",
+                USER,
+            )
+    finally:
+        await owner.close()
+    alert = Alert(**agent.client.envelope(), kind="bookable", params=AlertParams(departures=["09:00"]))
+    agent.client.send(alert)
+    await until(lambda: agent.client.acked(alert.seq))
+    rows = await rig.fetch("SELECT params FROM notifications")
+    assert json.loads(rows[0]["params"]) == {
+        "departures": ["09:00"],
+        "fare": None,
+        "price": None,
+        "minutes": None,
+        "error_class": None,
+        "by_site": None,
+        "held_back": held_back,
+    }
+
+
 async def test_a_viewed_hold_without_a_booking_pauses_the_trip(rig: Rig, agent: Agent) -> None:
     bye = Bye(**agent.client.envelope(), reason="hold_ended", outcome="expired", viewer_was_connected=True)
     agent.client.send(bye)

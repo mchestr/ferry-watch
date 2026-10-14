@@ -27,6 +27,8 @@ export const myApi = {
   updateTrip: (id: string, patch: Partial<TripSettings>) => mutate("PATCH", tripPath(id), patch),
   removeTrip: (id: string) => mutate("DELETE", tripPath(id)),
   checkNow: (id: string) => mutate("POST", `${tripPath(id)}/check`),
+  /** "Hold it for me": check now, and hold a bookable sailing even overnight or with auto-hold off. */
+  hold: (id: string) => mutate("POST", `${tripPath(id)}/hold`),
   release: (id: string, cartId: string) => mutate("POST", `${tripPath(id)}/cart/release`, { cart_id: cartId }),
   dismiss: (id: string, cartId: string) => mutate("POST", `${tripPath(id)}/cart/dismiss`, { cart_id: cartId }),
   booked: (id: string, booked: boolean, reason?: BookedReason) =>

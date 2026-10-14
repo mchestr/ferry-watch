@@ -21,6 +21,25 @@ from ferry_watch.web.push import Urgency
 EMAIL_KINDS = frozenset({"cart_held", "cart_lost", "cart_expired", "booked_it", "booked", "invited"})
 ADMIN_KINDS = frozenset({"release_unverified", "checkout_blocked"})
 SHOWN_TIMES = 3
+BOOK_IT_YOURSELF = "Or book it yourself on bcferries.com"
+# Why a bookable sailing wasn't held (ferry-control's `held_back`), and what the user can do about it.
+HELD_BACK = {
+    "quiet_hours": "We don't hold carts overnight. Open Ferry Watch to hold it now.",
+    "auto_cart_off": "Auto-hold is off for this trip. Open Ferry Watch to hold it now.",
+    "holding_elsewhere": "You're holding a cart on another trip, so we didn't hold this one.",
+    "no_holds_left": "You've used today's holds, so we didn't hold it.",
+    "limit": "You've reached today's limit for holding carts, so we didn't hold it.",
+    "carting_paused": "Holding carts is paused right now, so we didn't hold it.",
+}
+NOT_HELD = "We couldn't hold it this time. Open Ferry Watch to try again."
+# Why BC Ferries didn't let a cart be held (the agent's error class).
+CART_FAILED = {
+    "not_bookable": "it may have just sold out",
+    "timeout": "the site was too slow",
+    "queue_timeout": "the site was too busy",
+    "markup_changed": "the site's pages changed",
+    "cart_mismatch": "the site's pages changed",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +50,7 @@ class Message:
     urgency: Urgency = "normal"
     ttl: int = 3600  # how long a push service keeps it for an offline device
     topic: str | None = None
+    also: tuple[str, str] | None = None  # (label, url): a second link, for email (a push opens only one)
 
     def push(self) -> dict[str, Any]:
         return {"title": self.title, "body": self.body, "url": self.url}
@@ -71,7 +91,7 @@ class Messages:
                 return search_url(trip, terminals)
         return f"{self._base}/"
 
-    def render(  # noqa: C901, PLR0911 - one branch per kind
+    def render(  # noqa: C901, PLR0911, PLR0912 - one branch per kind
         self,
         kind: str,
         params: Mapping[str, Any],
@@ -118,10 +138,23 @@ class Messages:
                 ttl=600,
                 topic=topic,
             )
-        if kind in ("bookable", "cart_failed"):
-            lead = "Bookable" if kind == "bookable" else "Bookable, but we couldn't hold it"
+        if kind == "bookable":
+            body = HELD_BACK.get(str(params.get("held_back")), NOT_HELD)
             return Message(
-                f"{lead}: {when} {route}, {date}", "Book it on bcferries.com.", self._search(trip), urgency="high"
+                f"Bookable: {when} {route}, {date}",
+                body,
+                checkout,  # the trip's page: why nothing is held, "Hold it for me", and bcferries.com
+                urgency="high",
+                also=(BOOK_IT_YOURSELF, self._search(trip)),
+            )
+        if kind == "cart_failed":
+            why = CART_FAILED.get(str(params.get("error_class")))
+            return Message(
+                f"Bookable, but we couldn't hold it: {when} {route}, {date}",
+                f"BC Ferries didn't let us hold it{f' ({why})' if why else ''}. Open Ferry Watch to try again.",
+                checkout,
+                urgency="high",
+                also=(BOOK_IT_YOURSELF, self._search(trip)),
             )
         if kind == "cart_lost":
             return Message(

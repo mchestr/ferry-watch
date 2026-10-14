@@ -211,7 +211,11 @@ class Outbox:
     async def _email(self, to: str | None, message: Message) -> bool:
         if to is None or self._mailer is None:
             return False
-        await self._mailer.send(to, message.title, f"{message.body}\n\n{message.url}\n")
+        text = f"{message.body}\n\n{message.url}\n"
+        if message.also is not None:
+            label, url = message.also
+            text += f"\n{label}:\n{url}\n"
+        await self._mailer.send(to, message.title, text)
         return True
 
     async def _to_admins(self, kind: str, trip: Trip | None) -> None:

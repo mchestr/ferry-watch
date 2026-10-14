@@ -18,6 +18,8 @@ function myState(overrides: Partial<MyState> = {}): MyState {
         trip: { ...makeSettings(), id: TRIP_ID },
         rev: 1,
         paused_reason: null,
+        hold: { reason: null, can_request: true, requested_at: null, requested_until: null },
+        booking_url: null,
         browser: {
           phase: "holding",
           mode: "warm",
@@ -169,6 +171,82 @@ describe("signed in", () => {
     renderWithProviders(<MtApp />);
     expect(await screen.findByRole("button", { name: "Sign in" })).toBeInTheDocument();
     expect(localStorage.getItem("fw.token")).toBeNull();
+  });
+});
+
+describe("a bookable sailing nothing holds", () => {
+  const SAILING = {
+    depart: "09:00",
+    arrive: "10:35",
+    vessel: "Queen of Oak Bay",
+    status: "available" as const,
+    fares: [],
+  };
+  const BOOK = "https://www.bcferries.com/?sailing=true&departureLocation=NAN";
+
+  function unheldState(hold: Partial<MyState["trips"][number]["hold"]> = {}, checkedAt: number | null = null) {
+    const base = myState().trips[0];
+    if (!base) throw new Error("no trip");
+    return myState({
+      trips: [
+        {
+          ...base,
+          booking_url: BOOK,
+          hold: { reason: "quiet_hours", can_request: true, requested_at: null, requested_until: null, ...hold },
+          browser: { ...base.browser, cart: null, sailings: [SAILING], checked_at: checkedAt },
+        },
+      ],
+    });
+  }
+
+  beforeEach(() => {
+    localStorage.setItem("fw.token", "t-1");
+  });
+
+  it("says why, offers to hold it, and links to bcferries.com", async () => {
+    const { requests } = mockFetch((r) => {
+      if (r.url === "/api/state") return jsonResponse(unheldState());
+      if (r.url.endsWith("/hold")) {
+        const now = Date.now() / 1000;
+        return jsonResponse(unheldState({ requested_at: now, requested_until: now + 600 }));
+      }
+      return jsonResponse({ terminals: [] });
+    });
+    const { user } = renderWithProviders(<MtApp />);
+    expect(await screen.findByText("9:00 am is bookable, not held")).toBeInTheDocument();
+    expect(screen.getByText("We don't hold carts overnight. Hold it for me, or book it yourself.")).toBeInTheDocument();
+    expect(screen.getByText("Bookable now")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Book on bcferries.com/ })).toHaveAttribute("href", BOOK);
+    await user.click(screen.getByRole("button", { name: /Hold it for me/ }));
+    expect(await screen.findByRole("button", { name: /Holding it/ })).toBeDisabled();
+    expect(requests.some((r) => r.method === "POST" && r.url === `/api/trips/${TRIP_ID}/hold`)).toBe(true);
+  });
+
+  it("offers the button again once a check after the request held nothing", async () => {
+    const now = Date.now() / 1000;
+    const state = unheldState({ reason: null, requested_at: now - 60, requested_until: now + 540 }, now - 5);
+    mockFetch((r) => (r.url === "/api/state" ? jsonResponse(state) : jsonResponse({ terminals: [] })));
+    renderWithProviders(<MtApp />);
+    expect(await screen.findByRole("button", { name: /Hold it for me/ })).toBeEnabled();
+  });
+
+  it("only links to bcferries.com when a hold can't be asked for", async () => {
+    const state = unheldState({ reason: "holding_elsewhere", can_request: false });
+    mockFetch((r) => (r.url === "/api/state" ? jsonResponse(state) : jsonResponse({ terminals: [] })));
+    renderWithProviders(<MtApp />);
+    expect(
+      await screen.findByText("You're already holding a cart on another trip. You can still book it yourself."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Hold it for me/ })).toBeNull();
+  });
+
+  it("is where a Bookable alert lands", async () => {
+    history.replaceState(null, "", `/c/${TRIP_ID}`);
+    mockFetch((r) => (r.url === "/api/state" ? jsonResponse(unheldState()) : jsonResponse({ terminals: [] })));
+    renderWithProviders(<MtApp />);
+    expect(await screen.findByText("9:00 am is bookable, not held")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Hold it for me/ })).toBeInTheDocument();
+    expect(screen.queryByText("Nothing is held right now")).toBeNull();
   });
 });
 

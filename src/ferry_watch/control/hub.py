@@ -49,7 +49,7 @@ from ferry_watch.protocol import (
 from .configure import HubSettings, build_configure, cart_gate, worth_pushing
 from .kube import Cluster
 from .pods import HUB_TOKEN_AUDIENCE
-from .store import Binding, ControlStore
+from .store import Binding, ControlStore, HeldBack
 
 log = logging.getLogger(__name__)
 
@@ -226,7 +226,8 @@ class HubEndpoint:
             if isinstance(message, Event):
                 await self._store.record_event(binding, peer.boot, message)
             elif isinstance(message, Alert):
-                await self._store.record_alert(binding, peer.boot, message, now)
+                held_back = await self._held_back(binding, now) if message.kind == "bookable" else None
+                await self._store.record_alert(binding, peer.boot, message, now, held_back)
             else:
                 await self._store.record_bye(binding, peer.boot, message, now)
             await self._send(peer, Ack(**peer.envelope(), acked=message.seq))
@@ -242,12 +243,30 @@ class HubEndpoint:
             row, _ = found
             allowance = await self._store.allowance(binding.user_id, now)
             switches = await self._store.switches()
-            gate = cart_gate(row.trip, allowance, switches, self._settings, datetime.fromtimestamp(now, PACIFIC))
+            at = datetime.fromtimestamp(now, PACIFIC)
+            gate = cart_gate(row.trip, allowance, switches, self._settings, at, requested=row.hold_requested(now))
             reason = await self._store.claim(binding, gate, now)
         log.info("%s: cart claim for %s: %s", binding.pod, claim.depart, reason)
         await self._send(
             peer, CartClaimResult(**peer.envelope(), claim=claim.seq, granted=reason == "ok", reason=reason)
         )
+
+    async def _held_back(self, binding: Binding, now: float) -> HeldBack:
+        """Why a pod alerted a bookable sailing instead of holding it, as far as the records say."""
+        found = await self._store.trip_row(binding.trip_id)
+        if found is None or not found[1]:
+            return "carting_paused"
+        row, _ = found
+        requested = row.hold_requested(now)
+        if not row.trip.auto_cart and not requested:
+            return "auto_cart_off"
+        allowance = await self._store.allowance(binding.user_id, now)
+        switches = await self._store.switches()
+        at = datetime.fromtimestamp(now, PACIFIC)
+        gate = cart_gate(row.trip, allowance, switches, self._settings, at, requested=requested)
+        if gate != "ok":
+            return gate
+        return "holding_elsewhere" if await self._store.holding_elsewhere(binding) else "unknown"
 
     # ---- what the endpoint sends
 

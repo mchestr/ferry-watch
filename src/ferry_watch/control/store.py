@@ -26,6 +26,11 @@ from .limits import Limits
 log = logging.getLogger(__name__)
 
 USER_CHANNEL = "fw_user"  # NOTIFY payload: a user id whose dashboard changed
+# Why a bookable sailing wasn't held, as far as ferry-control can tell ("unknown": the pod's own limits, or
+# a claim it couldn't make while disconnected).
+HeldBack = Literal[
+    "auto_cart_off", "quiet_hours", "no_holds_left", "limit", "carting_paused", "holding_elsewhere", "unknown"
+]
 CLAIM_LAPSE_SECONDS = 120  # a claim without cart_held or cart_failed by then is dropped
 AFTER_CHECKOUT = "after_checkout"  # trips.paused_reason until "Did you book it?" is answered
 _PHASES = {"starting": "starting", "watching": "watching", "holding": "holding", "draining": "draining"}
@@ -77,8 +82,10 @@ class ControlStore:
     async def trip_row(self, trip_id: str) -> tuple[TripRow, bool] | None:
         """The trip as configured, and whether its owner is active."""
         row = await self._pool.fetchrow(
-            "SELECT t.spec, t.rev, t.enabled, t.paused_reason, t.archived_at, u.state, m.alerted, m.offered"
+            "SELECT t.spec, t.rev, t.enabled, t.paused_reason, t.archived_at, u.state, m.alerted, m.offered,"
+            " r.hold_requested_until"
             " FROM trips t JOIN users u ON u.id = t.user_id LEFT JOIN alert_memory m ON m.trip_id = t.id"
+            " LEFT JOIN trip_runtime r ON r.trip_id = t.id"
             " WHERE t.id = $1",
             trip_id,
         )
@@ -96,8 +103,16 @@ class ControlStore:
             paused_reason=row["paused_reason"],
             alerted=tuple(row["alerted"] or ()),
             offered=tuple(row["offered"] or ()),
+            hold_requested_until=row["hold_requested_until"].timestamp() if row["hold_requested_until"] else None,
         )
         return trip_row, row["state"] == "active"
+
+    async def holding_elsewhere(self, binding: Binding) -> bool:
+        """Whether the user's one hold is claimed by another pod."""
+        found = await self._pool.fetchval(
+            "SELECT 1 FROM hold_claims WHERE user_id = $1 AND pod <> $2", binding.user_id, binding.pod
+        )
+        return found is not None
 
     async def allowance(self, user_id: str, now: float) -> Allowance:
         overrides = {
@@ -226,8 +241,16 @@ class ControlStore:
             binding.key(boot, event.seq),
         )
 
-    async def record_alert(self, binding: Binding, boot: str, alert: Alert, now: float) -> bool:
-        """Queue the alert for the user. False if it was already queued (a replay)."""
+    async def record_alert(
+        self, binding: Binding, boot: str, alert: Alert, now: float, held_back: HeldBack | None = None
+    ) -> bool:
+        """Queue the alert for the user. False if it was already queued (a replay).
+
+        `held_back`: for a bookable alert, why no cart was held, so the message can say so.
+        """
+        params = msgspec.to_builtins(alert.params)
+        if held_back is not None:
+            params["held_back"] = held_back
         async with self._pool.acquire() as conn, conn.transaction():
             queued = await conn.fetchval(
                 "INSERT INTO notifications (user_id, trip_id, kind, params, dedup_key) VALUES ($1, $2, $3, $4, $5)"
@@ -235,11 +258,16 @@ class ControlStore:
                 binding.user_id,
                 binding.trip_id,
                 alert.kind,
-                _json(alert.params),
+                _json(params),
                 binding.key(boot, alert.seq),
             )
             if queued is None:
                 return False
+            if alert.kind in ("cart_held", "cart_failed"):
+                # A hold the user asked for has been tried: back to the trip's own settings and quiet hours.
+                await conn.execute(
+                    "UPDATE trip_runtime SET hold_requested_until = NULL WHERE trip_id = $1", binding.trip_id
+                )
             if alert.kind == "cart_held":
                 await _count(conn, binding.user_id, now, "holds")
             elif alert.kind in ("cart_failed", "cart_lost", "cart_expired"):

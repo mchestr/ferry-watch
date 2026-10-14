@@ -53,11 +53,29 @@ export const BrowserSchema = z.object({
   viewer_connected: z.boolean(),
 });
 
+/** Why auto-hold won't hold the trip's sailings now (null: it would), and whether "Hold it for me" can. */
+export const HoldSchema = z.object({
+  reason: reported([
+    "quiet_hours",
+    "auto_cart_off",
+    "holding_elsewhere",
+    "no_holds_left",
+    "limit",
+    "carting_paused",
+  ]).nullable(),
+  can_request: z.boolean(),
+  requested_at: epoch.nullable().default(null),
+  requested_until: epoch.nullable(),
+});
+
 export const MyTripSchema = z.object({
   trip: TripSettingsSchema.extend({ id: z.string().regex(/^[a-f0-9]{16}$/) }),
   rev: z.number().int(),
   paused_reason: z.string().nullable(),
   browser: BrowserSchema,
+  hold: HoldSchema.default({ reason: null, can_request: false, requested_at: null, requested_until: null }),
+  // BC Ferries' booking form for the route and date, to book it yourself. Only ever a bcferries.com link.
+  booking_url: z.string().url().startsWith("https://www.bcferries.com/").nullable().catch(null).default(null),
 });
 
 const LimitSchema = z.object({ value: z.number().int(), source: reported(["default", "override", "ceiling"]) });
@@ -98,4 +116,5 @@ export type SailingInfo = z.infer<typeof SailingInfoSchema>;
 export type CartInfo = z.infer<typeof CartInfoSchema>;
 export type Browser = z.infer<typeof BrowserSchema>;
 export type MyTrip = z.infer<typeof MyTripSchema>;
+export type Hold = z.infer<typeof HoldSchema>;
 export type MyState = z.infer<typeof MyStateSchema>;

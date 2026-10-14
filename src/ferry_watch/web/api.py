@@ -15,9 +15,10 @@ from typing import Any
 from aiohttp import web
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from ferry_watch.bcferries.errors import BookingError
-from ferry_watch.bcferries.terminals import TerminalDirectory
-from ferry_watch.models import Trip
+from ferry_watch.bcferries.errors import BookingError, RouteRejected
+from ferry_watch.bcferries.terminals import TerminalDirectory, Terminals
+from ferry_watch.bcferries.urls import search_url
+from ferry_watch.models import Trip, ValidationError
 from ferry_watch.tickets import TTL_SECONDS, Display, mint
 
 from .auth import signed_in
@@ -57,7 +58,21 @@ def _cart_id(body: dict[str, Any]) -> str:
 
 async def get_state(request: web.Request) -> web.Response:
     state = await request.app[STORE].snapshot(signed_in(request).uid)
+    directory = request.app.get(TERMINALS)
+    terminals = directory.cached if directory is not None else None
+    for trip in state["trips"]:
+        trip["booking_url"] = _booking_url(trip["trip"], terminals)
     return web.json_response(state | request.app[PUBLIC])
+
+
+def _booking_url(spec: dict[str, Any], terminals: Terminals | None) -> str | None:
+    """BC Ferries' booking form for the trip's route and date, to book it yourself."""
+    if terminals is None:
+        return None
+    try:
+        return search_url(Trip.from_json(spec), terminals)
+    except (RouteRejected, ValidationError):
+        return None
 
 
 async def get_terminals(request: web.Request) -> web.Response:
@@ -91,6 +106,12 @@ async def delete_trip(request: web.Request) -> web.Response:
 
 async def check_now(request: web.Request) -> web.Response:
     await request.app[STORE].check_now(signed_in(request).uid, _trip_id(request))
+    await request.app[STORE].notify(signed_in(request).uid)
+    return await get_state(request)
+
+
+async def request_hold(request: web.Request) -> web.Response:
+    await request.app[STORE].request_hold(signed_in(request).uid, _trip_id(request))
     await request.app[STORE].notify(signed_in(request).uid)
     return await get_state(request)
 
@@ -192,6 +213,7 @@ def routes() -> list[web.RouteDef]:
         web.patch("/api/trips/{trip_id:[a-f0-9]{16}}", update_trip),
         web.delete("/api/trips/{trip_id:[a-f0-9]{16}}", delete_trip),
         web.post("/api/trips/{trip_id:[a-f0-9]{16}}/check", check_now),
+        web.post("/api/trips/{trip_id:[a-f0-9]{16}}/hold", request_hold),
         web.post("/api/trips/{trip_id:[a-f0-9]{16}}/cart/release", release_cart),
         web.post("/api/trips/{trip_id:[a-f0-9]{16}}/cart/dismiss", dismiss_cart),
         web.post("/api/trips/{trip_id:[a-f0-9]{16}}/vnc", open_checkout),

@@ -3,7 +3,7 @@
  * it is the only one that can, so the user chooses (docs/multi-tenant/design-reference.md §10).
  */
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Laptop, Smartphone } from "lucide-react";
+import { ArrowLeft, Laptop, Loader2, Smartphone } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -14,7 +14,8 @@ import { clock, timeLabel } from "@/lib/time";
 import { MY_STATE_KEY, myApi } from "./api";
 import { navigate } from "./router";
 import type { MyState } from "./schema";
-import { minutesLeft, tripTitle } from "./trips";
+import { NotHeld } from "./NotHeld";
+import { minutesLeft, tripTitle, unheld } from "./trips";
 
 export function CheckoutPage({
   state,
@@ -49,14 +50,28 @@ export function CheckoutPage({
     </Button>
   );
   if (!trip || !cart || cart.status !== "ready") {
+    // Where a "Bookable" alert lands too: the sailing may be open with nothing holding it yet.
+    const bookable = trip ? unheld(trip) : [];
     return (
       <div className="mx-auto max-w-xl space-y-4">
         {back}
-        <Card className="p-6">
-          <h1 className="font-semibold">Nothing is held right now</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            The hold may have ended. We'll alert you if the sailing opens up again.
-          </p>
+        <Card className="space-y-4 p-6">
+          {trip && <h1 className="text-lg font-bold">{tripTitle(trip, terminals)}</h1>}
+          {trip && bookable.length > 0 ? (
+            <NotHeld trip={trip} />
+          ) : cart?.status === "adding" ? (
+            <p className="flex items-center gap-2 text-sm">
+              <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden /> Holding it now. This page updates when
+              it's held.
+            </p>
+          ) : (
+            <div>
+              <h2 className="font-semibold">Nothing is held right now</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Nothing in your times is bookable at the moment. We'll alert you when a sailing opens up.
+              </p>
+            </div>
+          )}
         </Card>
       </div>
     );
