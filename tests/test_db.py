@@ -226,17 +226,23 @@ async def test_0004_pauses_each_trip_of_whoever_paused_everything(pg_server: Ser
 
 
 async def test_0005_gives_everyone_quiet_hours(pg_server: Server) -> None:
-    """Quiet hours turned off in 0.6.3 become the default, 10 pm to 5 am; times someone chose stay."""
+    """Quiet hours off, or left at 0.6.3's 11 pm to 6 am, become the default, 10 pm to 5 am; times someone chose
+    stay."""
     async with migrated_up_to(pg_server, "0005") as owner:
-        ann, bob, cat = "a" * 20, "b" * 20, "c" * 20
+        ann, bob, cat, dan = "a" * 20, "b" * 20, "c" * 20, "d" * 20
         await owner.execute(
-            "INSERT INTO users (id, username) VALUES ($1, 'ann'), ($2, 'bob'), ($3, 'cat')", ann, bob, cat
+            "INSERT INTO users (id, username) VALUES ($1, 'ann'), ($2, 'bob'), ($3, 'cat'), ($4, 'dan')",
+            ann,
+            bob,
+            cat,
+            dan,
         )
         await owner.execute(
             "INSERT INTO user_settings (user_id, quiet_start, quiet_end)"
-            " VALUES ($1, NULL, NULL), ($2, '23:30', '06:15')",
+            " VALUES ($1, NULL, NULL), ($2, '23:30', '06:15'), ($3, '23:00', '06:00')",
             ann,
             bob,
+            dan,
         )
         assert await migrate(owner) == [v for v, _ in migrations() if v >= "0005"]
         await owner.execute("INSERT INTO user_settings (user_id) VALUES ($1)", cat)  # a row starts at the default
@@ -245,6 +251,7 @@ async def test_0005_gives_everyone_quiet_hours(pg_server: Server) -> None:
             (ann, time(22), time(5)),  # had turned them off
             (bob, time(23, 30), time(6, 15)),
             (cat, time(22), time(5)),
+            (dan, time(22), time(5)),  # turned them on and kept the times 0.6.3 filled in
         ]
         # A 0.6.3 ferry-web still running during the rollout can store "off" (it reads as the default): the times
         # become NOT NULL a release later.
