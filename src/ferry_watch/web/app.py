@@ -15,7 +15,7 @@ from ferry_watch.control.limits import Limits
 from . import admin, api, auth
 from .accounts import Accounts
 from .api import CHECKOUT, PUBLIC, STORE, TERMINALS, CheckoutSigner
-from .http import errors, same_origin, security_headers
+from .http import SITE_ORIGIN, errors, same_origin, security_headers
 from .identity import OidcClient
 from .live import LiveHub
 from .repo import WebStore
@@ -37,7 +37,9 @@ def build(
     limits: Limits,
     terminals: TerminalDirectory | None = None,
     public: dict[str, Any] | None = None,
+    origin: str | None = None,
 ) -> web.Application:
+    """`origin` is the site's own (`baseUrl`): what a browser's Origin must be on a write or the live socket."""
     # Outermost first: headers on every answer, errors as JSON, then the session, then the write checks.
     app = web.Application(
         middlewares=[security_headers, errors, auth.require_session, same_origin], client_max_size=64 * 1024
@@ -49,6 +51,8 @@ def build(
     if terminals is not None:
         app[TERMINALS] = terminals
     app[PUBLIC] = public or {}
+    if origin is not None:
+        app[SITE_ORIGIN] = origin
     app.router.add_routes(auth.routes())
     app.router.add_routes(api.routes())
     admin.install(app, pool, limits, accounts.policy)

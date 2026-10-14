@@ -33,6 +33,7 @@ ISSUER = "https://idp"
 BOOTSTRAP = frozenset({(ISSUER, "boss")})  # whoever signs in as "boss" is an admin by config
 KEY = Ed25519PrivateKey.generate()
 ORIGIN = "https://ferry-checkout.chestr.dev"
+SITE = "https://ferry.chestr.dev"  # the dashboard's own origin (baseUrl)
 
 
 def soon(days: int = 3) -> str:
@@ -83,6 +84,7 @@ async def rig(db: Database, aiohttp_client: Callable[..., Any]) -> AsyncIterator
             CheckoutSigner(KEY, "k1", ORIGIN),
             pool=pool,
             limits=Limits(),
+            origin=SITE,  # served over plain http here, as behind the gateway that ends TLS
         )
         client: TestClient = await aiohttp_client(app)
         try:
@@ -261,6 +263,20 @@ async def test_writes_must_be_same_site_json(rig: Rig) -> None:
     assert response.status == 403
     response = await rig.call("POST", "/api/trips", data="from=SWB")
     assert response.status == 415
+
+
+async def test_the_site_is_its_configured_origin_not_the_requests(rig: Rig) -> None:
+    """The gateway ends TLS, so ferry-web sees http://<host>; browsers on the site send https://<site>."""
+    body = {"from": "SWB", "to": "TSA", "date": soon()}
+    response = await rig.call("POST", "/api/trips", json=body, headers={"Origin": SITE})
+    assert response.status == 200, await response.text()
+    plain = f"http://{rig.client.host}:{rig.client.port}"  # what the request itself looks like
+    response = await rig.call("POST", "/api/trips", json=body, headers={"Origin": plain})
+    assert response.status == 403
+    ws = await rig.client.ws_connect("/api/ws", headers={"Origin": SITE})
+    await ws.close()
+    with pytest.raises(aiohttp.WSServerHandshakeError):
+        await rig.client.ws_connect("/api/ws", headers={"Origin": "https://evil.example"})
 
 
 # ---- admin

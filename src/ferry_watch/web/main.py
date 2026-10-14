@@ -90,6 +90,7 @@ async def run_web(
                 limits=limits,
                 terminals=terminals,
                 public={"links": {"kofi": config.kofi_url}, "push": {"key": vapid.public_key if vapid else None}},
+                origin=config.base_url,
             )
             tasks = [asyncio.create_task(outbox.run(), name="outbox"), asyncio.create_task(_warm(terminals))]
             if config.static_dir:

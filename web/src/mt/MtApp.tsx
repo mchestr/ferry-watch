@@ -65,17 +65,18 @@ function SignedOut({ message }: { message?: string }) {
   );
 }
 
-function Callback() {
+function Callback({ onSignedIn }: { onSignedIn: () => void }) {
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     const fragment = location.hash;
     history.replaceState(null, "", "/auth/callback"); // the code leaves the address bar at once
     completeSignIn(fragment)
       .then((back) => {
+        onSignedIn();
         navigate(back, { replace: true });
       })
       .catch((e: unknown) => setError(errorMessage(e)));
-  }, []);
+  }, [onSignedIn]);
   if (error) return <SignedOut message={error} />;
   return (
     <Centered>
@@ -231,12 +232,18 @@ function SignedIn() {
   );
 }
 
+// Every request carries the token from the start. Wiring it up in MtApp's effect was too late: React runs the
+// children's effects first, so the page's first queries went out without it, and their 401s signed the user out.
+let onUnauthorized: (reason: AuthReason) => void = () => undefined;
+configureBearerAuth(token, (reason) => onUnauthorized(reason));
+
 export function MtApp() {
   const route = useRoute();
   const [signedOut, setSignedOut] = useState(() => !token() || isSignedOut());
+  const signedIn = useCallback(() => setSignedOut(false), []);
 
   useEffect(() => {
-    configureBearerAuth(token, (reason: AuthReason) => {
+    onUnauthorized = (reason) => {
       if ((reason === "expired" || reason === "reverify") && !isSignedOut()) {
         // A quiet trip through the identity provider, back to where the user was (a cart alert's /c/<trip>).
         void startSignIn().catch(() => setSignedOut(true));
@@ -244,10 +251,10 @@ export function MtApp() {
         markSignedOut();
         setSignedOut(true);
       }
-    });
+    };
   }, []);
 
-  if (route.page === "callback") return <Callback />;
+  if (route.page === "callback") return <Callback onSignedIn={signedIn} />;
   if (signedOut) return <SignedOut />;
   return <SignedIn />;
 }

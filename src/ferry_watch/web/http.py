@@ -13,6 +13,9 @@ from ferry_watch.models import ValidationError
 log = logging.getLogger(__name__)
 
 Handler = Callable[[web.Request], Awaitable[web.StreamResponse]]
+# The site's own origin (`baseUrl`). Behind a proxy that ends TLS the request itself looks like plain http,
+# so the request's scheme and host can't say what a browser on this site sends as its Origin.
+SITE_ORIGIN = web.AppKey("site_origin", str)
 MAX_BODY_BYTES = 16 * 1024
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
@@ -48,12 +51,21 @@ async def errors(request: web.Request, handler: Handler) -> web.StreamResponse:
         return error_response(500, "Something went wrong")
 
 
+def site_origin(request: web.Request) -> str:
+    """This site's origin: the configured one, else what the request says (tests, a local run)."""
+    return request.config_dict.get(SITE_ORIGIN) or f"{request.scheme}://{request.host}"
+
+
+def cross_site(request: web.Request) -> bool:
+    origin = request.headers.get("Origin")
+    return origin is not None and origin != site_origin(request)
+
+
 @web.middleware
 async def same_origin(request: web.Request, handler: Handler) -> web.StreamResponse:
     """Writes must come from this site, as JSON (CSRF can't apply to a bearer header, but this stays)."""
     if request.method not in SAFE_METHODS and request.path.startswith("/api/"):
-        origin = request.headers.get("Origin")
-        if origin is not None and origin != f"{request.scheme}://{request.host}":
+        if cross_site(request):
             return error_response(403, "Cross-site request refused")
         if request.can_read_body and request.content_type != "application/json":
             return error_response(415, "Send JSON")
