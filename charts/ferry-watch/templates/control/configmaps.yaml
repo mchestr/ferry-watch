@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ferry-control-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "fw.labels" . | nindent 4 }}
+data:
+  config.json: |
+    {{- include "fw.controlConfig" . | nindent 4 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ferry-web-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "fw.labels" . | nindent 4 }}
+data:
+  config.json: |
+    {{- include "fw.webConfig" . | nindent 4 }}

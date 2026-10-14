@@ -1904,6 +1904,16 @@ case:
   `runAsUser == 1001`, drop `[ALL]`, `terminationMessagePolicy == 'File'`.
 
 PSA `restricted` stays on as an independent fence (it allows `Localhost` seccomp profiles).
+
+*As built* (`charts/ferry-watch/templates/cluster/`, proven by `tests/apiserver/` on a real 1.36 API server):
+the owner label is `^[a-z0-9]{20}$`, the users table's own rule. Quantities compare with the quantity library
+(`compareTo`), so `1.5Gi` and `1536Mi` are the same. Fields the API server defaults (probe timings,
+`terminationMessagePath`, the token volume's mode) are checked where they matter and otherwise left alone.
+In `fw-browser-pod-lock` the label exception is a ternary on ferry-control's plain pod update: an error inside
+a policy variable fails the whole expression (a plain update has no `subResource` key at all), which would
+otherwise refuse even break-glass. CONNECT rules do match `pods/exec`, `attach` and `portforward`. Changes that
+Pod Security admission or the ServiceAccount plugin refuse first (a `hostPath` volume, an init container
+without a security context, another service account) are refused by the policy too.
 MutatingAdmissionPolicy is not used: ferry-control renders the full spec, so tests see exactly what runs.
 
 ### 7.6 Network policies
@@ -2129,6 +2139,14 @@ dashboard route); the checkout route is unaffected.
   (the standard component stays, R14).
 - Optional (backlog, the owner's call): the Talos `user.max_user_namespaces` sysctl and the
   `machine.seccompProfiles` entry, applied per node (R2).
+
+*As built* (`charts/ferry-watch/`): the layout above, without `prometheusrule.yaml` and `podmonitors.yaml`
+(nothing exports metrics yet) and with `ci/ci-values.yaml` in place of helm-unittest suites: CI's chart job
+lints, renders and runs kubeconform, refuses a fleet that doesn't fit `browserMemoryBudget`, and the
+`apiserver` job proves the admission and RBAC rules. In the release namespace, default deny selects the chart's
+own pods (`app.kubernetes.io/part-of: ferry-watch`), since home-cluster's pg-backups CronJob runs there too.
+db-init and db-migrate are pre-install and pre-upgrade hooks; migrate reads a hook copy of ferry-control's
+config, because hooks run before the release's ConfigMaps exist. The chart isn't published to OCI yet.
 
 **Dropped in round 2:** the ext-auth SecurityPolicy, the ReferenceGrant entry for `ferry-watch`, the Authelia
 `access_control` rule for the ferry hosts and the gatus forged-header canary (identity is app-native OIDC).

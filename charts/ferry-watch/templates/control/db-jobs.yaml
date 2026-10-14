@@ -1,0 +1,116 @@
+{{- /*
+Before every install and upgrade: create the database if it's new (db-init, components/cnpg's superuser
+Secret), then apply migrations and grants as its owner (db-migrate). The migrate Job reads a copy of
+ferry-control's config made for it, since hooks run before the release's own ConfigMaps exist.
+*/ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ferry-migrate-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "fw.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-20"
+    helm.sh/hook-delete-policy: before-hook-creation
+data:
+  config.json: |
+    {{- include "fw.controlConfig" . | nindent 4 }}
+{{- if .Values.database.init.enabled }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ferry-db-init
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "fw.labels" . | nindent 4 }}
+    app.kubernetes.io/name: ferry-db-init
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        {{- include "fw.labels" . | nindent 8 }}
+        app.kubernetes.io/name: ferry-db-init
+    spec:
+      restartPolicy: Never
+      serviceAccountName: ferry-migrate
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        {{- include "fw.podSecurity" 65534 | nindent 8 }}
+      containers:
+        - name: init
+          image: {{ include "fw.image" .Values.images.postgresInit }}
+          envFrom:
+            - secretRef: {name: {{ .Values.database.init.secret }}}
+          resources:
+            {{- toYaml .Values.migrate.resources | nindent 12 }}
+          securityContext:
+            {{- include "fw.containerSecurity" . | nindent 12 }}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: tmp
+          emptyDir: {sizeLimit: 16Mi}
+{{- end }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ferry-db-migrate
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "fw.labels" . | nindent 4 }}
+    app.kubernetes.io/name: ferry-db-migrate
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        {{- include "fw.labels" . | nindent 8 }}
+        app.kubernetes.io/name: ferry-db-migrate
+    spec:
+      restartPolicy: Never
+      serviceAccountName: ferry-migrate
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        {{- include "fw.podSecurity" 65532 | nindent 8 }}
+      containers:
+        - name: migrate
+          image: {{ include "fw.image" .Values.images.control }}
+          args: [ferry-control, migrate]
+          env:
+            - {name: FW_CONTROL_CONFIG, value: /etc/ferry-control/config.json}
+            - {name: PGHOST, value: {{ .Values.database.host | quote }}}
+            - {name: PGPORT, value: {{ .Values.database.port | quote }}}
+            - {name: PGDATABASE, value: {{ .Values.database.name | quote }}}
+            - {name: PGSSLMODE, value: {{ .Values.database.sslmode | quote }}}
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef: {name: {{ .Values.database.ownerSecret }}, key: user}
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef: {name: {{ .Values.database.ownerSecret }}, key: password}
+          resources:
+            {{- toYaml .Values.migrate.resources | nindent 12 }}
+          securityContext:
+            {{- include "fw.containerSecurity" . | nindent 12 }}
+          volumeMounts:
+            - {name: config, mountPath: /etc/ferry-control, readOnly: true}
+      volumes:
+        - name: config
+          configMap: {name: ferry-migrate-config}

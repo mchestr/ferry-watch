@@ -1,0 +1,56 @@
+{{- /* vnc-edge (§7.9): the checkout host. Stock nginx and a static directory; no secrets, no API access. */ -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vnc-edge
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "fw.labels" . | nindent 4 }}
+    app.kubernetes.io/name: vnc-edge
+spec:
+  replicas: {{ .Values.vncEdge.replicas }}
+  selector:
+    matchLabels: {app.kubernetes.io/name: vnc-edge}
+  template:
+    metadata:
+      labels:
+        {{- include "fw.labels" . | nindent 8 }}
+        app.kubernetes.io/name: vnc-edge
+    spec:
+      serviceAccountName: vnc-edge
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        {{- include "fw.podSecurity" 101 | nindent 8 }}
+      containers:
+        - name: nginx
+          image: {{ include "fw.image" .Values.images.vncEdge }}
+          ports:
+            - {name: http, containerPort: 8080}
+          livenessProbe:
+            httpGet: {path: /vnc.html, port: http}
+            periodSeconds: 30
+          readinessProbe:
+            httpGet: {path: /vnc.html, port: http}
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.vncEdge.resources | nindent 12 }}
+          securityContext:
+            {{- include "fw.containerSecurity" . | nindent 12 }}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: tmp
+          emptyDir: {sizeLimit: 64Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vnc-edge
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "fw.labels" . | nindent 4 }}
+spec:
+  selector: {app.kubernetes.io/name: vnc-edge}
+  ports:
+    - {name: http, port: 8080, targetPort: http}

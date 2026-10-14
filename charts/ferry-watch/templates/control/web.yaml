@@ -1,0 +1,87 @@
+{{- /* ferry-web (§6.1): sign-in, each person's API and the dashboard. No Kubernetes access at all. */ -}}
+{{- $keys := .Values.secret.keys -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ferry-web
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "fw.labels" . | nindent 4 }}
+    app.kubernetes.io/name: ferry-web
+spec:
+  replicas: {{ .Values.web.replicas }}
+  selector:
+    matchLabels: {app.kubernetes.io/name: ferry-web}
+  template:
+    metadata:
+      labels:
+        {{- include "fw.labels" . | nindent 8 }}
+        app.kubernetes.io/name: ferry-web
+      annotations:
+        checksum/config: {{ include "fw.webConfig" . | sha256sum }}
+    spec:
+      serviceAccountName: ferry-web
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        {{- include "fw.podSecurity" 65532 | nindent 8 }}
+      containers:
+        - name: web
+          image: {{ include "fw.image" .Values.images.control }}
+          args: [ferry-web, run]
+          env:
+            - {name: FW_WEB_CONFIG, value: /etc/ferry-web/config.json}
+            - {name: FW_OIDC_CLIENT_SECRET_FILE, value: /var/run/secrets/ferry-web/oidc-client-secret}
+            - {name: FW_CHECKOUT_KEY_FILE, value: /var/run/secrets/ferry-web/checkout-key}
+            {{- if $keys.vapidKey }}
+            - {name: FW_VAPID_KEY_FILE, value: /var/run/secrets/ferry-web/vapid-key}
+            {{- end }}
+            - {name: FW_LOG_LEVEL, value: {{ .Values.logLevel | quote }}}
+            {{- include "fw.pgEnv" (dict "root" . "user" .Values.database.roles.web "passwordKey" $keys.webDbPassword) | nindent 12 }}
+          ports:
+            - {name: http, containerPort: 8765}
+          startupProbe:
+            httpGet: {path: /livez, port: http}
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            httpGet: {path: /livez, port: http}
+            periodSeconds: 15
+          readinessProbe:
+            httpGet: {path: /livez, port: http}
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.web.resources | nindent 12 }}
+          securityContext:
+            {{- include "fw.containerSecurity" . | nindent 12 }}
+          volumeMounts:
+            - {name: config, mountPath: /etc/ferry-web, readOnly: true}
+            - {name: secrets, mountPath: /var/run/secrets/ferry-web, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: config
+          configMap: {name: ferry-web-config}
+        - name: secrets
+          secret:
+            secretName: {{ .Values.secret.name }}
+            defaultMode: 0400
+            items:
+              - {key: {{ $keys.oidcClientSecret }}, path: oidc-client-secret}
+              - {key: {{ $keys.checkoutKey }}, path: checkout-key}
+              {{- if $keys.vapidKey }}
+              - {key: {{ $keys.vapidKey }}, path: vapid-key}
+              {{- end }}
+        - name: tmp
+          emptyDir: {sizeLimit: 64Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ferry-web
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "fw.labels" . | nindent 4 }}
+spec:
+  selector: {app.kubernetes.io/name: ferry-web}
+  ports:
+    - {name: http, port: 8765, targetPort: http}

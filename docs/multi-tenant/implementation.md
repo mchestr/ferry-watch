@@ -88,6 +88,19 @@ an expired ticket, no key at all, and the end of the hold.
 CI builds each, smoke-tests it read-only and unprivileged, and pushes it from `main` and tags. The browser
 image's smoke test runs the agent with no network and the lockdown self-test against a real Chromium.
 
+### The chart (`charts/ferry-watch/`)
+
+| Part | What |
+|---|---|
+| `templates/control/`, `edge/`, `routes/` | ferry-web, ferry-control (Recreate: one holds the lock), vnc-edge, their Services and ServiceAccounts, the db-init and db-migrate hook Jobs, both configs from one set of values, network policies, the two HTTPRoutes (off by default). |
+| `templates/browsers/` | The browser namespace (PSA restricted, kept on uninstall), `ferry-browser`, the headless `browsers` Service, the policy params, the three quotas (the fleet must fit `browserMemoryBudget` or the chart won't render), the LimitRange, default deny and the two Cilium policies (always, and while holding). |
+| `templates/cluster/` | PriorityClass `ferry-browser`, ferry-control's two ClusterRoles, and the admission policies `fw-browser-pod`, `fw-browser-pod-lock` and (off until M2) `fw-ns-objects`. |
+
+`tests/apiserver/` (marker `apiserver`) starts envtest's etcd and kube-apiserver 1.36, applies the rendered
+chart, and checks that the pod `pods.py` builds from the chart's own config is admitted, that 40 different
+changes to it are refused, that only ferry-control moves the egress label and nobody gets a shell, and that no
+ferry identity holds a verb outside §7.3.
+
 ## Where the build departs from the plan's wording
 
 Each is a two-way door.
@@ -134,9 +147,10 @@ Each is a two-way door.
 - **Frontend** (§10): the session list. The admin pages cover what the admin API does today; §9.4's
   revoke sessions, release a cart, recycle a pod, close the breaker, make admin and delete user need API
   first.
-- **Helm chart and CI tiers** (§7, §11): the chart (workloads, VAPs, network policies, RBAC, quotas,
-  vnc-edge's HTTPRoute); the envtest VAP matrix; the `agent-e2e` and `fake-bcferries` images; the
-  home-cluster PR.
+- **Chart and CI follow-ups** (§7, §11): publishing the chart to `oci://ghcr.io/mchestr/charts`; the
+  PrometheusRule and PodMonitors once there are metrics; kind-lite (the positive pod-lock cases that need a
+  kubelet, and the egress flip on a running pod); the `agent-e2e` and `fake-bcferries` images and the compose
+  job; the home-cluster PR.
 - **Agent follow-ups**: the smoke trip, the page watchdog (`checkout_host_blocked`), porting the
   disabled login path; `/readyz` reporting the display, Chromium, the loop and lockdown (it answers 200 as
   soon as the probe server is up).

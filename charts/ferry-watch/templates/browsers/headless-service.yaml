@@ -1,0 +1,15 @@
+{{- /* Gives each pod a name vnc-edge can reach: fw-<trip>-g<gen>.browsers.<ns>.svc.cluster.local (§3.3). */ -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: browsers
+  namespace: {{ .Values.browserNamespace }}
+  labels:
+    {{- include "fw.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app.kubernetes.io/name: ferry-browser
+  ports:
+    - {name: vnc, port: 6080, targetPort: vnc}

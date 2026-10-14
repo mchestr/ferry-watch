@@ -99,7 +99,10 @@ addopts = ["-ra", "--strict-markers", "--strict-config", "--allow-hosts=127.0.0.
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 timeout = 60
-markers = ["browser: drives Chromium against saved copies of BC Ferries' pages (never the live site)"]
+markers = [
+  "browser: drives Chromium against saved copies of BC Ferries' pages (never the live site)",
+  "apiserver: the chart's admission policies and RBAC on a real kube-apiserver (envtest binaries)",
+]
 filterwarnings = ["error"]
 
 # Module boundaries (docs/multi-tenant/design-reference.md §11): checked in CI with `lint-imports`.

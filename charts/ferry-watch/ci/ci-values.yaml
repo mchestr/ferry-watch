@@ -1,0 +1,16 @@
+# What CI renders the chart with (helm lint, kubeconform). The digests are placeholders.
+images:
+  control: {tag: "0.6.0", digest: "sha256:1111111111111111111111111111111111111111111111111111111111111111"}
+  browser: {digests: ["sha256:2222222222222222222222222222222222222222222222222222222222222222"]}
+  vncEdge: {tag: "0.6.0", digest: "sha256:3333333333333333333333333333333333333333333333333333333333333333"}
+identity:
+  oidc: {issuer: https://auth.chestr.dev, clientId: ferry-watch}
+  bootstrapAdmins: [{issuer: https://auth.chestr.dev, username: mike}]
+checkout:
+  publicKeys: "k1:NT5cktoiWVEm0DX-vrLy3GsomDbKe7be5MJUl1S8GRw"
+kofiUrl: https://ko-fi.com/mchestr
+routes:
+  dashboard: {enabled: true}
+  checkout: {enabled: true}
+admission:
+  nsObjects: true

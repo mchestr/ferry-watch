@@ -1,0 +1,72 @@
+{{- /*
+fw-browser-pod-lock (§7.5): once a browser pod exists, nobody changes it or gets into it. Two exceptions:
+ferry-control may move the egress label between allowlist and hold (and change nothing else at all), and the
+kubelet and three named kube-system controllers keep their usual updates. Break-glass people are not limited.
+Always rendered: ferry-control's pods `patch` verb is only safe with it.
+*/ -}}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: fw-browser-pod-lock
+  labels:
+    {{- include "fw.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  paramKind: {apiVersion: v1, kind: ConfigMap}
+  matchConstraints:
+    namespaceSelector:
+      matchLabels: {kubernetes.io/metadata.name: {{ .Values.browserNamespace }}}
+    resourceRules:
+      - {apiGroups: [""], apiVersions: [v1], operations: [UPDATE], resources: [pods, pods/ephemeralcontainers]}
+      - {apiGroups: [""], apiVersions: [v1], operations: [CONNECT], resources: [pods/exec, pods/attach, pods/portforward]}
+  variables:
+    - name: user
+      expression: request.userInfo.username
+    - name: breakGlass
+      expression: params.data.breakGlassGroup in request.userInfo.groups
+    - name: system
+      expression: >-
+        variables.user.startsWith('system:node:') ||
+        variables.user in ['system:serviceaccount:kube-system:generic-garbage-collector',
+          'system:serviceaccount:kube-system:node-controller',
+          'system:serviceaccount:kube-system:pod-garbage-collector']
+    - name: egressFlip
+      # The only change ferry-control may make: the egress label, between allowlist and hold. A ternary, so
+      # nothing below is evaluated for any other request (an error in a variable fails the whole policy).
+      expression: >-
+        variables.user == params.data.controlSA && request.operation == 'UPDATE' &&
+        request.resource.resource == 'pods' && (!has(request.subResource) || request.subResource == '')
+        ? object.spec == oldObject.spec &&
+          has(object.metadata.labels) && has(oldObject.metadata.labels) &&
+          object.metadata.labels.size() == oldObject.metadata.labels.size() &&
+          object.metadata.labels.all(k, k == 'ferry-watch.io/egress' ||
+            (k in oldObject.metadata.labels && oldObject.metadata.labels[k] == object.metadata.labels[k])) &&
+          'ferry-watch.io/egress' in object.metadata.labels &&
+          object.metadata.labels['ferry-watch.io/egress'] in ['allowlist', 'hold'] &&
+          has(object.metadata.annotations) == has(oldObject.metadata.annotations) &&
+          (!has(object.metadata.annotations) || object.metadata.annotations == oldObject.metadata.annotations) &&
+          has(object.metadata.ownerReferences) == has(oldObject.metadata.ownerReferences) &&
+          (!has(object.metadata.ownerReferences) || object.metadata.ownerReferences == oldObject.metadata.ownerReferences) &&
+          has(object.metadata.finalizers) == has(oldObject.metadata.finalizers) &&
+          (!has(object.metadata.finalizers) || object.metadata.finalizers == oldObject.metadata.finalizers)
+        : false
+  validations:
+    - expression: variables.breakGlass || variables.system || variables.egressFlip
+      message: Browser pods can't be changed or entered; ferry-control may only move the egress label.
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: fw-browser-pod-lock
+  labels:
+    {{- include "fw.labels" . | nindent 4 }}
+spec:
+  policyName: fw-browser-pod-lock
+  validationActions: [Deny]
+  paramRef:
+    name: ferry-browser-policy
+    namespace: {{ .Values.browserNamespace }}
+    parameterNotFoundAction: Deny
+  matchResources:
+    namespaceSelector:
+      matchLabels: {kubernetes.io/metadata.name: {{ .Values.browserNamespace }}}

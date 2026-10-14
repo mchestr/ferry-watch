@@ -1,0 +1,12 @@
+apiVersion: v2
+name: ferry-watch
+description: >-
+  Ferry Watch for many people: ferry-web (sign-in and dashboard), ferry-control (the operator that runs one
+  browser pod per watched trip), vnc-edge (the checkout host), and the guard rails around the browser pods.
+type: application
+version: 0.1.0
+appVersion: "0.5.1"
+kubeVersion: ">=1.33.0-0"
+home: https://github.com/mchestr/ferry-watch
+sources:
+  - https://github.com/mchestr/ferry-watch

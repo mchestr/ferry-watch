@@ -31,7 +31,7 @@ jobs:
       - run: uv run ruff check --output-format=github
       - run: uv run mypy
       - run: uv run lint-imports
-      - run: uv run pytest -m "not browser" --cov=ferry_watch --cov-report=term-missing
+      - run: uv run pytest -m "not browser and not apiserver" --cov=ferry_watch --cov-report=term-missing
       - name: Playwright package matches the image's browsers
         run: |
           lock="$(uv export --locked --no-hashes --no-dev --extra browser | sed -n 's/^playwright==\([0-9.]*\).*/\1/p')"
@@ -69,6 +69,63 @@ jobs:
           echo "FW_KASMVNC_WWW=$RUNNER_TEMP/kasmvnc/usr/share/kasmvnc/www" >> "$GITHUB_ENV"
       - run: uv run pytest -m browser
 
+  chart:
+    name: Helm chart (lint, render, kubeconform)
+    runs-on: ubuntu-24.04
+    env:
+      HELM_IMAGE: alpine/helm:3.19.0@sha256:aef9b56f64e866207d9591d0abd8f6d767b36aadd12edf68f8a719716d9d29c9
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Tools
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/kubeconform.tgz" \
+            https://github.com/yannh/kubeconform/releases/download/v0.7.0/kubeconform-linux-amd64.tar.gz
+          echo "c31518ddd122663b3f3aa874cfe8178cb0988de944f29c74a0b9260920d115d3  $RUNNER_TEMP/kubeconform.tgz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/kubeconform.tgz" -C "$RUNNER_TEMP" kubeconform
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - name: Lint and render
+        run: |
+          helm() { docker run --rm -v "$PWD:/w" -w /w "$HELM_IMAGE" "$@"; }
+          helm lint charts/ferry-watch -f charts/ferry-watch/ci/ci-values.yaml --strict
+          helm template fw charts/ferry-watch -n ferry-watch -f charts/ferry-watch/ci/ci-values.yaml > rendered.yaml
+          # A fleet that can't fit the memory budget must not render.
+          ! helm template fw charts/ferry-watch -n ferry-watch -f charts/ferry-watch/ci/ci-values.yaml \
+            --set fleet.browserMemoryBudget=4Gi > /dev/null 2>&1
+      - name: kubeconform
+        run: |
+          kubeconform -strict -summary -kubernetes-version 1.36.0 \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            rendered.yaml
+
+  apiserver:
+    name: Admission and RBAC on a real API server
+    runs-on: ubuntu-24.04
+    env:
+      HELM_IMAGE: alpine/helm:3.19.0@sha256:aef9b56f64e866207d9591d0abd8f6d767b36aadd12edf68f8a719716d9d29c9
+      # controller-tools' envtest binaries for the cluster's Kubernetes minor (home-cluster runs 1.36).
+      ENVTEST_VERSION: v1.36.2
+      ENVTEST_SHA512: ea743186c8a799f5cf8faf16969f86189d003cb7d130e0ac4b58789f1e5748dcf30ebe91c837a10d5ac415383da3e10b9e64d65785c938c23e739781cfb76f08
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - name: envtest and helm
+        run: |
+          archive="$RUNNER_TEMP/envtest.tgz"
+          curl -fsSL -o "$archive" \
+            "https://github.com/kubernetes-sigs/controller-tools/releases/download/envtest-${ENVTEST_VERSION}/envtest-${ENVTEST_VERSION}-linux-amd64.tar.gz"
+          echo "${ENVTEST_SHA512}  ${archive}" | sha512sum -c -
+          tar -xzf "$archive" -C "$RUNNER_TEMP"
+          id="$(docker create "$HELM_IMAGE")"
+          docker cp "$id:/usr/bin/helm" "$RUNNER_TEMP/helm"
+          docker rm "$id"
+          echo "FW_ENVTEST_BIN=$RUNNER_TEMP/controller-tools/envtest" >> "$GITHUB_ENV"
+          echo "FW_HELM=$RUNNER_TEMP/helm" >> "$GITHUB_ENV"
+      - run: uv run pytest -m apiserver --timeout 300
+
   web:
     name: Frontend (lint, types, tests, build)
     runs-on: ubuntu-24.04
@@ -91,7 +148,7 @@ jobs:
 
   image:
     name: Image ${{ matrix.target }} (build, smoke test, push)
-    needs: [python, browser, web]
+    needs: [python, browser, web, chart, apiserver]
     runs-on: ubuntu-24.04
     permissions:
       contents: read

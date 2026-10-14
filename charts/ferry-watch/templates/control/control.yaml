@@ -1,0 +1,71 @@
+{{- /*
+ferry-control (§6.1): the hub the browser pods dial (:8766) and the fleet loop that starts and reaps them.
+One at a time (a Postgres advisory lock), so Recreate: a new one would wait for the old one's lock anyway.
+*/ -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ferry-control
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "fw.labels" . | nindent 4 }}
+    app.kubernetes.io/name: ferry-control
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app.kubernetes.io/name: ferry-control}
+  template:
+    metadata:
+      labels:
+        {{- include "fw.labels" . | nindent 8 }}
+        app.kubernetes.io/name: ferry-control
+      annotations:
+        checksum/config: {{ include "fw.controlConfig" . | sha256sum }}
+    spec:
+      serviceAccountName: ferry-control
+      automountServiceAccountToken: true
+      enableServiceLinks: false
+      securityContext:
+        {{- include "fw.podSecurity" 65532 | nindent 8 }}
+      containers:
+        - name: control
+          image: {{ include "fw.image" .Values.images.control }}
+          args: [ferry-control, run]
+          env:
+            - {name: FW_CONTROL_CONFIG, value: /etc/ferry-control/config.json}
+            - {name: FW_LOG_LEVEL, value: {{ .Values.logLevel | quote }}}
+            {{- include "fw.pgEnv" (dict "root" . "user" .Values.database.roles.control "passwordKey" .Values.secret.keys.controlDbPassword) | nindent 12 }}
+          ports:
+            - {name: hub, containerPort: 8766}
+            - {name: probes, containerPort: 9090}
+          livenessProbe:
+            httpGet: {path: /livez, port: probes}
+            periodSeconds: 15
+          readinessProbe:
+            httpGet: {path: /readyz, port: probes}
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.control.resources | nindent 12 }}
+          securityContext:
+            {{- include "fw.containerSecurity" . | nindent 12 }}
+          volumeMounts:
+            - {name: config, mountPath: /etc/ferry-control, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: config
+          configMap: {name: ferry-control-config}
+        - name: tmp
+          emptyDir: {sizeLimit: 64Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ferry-control
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "fw.labels" . | nindent 4 }}
+spec:
+  selector: {app.kubernetes.io/name: ferry-control}
+  ports:
+    - {name: hub, port: 8766, targetPort: hub}

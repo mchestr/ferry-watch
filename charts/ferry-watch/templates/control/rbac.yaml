@@ -1,0 +1,24 @@
+{{- /*
+ferry-control's only namespaced verbs (§7.3): pods in the browser namespace. `patch` exists for the egress
+label alone; fw-browser-pod-lock denies every other change.
+*/ -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ferry-watch-control
+  namespace: {{ .Values.browserNamespace }}
+  labels:
+    {{- include "fw.labels" . | nindent 4 }}
+rules:
+  - {apiGroups: [""], resources: [pods], verbs: [create, delete, get, list, watch, patch]}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ferry-watch-control
+  namespace: {{ .Values.browserNamespace }}
+  labels:
+    {{- include "fw.labels" . | nindent 4 }}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: ferry-watch-control}
+subjects:
+  - {kind: ServiceAccount, name: ferry-control, namespace: {{ .Release.Namespace }}}

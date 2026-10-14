@@ -1,0 +1,189 @@
+# Ferry Watch, multi-tenant (docs/multi-tenant/design-reference.md §7). Install into the namespace that holds
+# ferry-web, ferry-control and vnc-edge (`ferry-watch`); the chart creates the browser pods' namespace itself.
+
+images:
+  # ferry-web and ferry-control (and the migrate Job). tag@digest; the digest is what pins it.
+  control:
+    repository: ghcr.io/mchestr/ferry-watch-control
+    tag: ""
+    digest: ""
+  # The browser pods. ferry-control starts `digests[0]`; the admission policy admits any listed (at most two,
+  # so a rollout can overlap the pods still running the previous one).
+  browser:
+    repository: ghcr.io/mchestr/ferry-watch-browser
+    digests: []
+  vncEdge:
+    repository: ghcr.io/mchestr/ferry-watch-vnc-edge
+    tag: ""
+    digest: ""
+  # Creates the database and its owner before the first migration (the db-init Job).
+  postgresInit:
+    repository: ghcr.io/home-operations/postgres-init
+    tag: "18"
+    digest: ""
+
+hosts:
+  dashboard: ferry.chestr.dev
+  checkout: ferry-checkout.chestr.dev
+
+# HTTPRoutes. Off by default, so a first install can run on another host beside today's app.
+routes:
+  dashboard:
+    enabled: false
+    parentRefs:
+      - {name: envoy-external, namespace: networking, sectionName: https}
+  checkout:
+    enabled: false
+    parentRefs:
+      - {name: envoy-external, namespace: networking, sectionName: https}
+
+browserNamespace: ferry-watch-browsers
+
+database:
+  host: postgres17-rw.database.svc.cluster.local.
+  port: 5432
+  name: ferrywatch
+  sslmode: prefer
+  # Login roles (CNPG managed roles); their passwords are keys of `secret` below.
+  roles:
+    web: ferrywatch_web
+    control: ferrywatch_control
+  # The database owner, for migrations only: a Secret with `user` and `password` (components/cnpg's).
+  ownerSecret: ferrywatch-pguser-secret
+  init:
+    enabled: true
+    # components/cnpg's INIT_POSTGRES_* Secret (it holds the superuser password; only the db-init Job reads it).
+    secret: ferrywatch-initdb-secret
+
+# One Secret (the ExternalSecret `ferry-watch`) holds everything else. Each process mounts only its own keys.
+secret:
+  name: ferry-watch
+  keys:
+    checkoutKey: FERRY_WATCH_CHECKOUT_KEY # Ed25519 private key, base64url (ferry-web only)
+    vapidKey: FERRY_WATCH_VAPID_KEY # P-256 private key, base64url (ferry-web only; optional)
+    oidcClientSecret: FERRY_WATCH_OAUTH_CLIENT_SECRET # ferry-web only
+    webDbPassword: FERRY_WATCH_WEB_DB_PASSWORD
+    controlDbPassword: FERRY_WATCH_CONTROL_DB_PASSWORD
+
+identity:
+  oidc:
+    issuer: ""
+    clientId: ""
+    scopes: [openid, profile, email, groups]
+    algorithms: [RS256]
+    usernameClaim: preferred_username
+    groupsClaim: groups
+  inviteClaim: preferred_username
+  bootstrapAdmins: [] # [{issuer: https://auth.chestr.dev, username: mike}]
+  autoApproveGroups: []
+  reverifyHours: 24
+
+checkout:
+  keyId: k1
+  # FW_VNC_PUBKEYS: "<id>:<base64url public key>[,<id>:<key>]" (two while the ticket key rotates).
+  publicKeys: ""
+
+kofiUrl: null
+vapidSubject: mailto:ferry-watch@chestr.dev
+smtp:
+  enabled: true
+  host: smtp-relay.default.svc.cluster.local.
+  port: 2525
+  sender: ferry-watch@chestr.dev
+
+# Each browser pod (§7.4, §8.4).
+pod:
+  memory: 1536Mi
+  cpuRequest: 200m
+  sandbox: false # Chromium's sandbox with a Localhost seccomp profile (needs the node change, R2)
+  seccompProfile: profiles/fw-chromium.json
+  requireUserNamespace: false # hostUsers: false (needs the Talos sysctl, R2)
+  maxDeadlineSeconds: 93600
+
+fleet:
+  maxBrowsersTotal: 7
+  shortCheckSlots: 1
+  # What the browser pods may use between them; the quota must fit inside it.
+  browserMemoryBudget: 12Gi
+
+hold:
+  unclaimed: 30m
+  session: 30m
+  viewerGone: 10m
+  hard: 60m
+
+polling:
+  shortCheckInterval: 6h
+  horizonDays: 30
+  quietStart: "23:00"
+  quietEnd: "06:00"
+  tiers: null # null: the built-in curve (src/ferry_watch/polling.py); or [{within: 2d, interval: 60s}, ...]
+
+checksPerMinute: 20
+autoCart: true
+alertOnlyFares: []
+alertOnlyVehicles: []
+
+limits:
+  defaults: {}
+  ceilings: {}
+
+# Public HTTPS from a browser pod only while it holds a cart (§7.6 option A). false: always (option B).
+holdEgress:
+  enabled: true
+
+networkPolicies:
+  enabled: true
+  # Where the gateways' Envoy pods run.
+  gateway:
+    namespace: networking
+    labels: {gateway.envoyproxy.io/owning-gateway-name: envoy-external}
+  # The OIDC issuer resolves to the gateway; with kube-proxy replacement the policy sees the Envoy pods.
+  issuerHost: auth.chestr.dev
+  issuerPort: 10443
+  database:
+    namespace: database
+    labels: {cnpg.io/cluster: postgres17}
+  smtp:
+    namespace: default
+    labels: {app.kubernetes.io/name: smtp-relay}
+  prometheus:
+    namespace: observability
+    labels: {app.kubernetes.io/name: prometheus}
+  # Web Push services and BC Ferries' terminal list, for ferry-web.
+  webEgressNames:
+    - fcm.googleapis.com
+    - "*.push.apple.com"
+    - updates.push.services.mozilla.com
+    - "*.notify.windows.com"
+    - www.bcferries.com
+
+admission:
+  # Who besides ferry-control may create or change browser pods (people, never a service account).
+  breakGlassGroup: ferry-watch:break-glass
+  # Deny every ferry service account any write in both namespaces beyond its RBAC (M2).
+  nsObjects: false
+
+web:
+  replicas: 1
+  resources:
+    requests: {cpu: 50m, memory: 192Mi}
+    limits: {memory: 512Mi}
+
+control:
+  resources:
+    requests: {cpu: 50m, memory: 192Mi}
+    limits: {memory: 512Mi}
+
+vncEdge:
+  replicas: 2
+  resources:
+    requests: {cpu: 10m, memory: 32Mi}
+    limits: {memory: 128Mi}
+
+migrate:
+  resources:
+    requests: {cpu: 10m, memory: 128Mi}
+    limits: {memory: 256Mi}
+
+logLevel: INFO
