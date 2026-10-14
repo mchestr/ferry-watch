@@ -18,8 +18,15 @@ const REASONS: readonly { value: BookedReason; label: string }[] = [
   { value: "changed_mind", label: "Changed my mind" },
 ];
 
+type Props = { trip: MyTrip; onAnswered?: (answer: BookedAnswer) => void };
+
 /** `onAnswered` runs once the answer is saved (after "Yes" or "No, cancel", the trip is gone: see endsTrip). */
-export function BookedQuestion({ trip, onAnswered }: { trip: MyTrip; onAnswered?: (answer: BookedAnswer) => void }) {
+export function BookedQuestion(props: Props) {
+  // Mounted only while it's asked, so the next checkout's question starts afresh, not on "why not?".
+  return props.trip.paused_reason === "after_checkout" ? <Question {...props} /> : null;
+}
+
+function Question({ trip, onAnswered }: Props) {
   const qc = useQueryClient();
   const [explaining, setExplaining] = useState(false);
   const answer = useMutation({
@@ -31,7 +38,6 @@ export function BookedQuestion({ trip, onAnswered }: { trip: MyTrip; onAnswered?
     },
     onError: (error) => reportError(qc, error),
   });
-  if (trip.paused_reason !== "after_checkout") return null;
   return (
     <div className="space-y-3 rounded-xl border border-warning bg-warning-soft p-4">
       <p className="font-semibold">Did you book it?</p>

@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeSettings } from "@/test/fixtures";
 import { FakeWebSocket } from "@/test/fake-websocket";
@@ -438,6 +438,17 @@ describe("did you book it?", () => {
     await waitFor(() => expect(screen.queryByText("Did you book it?")).toBeNull());
     expect(booked(requests)).toEqual([{ booked: false, reason: "checkout_broke" }]);
     expect(screen.getByRole("button", { name: "Pause" })).toBeEnabled();
+  });
+
+  it("asks afresh after the next checkout", async () => {
+    api();
+    const { user, queryClient } = renderWithProviders(<MtApp />);
+    await user.click(await screen.findByRole("button", { name: "No, keep watching" }));
+    await user.click(screen.getByRole("button", { name: "Checkout broke" }));
+    await waitFor(() => expect(screen.queryByText("Did you book it?")).toBeNull());
+    act(() => queryClient.setQueryData(MY_STATE_KEY, asking())); // held and checked out again
+    expect(await screen.findByRole("button", { name: "Yes, booked" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Checkout broke" })).toBeNull();
   });
 
   it("can skip the reason", async () => {
