@@ -140,3 +140,36 @@ describe("signed in", () => {
     expect(localStorage.getItem("fw.token")).toBeNull();
   });
 });
+
+describe("admin", () => {
+  beforeEach(() => {
+    localStorage.setItem("fw.token", "t-1");
+    history.replaceState(null, "", "/admin");
+  });
+
+  it("opens the admin pages for an admin", async () => {
+    const me = { id: "u1", username: "ann", display: "Ann", is_admin: true, paused: false };
+    mockFetch((r) => {
+      if (r.url === "/api/state") return jsonResponse(myState({ me }));
+      if (r.url === "/api/admin/users") return jsonResponse({ users: [], invites: [] });
+      if (r.url === "/api/admin/overview") {
+        return jsonResponse({ pods: [], queued: 0, holds: [], switches: {}, outcomes_7d: {} });
+      }
+      return jsonResponse({ terminals: [] });
+    });
+    renderWithProviders(<MtApp />);
+    expect(await screen.findByRole("heading", { name: "Admin" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Admin" })).toBeInTheDocument();
+    expect(await screen.findByText("No browsers running.")).toBeInTheDocument();
+  });
+
+  it("shows everyone else their own trips", async () => {
+    const { requests } = mockFetch((r) =>
+      r.url === "/api/state" ? jsonResponse(myState()) : jsonResponse({ terminals: [] }),
+    );
+    renderWithProviders(<MtApp />);
+    expect(await screen.findByRole("heading", { name: "Your trips" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Admin" })).toBeNull();
+    expect(requests.some((r) => r.url.startsWith("/api/admin"))).toBe(false);
+  });
+});

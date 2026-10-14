@@ -3,7 +3,7 @@
  * (docs/multi-tenant/design-reference.md §10).
  */
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Loader2, LogOut, Plus, Settings, Ship } from "lucide-react";
+import { AlertTriangle, Loader2, LogOut, Plus, Settings, Shield, Ship } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { TripSheetView, type SheetMode, type TripSource } from "@/components/TripSheet";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,7 @@ import { Card } from "@/components/ui/card";
 import { configureBearerAuth, errorMessage, hasStatus, type AuthReason } from "@/lib/api";
 import type { TripSettings } from "@/lib/schema";
 import { AccountCard } from "./AccountCard";
+import { AdminPage } from "./AdminPage";
 import { MY_STATE_KEY, myApi } from "./api";
 import { completeSignIn, isSignedOut, markSignedOut, startSignIn, token } from "./auth";
 import { CheckoutPage } from "./CheckoutPage";
@@ -163,6 +164,11 @@ function SignedIn() {
             <span className="hidden text-sm text-muted-foreground sm:inline">
               {state.me.display ?? state.me.username}
             </span>
+            {state.me.is_admin && (
+              <Button variant="ghost" size="icon" aria-label="Admin" onClick={() => navigate("/admin")}>
+                <Shield aria-hidden />
+              </Button>
+            )}
             <Button variant="ghost" size="icon" aria-label="Settings" onClick={() => navigate("/settings")}>
               <Settings aria-hidden />
             </Button>
@@ -175,6 +181,8 @@ function SignedIn() {
       <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
         {route.page === "checkout" ? (
           <CheckoutPage state={state} tripId={route.tripId} terminals={terminals.data} />
+        ) : route.page === "admin" && state.me.is_admin ? (
+          <AdminPage meId={state.me.id} />
         ) : route.page === "settings" ? (
           <div className="mx-auto max-w-xl">
             <AccountCard state={state} />

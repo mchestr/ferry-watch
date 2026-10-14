@@ -61,6 +61,7 @@ running until cutover.
 | `CheckoutPage.tsx` | `/c/<trip>`: never opens the checkout by itself; "Check out on this device" mints the one-minute link. |
 | `AccountCard.tsx`, `push.ts`, `public/sw.js` | Web Push for the device, a test alert, pause everything, sign out everywhere, the Ko-fi link. |
 | `live.ts`, `api.ts`, `schema.ts` | The per-user socket (first-message auth) and the bearer API. |
+| `AdminPage.tsx`, `admin.ts`, `ReasonDialog.tsx` | `/admin`, for admins: the two switches, browsers by phase, the queue, holds now (cart summary only), the week's outcomes; people with their limits and where each comes from, suspend and reinstate, invitations, sign-ins turned away. Every change asks why. |
 
 ### vnc-edge (`vnc-edge/`)
 
@@ -119,7 +120,9 @@ Each is a two-way door.
 
 ## Still to do
 
-- **Frontend** (§10): the admin pages (the API is built), and the session list.
+- **Frontend** (§10): the session list. The admin pages cover what the admin API does today; §9.4's
+  revoke sessions, release a cart, recycle a pod, close the breaker, make admin and delete user need API
+  first.
 - **Helm chart, images and CI tiers** (§7, §11): the browser and control images (vnc-edge's is built and
   smoke-tested in CI); VAPs, network policies, RBAC, vnc-edge's HTTPRoute; the envtest VAP matrix; the
   home-cluster PR.
