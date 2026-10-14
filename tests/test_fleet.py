@@ -287,10 +287,13 @@ async def test_a_paused_trip_s_pod_is_drained(rig: Rig) -> None:
     assert rig.hub.commands == [(name, "drain", "paused")]
 
 
-async def test_the_old_account_pause_is_ignored(rig: Rig) -> None:
-    """Trips are paused one at a time: users.paused (moved onto each trip by 0004) no longer stops anything."""
+async def test_the_old_account_pause_stops_everything_until_moved(rig: Rig) -> None:
+    """A "Pause all" from a ferry-web before 0004 (users.paused) still stops the user's trips until ferry-web
+    moves it onto each trip."""
     await rig.add_trip(NEAR)
     await rig.run("UPDATE users SET paused = true")  # as a ferry-web from before 0004 could still set it
+    assert (await rig.fleet.reconcile()).started == []
+    await rig.run("UPDATE users SET paused = false")
     assert (await rig.fleet.reconcile()).started == [f"fw-{NEAR.id}-g1"]
 
 

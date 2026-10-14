@@ -413,15 +413,23 @@ async def test_pausing_and_resuming_one_trip(rig: Rig) -> None:
     assert [(r["trip_id"], r["now"]) for r in rows] == [(trip_id, True), (other, False)]
 
 
-async def test_the_old_account_pause_is_ignored(rig: Rig) -> None:
-    """users.paused is no longer read: 0004 paused each of the account's trips instead."""
-    trip_id = await rig.add()
-    await seen(rig, trip_id, sailing("09:00"))
-    await rig.sql("UPDATE users SET paused = true")  # as a ferry-web from before 0004 could still set it
+async def test_the_old_account_pause_moves_onto_each_trip(rig: Rig) -> None:
+    """A "Pause all" from a ferry-web before 0004 (users.paused) becomes each live trip paused, as 0004 did,
+    the next time the user's state is read; the account itself is never shown paused."""
+    trip_id, other = await rig.add(), await rig.add()
+    await rig.call("PATCH", f"/api/trips/{other}", json={"enabled": False})
+    await rig.sql("UPDATE users SET paused = true WHERE id = $1", ANN)  # as a ferry-web before 0004 could
+    before = {r["id"]: r["rev"] for r in await rig.sql("SELECT id, rev FROM trips")}
     state = await (await rig.call("GET", "/api/state")).json()
     assert state["me"]["paused"] is False
-    assert (state["trips"][0]["hold"]["reason"], state["trips"][0]["hold"]["can_request"]) == (None, True)
-    assert (await rig.call("POST", f"/api/trips/{trip_id}/hold")).status == 200
+    assert [t["trip"]["enabled"] for t in state["trips"]] == [False, False]
+    rows = await rig.sql("SELECT id, enabled, spec->>'enabled' AS spec, rev FROM trips ORDER BY id = $1", trip_id)
+    assert [(r["enabled"], r["spec"], r["rev"] - before[r["id"]]) for r in rows] == [
+        (False, "false", 0),  # already paused: untouched
+        (False, "false", 1),
+    ]
+    assert [r["paused"] for r in await rig.sql("SELECT paused FROM users")] == [False, False]
+    assert (await rig.call("POST", f"/api/trips/{trip_id}/hold")).status == 409  # paused
     await make_admin(rig)
     people = await (await rig.call("GET", "/api/admin/users")).json()
     assert [u["paused"] for u in people["users"]] == [False, False]  # kept a release; always false

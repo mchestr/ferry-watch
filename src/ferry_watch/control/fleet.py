@@ -356,7 +356,7 @@ class Fleet:
 
     async def _inputs(self, now: float) -> tuple[list[UserView], list[TripView], FleetView, dict[str, Any]]:
         user_records = await self._pool.fetch(
-            "SELECT u.id, u.state, s.quiet_start, s.quiet_end FROM users u"
+            "SELECT u.id, u.state, u.paused, s.quiet_start, s.quiet_end FROM users u"
             " LEFT JOIN user_settings s ON s.user_id = u.id"
         )
         overrides: dict[str, dict[str, int]] = {}
@@ -366,6 +366,7 @@ class Fleet:
             UserView(
                 r["id"],
                 active=r["state"] == "active",
+                paused=r["paused"],
                 max_active_browsers=self._limits.value("maxActiveBrowsers", overrides.get(r["id"], {})),
                 quiet=quiet_hours(r["quiet_start"], r["quiet_end"]),
             )

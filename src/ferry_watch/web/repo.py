@@ -540,6 +540,15 @@ class WebStore:
 
     async def snapshot(self, uid: str) -> dict[str, Any]:
         now = self._clock()
+        # For a release: a ferry-web from before 0004 can still "Pause all" (users.paused) while it's being
+        # replaced. Do what 0004 did, so each of the user's trips is paused instead (ferry-control pauses
+        # them all until then).
+        await self._pool.execute(
+            "WITH cleared AS (UPDATE users SET paused = false WHERE id = $1 AND paused RETURNING id)"
+            " UPDATE trips SET enabled = false, spec = jsonb_set(spec, '{enabled}', 'false'), rev = rev + 1,"
+            " updated_at = now() WHERE archived_at IS NULL AND enabled AND user_id IN (SELECT id FROM cleared)",
+            uid,
+        )
         user = await self._pool.fetchrow("SELECT id, username, display, is_admin FROM users WHERE id = $1", uid)
         if user is None:
             raise ApiError(404, "No such user")

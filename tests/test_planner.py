@@ -110,6 +110,8 @@ def test_a_suspended_user_and_maintenance_stop_everything() -> None:
     assert result.drain == [Drain(f"fw-{a.id}-g1", "suspended")]
     result = run([a], [pod(a)], maintenance=True)
     assert result.drain == [Drain(f"fw-{a.id}-g1", "maintenance")]
+    result = run([a], [pod(a)], users=[UserView("ann", paused=True)])  # an old "Pause all", for a release
+    assert result.drain == [Drain(f"fw-{a.id}-g1", "paused")]
     assert run([a], maintenance=True).start == []
 
 
