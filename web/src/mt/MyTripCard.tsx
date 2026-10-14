@@ -53,8 +53,7 @@ function HeldCart({ trip }: { trip: MyTrip }) {
               ? "Paused while you pay."
               : deadline
                 ? `Check out by ${clock(deadline * 1000)}${left !== null ? ` (${left} min)` : ""}.`
-                : "Check out soon."}{" "}
-            Check out as a guest; don't sign in to BC Ferries there.
+                : "Check out soon."}
           </p>
         </div>
       </div>

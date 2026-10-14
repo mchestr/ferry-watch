@@ -123,7 +123,7 @@ the quota, open hold egress on any pod, and read itineraries and emails (design-
 | Invite-only | Authelia gives `ferry-watch` codes only to lldap groups `ferry-watch` and `admin`; the app admits only people you invited; suspension revokes every session at once; sessions re-checked with Authelia every 24 h. | lldap users made by hand on a LAN-only UI; removal in lldap takes up to 24 h to reach the app, so suspend in the app first (R20); never reuse a username (R21). |
 | Operator only; Cilium, Envoy Gateway, k8s 1.36 | `entrypoint.sh` retired; compose for dev, kind for chart work. `toFQDNs` + DNS L7 allowlist, two static header-stripping HTTPRoutes, VAPs, TokenReview pod binding. | `toFQDNs` and label-driven policy are new on this cluster: S-CIL first. |
 | (review) one browser per user; route each user to their own pod | `maxActiveBrowsers` 1, now chosen automatically (round 3). One host, one path per pod, nginx maps the path to that pod's DNS name, the pod admits only its owner's ticket. | None beyond vnc-edge. |
-| (round 2) guest checkout "for now"; "Users can always sign-in on the browser?" | Guest-only, you included. Signing in to BC Ferries inside the checkout **probably won't work** (BC Ferries refuses a login while a guest cart exists, [top-level README](../../README.md); `site.py:288-290`) and is advised against: the password would take the card's unencrypted path. The copy says "Check out as a guest. Don't sign in to BC Ferries here." | Your own checkouts lose saved cards. One policy line can block `/login` if you prefer a rule. |
+| (round 2) guest checkout "for now"; "Users can always sign-in on the browser?" | Guest carts, you included. Round 2 advised against signing in to BC Ferries at checkout; after 0.6.3 you asked "Why do we say checkout as guest?", so signing in there is now each user's choice and the app no longer advises either way. The old "doesn't accept a sign-in while a cart is held" came from the single-tenant watcher's automated login being refused while a guest cart existed ([top-level README](../../README.md); `site.py:288-290`), not from a person signing in at checkout. | A password typed at checkout takes the card's unencrypted path (R4). Nothing signs in for you, so saved cards need a sign-in at checkout. One policy line can block `/login` if you ever want a rule. |
 | (round 2) "Can we use oidc?" | Yes: ferry-web is an OIDC client of Authelia (confidential, PKCE), verifies the `id_token`, then gives the SPA its own bearer token instead of a cookie, so the route drops every Cookie header. | About 3-4 days; residuals R17-R21 (section 6). |
 | (round 2) why the sandbox; no pre-cart window; no spike, no one-way doors | Sandbox explained in section 6; optional hardening is Q1. VNC strictly cart-gated. No spike tests guest checkout; fixtures from your use, production detection, an alert-only switch, the legacy app restorable, every guest choice a two-way door (section 3). | Your first real guest checkout is the end-to-end proof. |
 | (round 2) checkout host name | `ferry-checkout.chestr.dev` everywhere; covered by the `*.chestr.dev` cert and tunnel rule. | None. |
@@ -226,10 +226,10 @@ Detail: design-reference.md §3.5-3.6 (data flows), §6.2 (sign-in) and §8.1 (s
    alert links to the trip's page, which says why nothing was held, offers "Hold it for me" and links to
    bcferries.com.
    ferry-control flips the pod's egress label to `hold`.
-6. **Alert.** Web Push plus email: "Held for you: 7:00 am Tsawwassen -> Swartz Bay, Fri Aug 1. Check out as a
-   guest by 3:42 pm." Reminder at 15 min; released at 30 min if nobody opens it (a warm pod keeps watching).
+6. **Alert.** Web Push plus email: "Held for you: 7:00 am Tsawwassen -> Swartz Bay, Fri Aug 1. Check out by
+   3:42 pm." Reminder at 15 min; released at 30 min if nobody opens it (a warm pod keeps watching).
 7. **Choose a device.** `/c/<trip>` offers *Check out on this device*, *I'll use my computer* or *Release and
-   book it myself*, and says "Check out as a guest. Don't sign in to BC Ferries here."
+   book it myself*. At BC Ferries' checkout the user continues as a guest or signs in, as they choose.
 8. **Checkout over VNC.** The ticket opens `ferry-checkout.chestr.dev/t/<trip>/g/<gen>/`; the pod locks the hold
    to that device. The user pays on the real bcferries.com page; the payment and bank 3DS pages load from
    wherever they live. Phone sleep or a switch to the bank app reconnects with the same nonce. Session and
@@ -532,8 +532,8 @@ Pushover for users, SMS in v1, CRDs, namespace per tenant, an HA control plane, 
 
 **Decided** (design-reference.md §14.1 has the full table):
 - Round 2: guest checkout for now, you included, with no spike and only two-way doors; signing in to BC Ferries
-  during checkout advised against; app-native OIDC with a cookie-less session; no pre-cart sign-in window;
-  checkout host `ferry-checkout.chestr.dev`.
+  during checkout advised against (dropped after 0.6.3: it's the user's choice); app-native OIDC with a
+  cookie-less session; no pre-cart sign-in window; checkout host `ferry-checkout.chestr.dev`.
 - Round 3: the VNC first-connection race accepted for invite-only; no iOS takeover ticket; a trip paused until
   "Did you book it?" is answered; the 30-day horizon, the warm-browser curve, 6-hourly short checks and quiet
   hours alert only (`polling.py`; 0.6.3 made quiet hours each user's own, with no checks in them), with the

@@ -128,6 +128,7 @@ async def test_a_held_cart_is_pushed_and_emailed(rig: Rig) -> None:
     assert await rig.outbox.deliver_due() == 1
     (message,) = rig.pushed()
     assert message["title"] == "Held for you: 9:00 am, 11:00 am SWB → TSA, Fri Oct 16"
+    assert message["body"].startswith("Check out by ")  # not "as a guest": signing in is up to them
     assert message["url"] == f"https://ferry.chestr.dev/c/{TRIP.id}"
     headers = rig.push.received[0][0]
     assert headers["Urgency"] == "high"

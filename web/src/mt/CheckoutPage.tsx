@@ -122,9 +122,6 @@ export function CheckoutPage({
         </div>
         <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
           <li>Checkout will be locked to the device you choose.</li>
-          <li>
-            Check out as a guest. Don't sign in to BC Ferries there: it doesn't accept a sign-in while a cart is held.
-          </li>
           <li>Have your card and phone ready; your bank may ask you to approve in its app.</li>
         </ul>
         {open.error && <p className="text-sm text-danger">{errorMessage(open.error)}</p>}

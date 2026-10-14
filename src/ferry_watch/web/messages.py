@@ -125,7 +125,7 @@ class Messages:
         topic = f"{kind[:8]}-{trip.id}"
         if kind == "cart_held":
             by = _clock((cart or {}).get("unclaimed_deadline"))
-            deadline = f"Check out as a guest by {by}." if by else "Check out as a guest soon."
+            deadline = f"Check out by {by}." if by else "Check out soon."
             return Message(
                 f"Held for you: {when} {route}, {date}",
                 f"{deadline} Have your card and phone ready; your bank may ask you to approve in its app. "

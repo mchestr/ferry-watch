@@ -400,15 +400,15 @@ Numbers below are the defaults from the canonical table in §8.2.
    and the check can be turned off by a values flag. A cart the site has already dropped sends
    `cart_expired{by_site}` at once (its age feeds the site-TTL histogram) and never counts as viewed.
 3. **Deliver.** ferry-web's outbox worker gets the NOTIFY and renders the typed kind from its own templates
-   (§6.7): "Held for you: 7:00 am Tsawwassen → Swartz Bay, Fri Aug 1. Check out as a guest by 3:42 pm …".
+   (§6.7): "Held for you: 7:00 am Tsawwassen → Swartz Bay, Fri Aug 1. Check out by 3:42 pm …".
    The link is built from its own template: `https://ferry.chestr.dev/c/<trip>`. It sends Web Push (urgency
    high, TTL 1800 s) and email.
 4. **Choose a device.** The user taps the notification. The service worker builds the URL from the trip id
    against a constant origin. If the app session has lapsed, the SPA redirects to Authelia's authorization
    endpoint, which sends the browser straight back while the Authelia session is alive, and returns to
    `/c/<trip>` (§6.2.4). `/c/<trip>` shows the sailing, the deadline, and three choices, with the copy
-   "Checkout will be locked to the device you choose" and "Check out as a guest. Don't sign in to BC Ferries
-   here: it doesn't accept a sign-in while a cart is held" (§5.7):
+   "Checkout will be locked to the device you choose". It doesn't say how to check out: signing in to BC
+   Ferries there or continuing as a guest is the user's choice (§5.7):
    - **Check out on this device** POSTs `/api/trips/<trip>/vnc`. ferry-web checks that the user owns the
      trip, that `trip_state` shows a READY cart with this `cart_id` in the current pod, and that the user
      has made fewer than 10 mints this minute. It mints a ticket (§5.5), writes `vnc_mints` and audit rows,
@@ -521,7 +521,7 @@ everything (R1).
 
 | Value | Browser pod | ferry-control (operator) | ferry-web | vnc-edge | Envoy | Cloudflare edge + cloudflared | Postgres | Logs (VictoriaLogs) |
 |---|---|---|---|---|---|---|---|---|
-| Card number, CVV, 3DS codes, guest contact details (typed over VNC); a BC Ferries password, if a user signs in during checkout despite the advice (§5.7) | yes (own tenant only) | **no** | **no** | yes (RFB is plaintext) | yes | yes | no | no |
+| Card number, CVV, 3DS codes, guest contact details (typed over VNC); a BC Ferries password, if a user chooses to sign in during checkout (§5.7) | yes (own tenant only) | **no** | **no** | yes (RFB is plaintext) | yes | yes | no | no |
 | BC Ferries guest cart cookie | yes (own) | no | no | no | no | no | no | no |
 | VNC ticket (60 s, single use) | verifies it | no | mints it | yes (subprotocol header) | yes (header, not logged) | yes | `jti` only | no |
 | Resume nonce `N` | stores `sha256(N)` | no | **no** | yes | yes | yes | no | no |
@@ -637,8 +637,8 @@ once TLS ends; tenants are told (R4).
   phish through the dashboard and alerts. Closing the race needs an IdP-asserted principal verified by the
   pod (S-VNCID), which stays in the M4 backlog. Accepted for invite-only (owner, round 3).
 - **R4 Plaintext keystrokes on infrastructure.** Cloudflare's edge, cloudflared, Envoy, vnc-edge and the pod
-  see checkout keystrokes (RFB is plaintext after TLS ends), including a BC Ferries password if a user signs
-  in during checkout despite the advice (§5.7). vnc-edge, Envoy and Cloudflare can also inject input and
+  see checkout keystrokes (RFB is plaintext after TLS ends), including a BC Ferries password if a user
+  chooses to sign in during checkout (§5.7). vnc-edge, Envoy and Cloudflare can also inject input and
   reuse `N`. Whether relaying a cardholder's own keystrokes puts the owner in PCI scope is a grey
   area. Tenants are told, naming Cloudflare.
 - **R5 BC Ferries' own page supply chain.** Third-party scripts on bcferries.com or the payment pages can skim
@@ -1054,11 +1054,12 @@ is harmless: nothing can cart or open the gate before a check has launched Chrom
 
 - **Guest, the only mode at launch, for everyone including the owner** (owner, round 2: accepted "for
   now"). Remove the auto-cart credential gate (`watcher.py:459`, `:562`) and default `auto_cart` to true
-  (`views.py:113`). Drop `BCF_USER`/`BCF_PASS` (`settings.py:40-42`) and pass `credentials=None`. Cart alerts
-  say "check out as a guest". The guest's contact details and card exist only in the pod's memory during one
-  hold, and the pod is destroyed after any viewed hold. **Owner cost:** today the owner's checkout signs in
-  for saved payment cards (`site.py:270-271`) and possibly account-only fares; under this plan the owner
-  also checks out as a guest.
+  (`views.py:113`). Drop `BCF_USER`/`BCF_PASS` (`settings.py:40-42`) and pass `credentials=None`. The app
+  carts as a guest; at checkout the user may continue as a guest or sign in, as they choose (below; cart
+  alerts said "check out as a guest" until 0.6.3). The contact details and card typed at checkout exist only
+  in the pod's memory during one hold, and the pod is destroyed after any viewed hold. **Owner cost:** today
+  the owner's checkout signs in for saved payment cards (`site.py:270-271`) and possibly account-only fares;
+  under this plan nothing signs in for the owner either: any sign-in is typed at checkout.
 - **Guest checkout is assumed to work; no spike tests it** (owner, round 2: "No spike for now,
   assume it works and if not we will adjust later, don't make any one way door decisions on this"). What
   the removed spikes (S1, S2, S2b, S5, S6, S7, the live part of S-FIX) would have told us comes instead from:
@@ -1117,21 +1118,25 @@ is harmless: nothing can cart or open the gate before a check has launched Chrom
      guest checkout has worked on the new stack, not for a fixed 14 days (§12.5).
   6. The VNC ticket's `aud` names its purpose (§5.5) and C22 is scoped to *checkout* viewers, so a later
      sign-in window is a new audience and a named branch, not a rewrite of the checkout gate.
-- **Can users sign in to BC Ferries inside the browser?** (Owner, round 2: "Users can always sign-in on the
-  browser?") **Probably not during checkout, and the plan advises against it.** Every VNC session has a held
-  guest cart, because VNC exists only while a cart is held, and the owner has observed that BC Ferries'
-  login page won't accept a login while a guest cart exists ([top-level README](../../README.md) "Things to
-  know about BC Ferries"; `site.py:288-290`, where the site clears the login form). The page is not blocked
-  (bcferries.com, including `/login`, is allowlisted, §5.6), so a user can try, but should expect the
-  sign-in to fail; whether trying affects the held cart is unverified. There is a security reason too: a
-  password typed there crosses the same plaintext path as card data (Cloudflare, cloudflared, Envoy and
-  vnc-edge, R4) into a Chromium running without its sandbox (R2), and any BC Ferries account session it
-  creates lives on at BC Ferries after the pod exits (the pod itself keeps nothing; the password manager is
-  off). So the cart screen (`/c/<trip>`), the checkout landing page, the cart banner and the invite email
-  say: "Check out as a guest. Don't sign in to BC Ferries here: it doesn't accept a sign-in while a cart is
-  held." Supporting sign-in properly is the attended sign-in option in §15, which comes with the sandbox
-  hardening first. If the owner prefers to make the advice a rule, one `URLBlocklist` entry blocks `/login`
-  (§5.6).
+- **Can users sign in to BC Ferries inside the browser? Yes, if they want to: it's their choice** (owner,
+  after 0.6.3: "Why do we say checkout as guest? BC ferries has a sign in and checkout option that probably
+  works just fine if they want to use it."). BC Ferries' checkout offers both signing in and continuing as a
+  guest, and the app no longer advises either way: the cart alerts, `/c/<trip>`, the trip card, the checkout
+  landing page and the invite email stopped saying "Check out as a guest. Don't sign in to BC Ferries here:
+  it doesn't accept a sign-in while a cart is held." That advice (round 2, until 0.6.3) rested on the
+  owner's observation that BC Ferries' login page won't accept a login while a guest cart exists
+  ([top-level README](../../README.md) "Things to know about BC Ferries"; `site.py:288-290`, where the site
+  clears the login form). That observation came from the single-tenant watcher's *automated* login, which
+  BC Ferries refused when a guest cart already existed (so the watcher logs in first and carts after); it
+  was never about a person signing in at BC Ferries' own checkout step, which nobody had tried. The page is
+  not blocked (bcferries.com, including `/login`, is allowlisted, §5.6). The security note stands, for the
+  user to weigh: a password typed there crosses the same plaintext path as card data (Cloudflare,
+  cloudflared, Envoy and vnc-edge, R4) into a Chromium running without its sandbox (R2), and any BC Ferries
+  account session it creates lives on at BC Ferries after the pod exits (the pod itself keeps nothing; the
+  password manager is off). A sign-in the user chooses is `checkout_login_seen` with `forced: false`: one
+  entry in their activity, counted, alerting nobody (production detection, above). Signing in *before* a
+  cart is still the attended sign-in option in §15, which comes with the sandbox hardening first. If the
+  owner ever wants sign-in blocked, one `URLBlocklist` entry blocks `/login` (§5.6).
 - **Pre-cart sign-in window: not in v1** (owner, round 2: first-list Q1, "No"). VNC stays strictly gated to a held
   cart. An attended sign-in before a cart (the former M5) is listed as a possible future option in §15. It
   is not designed out (doors 1, 2, 4 and 6 above), but adding it is real work, listed there, and needs the
@@ -1734,7 +1739,7 @@ recipient; `Message` (`notify.py:31-37`) gains `user_id`, `trip_id` and `kind`; 
 
 | Kind | Channel | Copy (shape) | Link |
 |---|---|---|---|
-| `cart_held` (urgency high, TTL 1800 s) | push + email (same text as subject) | "Held for you: 7:00 am Tsawwassen → Swartz Bay, Fri Aug 1." / "Check out as a guest by 3:42 pm. Have your card and phone ready; your bank may ask you to approve in its app. A computer is easiest." | `/c/<trip>` |
+| `cart_held` (urgency high, TTL 1800 s) | push + email (same text as subject) | "Held for you: 7:00 am Tsawwassen → Swartz Bay, Fri Aug 1." / "Check out by 3:42 pm. Have your card and phone ready; your bank may ask you to approve in its app. A computer is easiest." | `/c/<trip>` |
 | `hold_reminder` (unclaimed, at 15 min), `hold_ending` (session, at T−5) | push | route, date, sailing, absolute deadline | `/c/<trip>` |
 | `bookable` (no cart: auto-cart off, alert-only, limit, quiet hours, or a cart already held on another trip) | push (email when no device works) | route, date, sailings, and why nothing was held (ferry-control's `held_back`, worked out when it records the alert) | `/c/<trip>`, which says why, offers "Hold it for me" and links to `search_url(trip)`; email adds `search_url` as a second link |
 | `cart_failed` (the claim was granted, `add_to_cart` failed; `error_class` says how) | push | route, date, sailings, why BC Ferries refused | `/c/<trip>`, as for `bookable` |
@@ -2056,12 +2061,11 @@ first successful open. If the client gives up reconnecting before the hold deadl
 shim reloads `vnc.html` with back-off (1, 2, 5, 10 s), so retries are effectively uncapped until the deadline.
 The landing page sets
 `#path=t/<trip>/g/<gen>/ws&autoconnect=1&reconnect=1&reconnect_delay=1000&idle_disconnect=120` and shows the
-sailing and deadlines with `textContent`, plus a static note: "Check out as a guest. Don't sign in to BC Ferries
-here: it doesn't accept a sign-in while a cart is held" (§5.7). If the fragment's ticket has already expired (a
-slow load) and this device holds no lock yet, it sends the user back to `https://ferry.chestr.dev/c/<trip>` to
-mint again; with no ticket and no stored `N` it shows only a link back to the dashboard. A CI test drives the
-stock client in headless Chromium against a fake gate and asserts the path and subprotocols, so a KasmVNC bump
-that changes this fails CI.
+sailing and deadlines with `textContent` (its note advising guest checkout went after 0.6.3, §5.7). If the
+fragment's ticket has already expired (a slow load) and this device holds no lock yet, it sends the user back
+to `https://ferry.chestr.dev/c/<trip>` to mint again; with no ticket and no stored `N` it shows only a link
+back to the dashboard. A CI test drives the stock client in headless Chromium against a fake gate and asserts
+the path and subprotocols, so a KasmVNC bump that changes this fails CI.
 
 ```nginx
 map $http_upgrade $connection_upgrade { default upgrade; '' close; }
@@ -2595,12 +2599,12 @@ The size is L: about 2-2.5k changed or added lines, including tests [R:map-front
      Each card has Edit and Remove (0.6.4). Remove asks first, as the trip form's does, and with a cart held
      or being added it says that removing lets that sailing go.
    - `/c/:trip`: the held sailing, the deadlines, and **Check out on this device** / **I'll use my computer**
-     / **Release and book it myself**, with "Checkout will be locked to the device you choose" and "Check
-     out as a guest. Don't sign in to BC Ferries here: it doesn't accept a sign-in while a cart is held"
-     (§5.7). No automatic POST.
+     / **Release and book it myself**, with "Checkout will be locked to the device you choose" and "Have
+     your card and phone ready; your bank may ask you to approve in its app". Nothing about signing in to
+     BC Ferries: that's the user's choice (owner, after 0.6.3; §5.7). No automatic POST.
    - `CartBanner` (`CartBanner.tsx:44`, `:112-113`, `:136-140`): per-trip "Open checkout" (goes to `/c`),
-     the unclaimed and session countdowns, "paused while paying", the guest wording (including the
-     don't-sign-in advice), and "Release".
+     the unclaimed and session countdowns, "paused while paying", and "Release" (the guest wording and the
+     don't-sign-in advice went after 0.6.3, §5.7).
    - "Did you book it?" ("Yes", "No, cancel", or a "No" that offers the optional one-tap reasons of §5.7; the question stays on the trip
      card until answered, because the trip is paused until then) and "Booked!" screens; the latter carries
      the Ko-fi link.
@@ -3142,15 +3146,15 @@ Everything in M4 is post-v1. None of it is needed for the guarantees the owner a
    - how checking works: your nearest trip within 7 days is watched closely (every 5 min a week out, down to
      every 30 s in the last 6 hours); your other trips are checked every 6 hours; trips can be at most 30 days
      ahead; between 23:00 and 06:00 you get alerts but no held cart;
-   - check out as a guest, and don't sign in to your BC Ferries account during checkout: BC Ferries doesn't
-     accept a sign-in while a cart is held, and your password would pass through the same unencrypted path
-     as your card;
+   - at checkout you can continue as a guest or sign in to your BC Ferries account, as you like; a password
+     typed there passes through the same unencrypted path as your card (until 0.6.3 this said to check out
+     as a guest and not sign in, §5.7);
    - after a checkout we can't confirm, the trip waits for your answer to "Did you book it?" before it is
      watched again;
    - what we can see: the cluster admin, and the automation that runs with their rights, can technically see
      everything; checkout keystrokes pass through Cloudflare and our servers unencrypted for a moment; your
-     card is never stored; checkout is as a guest; while you hold a cart, the browser can reach any website,
-     from our home connection.
+     card is never stored, and no BC Ferries password is either; while you hold a cart, the browser can
+     reach any website, from our home connection.
 5. Check the Users page shows the person as active (invitation used) with push enabled.
 
 **Removing a person.** Authelia re-checks the group only when the person's session next goes back to it
@@ -3222,7 +3226,8 @@ two small points that now stand alone (Q2, Q3).
 |---|---|---|---|
 | first list Q0 | Identity | Round 2: "Can we use oidc?": yes; app-native OIDC with a cookie-less app session. | §6.2, C29, R17-R21 |
 | first list Q1 | Pre-cart sign-in window | Round 2: no. VNC only while a cart is held; attended sign-in is a possible future option. | §5.7, §15 |
-| first list Q2, Q3, Q3b | Live booking spike; guest checkout, the owner included | Round 2: no spike, assume it works, no one-way doors; guest accepted "for now"; signing in to BC Ferries during checkout probably won't work and is advised against. | §5.7, §12.1 |
+| first list Q2, Q3, Q3b | Live booking spike; guest checkout, the owner included | Round 2: no spike, assume it works, no one-way doors; guest accepted "for now"; signing in to BC Ferries during checkout probably won't work and is advised against (advice dropped after 0.6.3, next row). | §5.7, §12.1 |
+| owner feedback after 0.6.3 | "Why do we say checkout as guest?" | Signing in to BC Ferries during checkout is the user's choice; the app no longer advises against it anywhere. The old "doesn't accept a sign-in while a cart is held" came from the single-tenant watcher's automated login being refused while a guest cart existed, not from a person signing in at checkout. The security note (the password travels the same path as the card number) stays in the docs. | §5.7, §10, §12.5 |
 | first list Q6 | Lua or a separate domain | Planner: mostly moot (the app sets no cookie); a separate domain stays possible later (R12). | §6.2.1, R12 |
 | round-2 Q1 | VNC first-connection race (R3) | Round 3: accepted for invite-only; S-VNCID stays in the backlog. | R3, M4 |
 | round-2 Q1b | iOS takeover ticket | Round 3: no. iPhone users who lose the device lock check out in Safari or on a computer; revisited with the owner's M1 data. | §5.5 |
