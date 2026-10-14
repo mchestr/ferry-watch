@@ -25,6 +25,7 @@ from aiohttp import WSMsgType, web
 from ferry_watch.control.store import USER_CHANNEL
 
 from .accounts import Accounts, SignedIn
+from .http import cross_site
 
 log = logging.getLogger(__name__)
 
@@ -90,8 +91,7 @@ class LiveHub:
                 await asyncio.sleep(2)
 
     async def serve(self, request: web.Request) -> web.StreamResponse:
-        origin = request.headers.get("Origin")
-        if origin is not None and origin != f"{request.scheme}://{request.host}":
+        if cross_site(request):
             raise web.HTTPForbidden
         ws = web.WebSocketResponse(heartbeat=PING_SECONDS, max_msg_size=MAX_MESSAGE_BYTES)
         await ws.prepare(request)

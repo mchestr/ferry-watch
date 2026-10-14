@@ -78,6 +78,37 @@ describe("signed out", () => {
   });
 });
 
+describe("a page load", () => {
+  it("sends the token with the very first requests", async () => {
+    vi.resetModules(); // a fresh page: nothing wired up yet by an earlier test
+    const { MtApp: Fresh } = await import("./MtApp");
+    localStorage.setItem("fw.token", "t-1");
+    const { requests } = mockFetch((r) =>
+      r.url === "/api/state" ? jsonResponse(myState()) : jsonResponse({ terminals: [] }),
+    );
+    renderWithProviders(<Fresh />);
+    expect(await screen.findByRole("heading", { name: "Your trips" })).toBeInTheDocument();
+    expect(requests.map((r) => r.headers.get("Authorization"))).toEqual(requests.map(() => "Bearer t-1"));
+    expect(localStorage.getItem("fw.token")).toBe("t-1");
+  });
+
+  it("lands on the trips straight after a first sign-in", async () => {
+    const flow = { state: "S", nonce: "N", verifier: "V", returnTo: "/" };
+    sessionStorage.setItem("fw.signin", JSON.stringify(flow));
+    history.replaceState(null, "", "/auth/callback#code=c1&state=S");
+    const { requests } = mockFetch((r) => {
+      if (r.url === "/auth/session") return jsonResponse({ token: "t-2" });
+      if (r.url === "/api/state") return jsonResponse(myState());
+      return jsonResponse({ terminals: [] });
+    });
+    renderWithProviders(<MtApp />);
+    expect(await screen.findByRole("heading", { name: "Your trips" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Sign in" })).toBeNull();
+    expect(location.pathname).toBe("/");
+    expect(requests.find((r) => r.url === "/api/state")?.headers.get("Authorization")).toBe("Bearer t-2");
+  });
+});
+
 describe("signed in", () => {
   beforeEach(() => {
     localStorage.setItem("fw.token", "t-1");
