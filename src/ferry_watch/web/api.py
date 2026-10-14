@@ -56,13 +56,18 @@ def _cart_id(body: dict[str, Any]) -> str:
     return cart_id
 
 
-async def get_state(request: web.Request) -> web.Response:
-    state = await request.app[STORE].snapshot(signed_in(request).uid)
-    directory = request.app.get(TERMINALS)
+async def user_state(app: web.Application, uid: str) -> dict[str, Any]:
+    """The user's whole state, as both GET /api/state and the live socket send it."""
+    state = await app[STORE].snapshot(uid)
+    directory = app.get(TERMINALS)
     terminals = directory.cached if directory is not None else None
     for trip in state["trips"]:
         trip["booking_url"] = _booking_url(trip["trip"], terminals)
-    return web.json_response(state | request.app[PUBLIC])
+    return state | app[PUBLIC]
+
+
+async def get_state(request: web.Request) -> web.Response:
+    return web.json_response(await user_state(request.app, signed_in(request).uid))
 
 
 def _booking_url(spec: dict[str, Any], terminals: Terminals | None) -> str | None:

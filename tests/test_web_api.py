@@ -84,6 +84,7 @@ async def rig(db: Database, aiohttp_client: Callable[..., Any]) -> AsyncIterator
             CheckoutSigner(KEY, "k1", ORIGIN),
             pool=pool,
             limits=Limits(),
+            public={"links": {"kofi": None}, "push": {"key": "BPushKey"}},
             origin=SITE,  # served over plain http here, as behind the gateway that ends TLS
         )
         client: TestClient = await aiohttp_client(app)
@@ -234,6 +235,7 @@ async def test_hold_it_for_me_keeps_the_other_limits(rig: Rig) -> None:
     assert state["trips"][0]["hold"] == {
         "reason": "holding_elsewhere",
         "can_request": False,
+        "holdable": ["09:00"],
         "requested_at": None,
         "requested_until": None,
     }
@@ -252,13 +254,81 @@ async def test_hold_it_for_me_keeps_the_other_limits(rig: Rig) -> None:
     assert await rig.sql("SELECT 1 FROM trip_runtime WHERE hold_requested_until IS NOT NULL") == []
 
 
+async def test_no_hold_is_offered_for_a_sailing_already_held_once(rig: Rig) -> None:
+    """Released, expired or viewed: the pod never carts that departure again, so asking would do nothing."""
+    trip_id = await rig.add(earliest="08:00", latest="12:00")
+    await seen(rig, trip_id, sailing("09:00"), sailing("11:00"))
+    await rig.sql("INSERT INTO alert_memory (trip_id, key_hash, alerted) VALUES ($1, '', '{09:00}')", trip_id)
+    state = await (await rig.call("GET", "/api/state")).json()
+    assert state["trips"][0]["hold"]["holdable"] == ["11:00"]
+    assert state["trips"][0]["hold"]["can_request"] is True
+    await rig.sql("UPDATE alert_memory SET alerted = '{09:00,11:00}'")
+    state = await (await rig.call("GET", "/api/state")).json()
+    hold = state["trips"][0]["hold"]
+    assert (hold["reason"], hold["can_request"], hold["holdable"]) == ("already_held", False, [])
+    response = await rig.call("POST", f"/api/trips/{trip_id}/hold")
+    assert (response.status, (await response.json())["error"]) == (
+        409,
+        "It was held for you once already; book it yourself on bcferries.com",
+    )
+
+
+async def test_a_paused_account_offers_no_hold(rig: Rig) -> None:
+    trip_id = await rig.add()
+    await seen(rig, trip_id, sailing("09:00"))  # what the last check saw, before the pause
+    await rig.call("PATCH", "/api/me", json={"paused": True})
+    state = await (await rig.call("GET", "/api/state")).json()
+    assert state["trips"][0]["hold"] == {
+        "reason": "paused",
+        "can_request": False,
+        "holdable": [],
+        "requested_at": None,
+        "requested_until": None,
+    }
+    response = await rig.call("POST", f"/api/trips/{trip_id}/hold")
+    assert (response.status, (await response.json())["error"]) == (409, "This trip is paused")
+
+
+async def test_a_lapsed_claim_isnt_a_hold_elsewhere(rig: Rig) -> None:
+    """A claim whose cart never came (a failed try on an old pod, a claim that timed out) lapses after 2 min."""
+    trip_id = await rig.add()
+    await seen(rig, trip_id, sailing("09:00"))
+    await rig.sql(
+        "INSERT INTO hold_claims (user_id, trip_id, pod, claimed_at) VALUES ($1, 'ffffffffffffffff', 'x',"
+        " now() - interval '5 minutes')",
+        ANN,
+    )
+    assert (await rig.call("POST", f"/api/trips/{trip_id}/hold")).status == 200
+
+
+async def test_editing_a_trip_drops_its_hold_request(rig: Rig) -> None:
+    trip_id = await rig.add()
+    await seen(rig, trip_id, sailing("09:00"))
+    assert (await rig.call("POST", f"/api/trips/{trip_id}/hold")).status == 200
+    assert (await rig.call("PATCH", f"/api/trips/{trip_id}", json={"adults": 2})).status == 200
+    assert await rig.sql("SELECT 1 FROM trip_runtime WHERE hold_requested_until IS NOT NULL") == []
+
+
+async def test_a_sailing_the_state_cant_read_doesnt_break_it(rig: Rig) -> None:
+    trip_id = await rig.add()
+    await seen(rig, trip_id, {"depart": "9am", "status": "available"}, sailing("09:00"))
+    state = await (await rig.call("GET", "/api/state")).json()
+    assert state["trips"][0]["hold"]["holdable"] == ["09:00"]
+
+
 async def test_the_state_says_why_a_trip_wouldnt_be_held(rig: Rig) -> None:
     trip_id = await rig.add(auto_cart=False)
     state = await (await rig.call("GET", "/api/state")).json()
     hold = state["trips"][0]["hold"]
     # Quiet hours come first when it's night where the ferries are; this runs at any hour.
     expected = "quiet_hours" if state["quiet_hours"]["now"] else "auto_cart_off"
-    assert hold == {"reason": expected, "can_request": True, "requested_at": None, "requested_until": None}
+    assert hold == {
+        "reason": expected,
+        "can_request": True,
+        "holdable": [],
+        "requested_at": None,
+        "requested_until": None,
+    }
     await rig.sql("UPDATE fleet_state SET value = 'true' WHERE key = 'pause_carting'")
     state = await (await rig.call("GET", "/api/state")).json()
     assert state["trips"][0]["hold"]["reason"] == "carting_paused"
@@ -746,6 +816,19 @@ async def test_the_live_socket_follows_the_users_own_changes(rig: Rig) -> None:
         await asyncio.wait_for(bob.receive(), 0.5)  # nothing of Ann's reaches Bob
     await ann.close()
     await bob.close()
+
+
+async def test_the_live_socket_sends_the_same_state_as_the_api(rig: Rig) -> None:
+    """The push key, the links and each trip's booking link too: without them the dashboard lost its "turn on
+    alerts" button and its bcferries.com links at the first live update."""
+    await rig.add()
+    ann = await live(rig)
+    pushed = await next_state(ann)
+    fetched = await (await rig.call("GET", "/api/state")).json()
+    assert pushed["push"] == fetched["push"] == {"key": "BPushKey"}
+    assert pushed["links"] == fetched["links"]
+    assert set(pushed["trips"][0]) == set(fetched["trips"][0]) >= {"booking_url", "hold"}
+    await ann.close()
 
 
 async def test_the_live_socket_needs_a_token_first(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:

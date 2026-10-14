@@ -10,7 +10,7 @@ import { reportError, useNow } from "@/lib/hooks";
 import { timeLabel } from "@/lib/time";
 import { MY_STATE_KEY, myApi } from "./api";
 import type { MyTrip } from "./schema";
-import { notHeldReason, unheld } from "./trips";
+import { holdPending, notHeldReason, unheld } from "./trips";
 
 function times(departures: string[]): string {
   const shown = departures.slice(0, 3).map(timeLabel).join(", ");
@@ -35,23 +35,22 @@ export function NotHeld({ trip }: { trip: MyTrip }) {
     onSuccess: (state) => qc.setQueryData(MY_STATE_KEY, state),
     onError: (error) => reportError(qc, error),
   });
-  if (departures.length === 0) return null;
-  // Asked, and the pod hasn't finished a check since: it's on its way. After that check, no cart means it
-  // couldn't, and the reason and the button come back.
-  const { requested_at: askedAt, requested_until: until } = trip.hold;
-  const checked = trip.browser.checked_at ?? 0;
-  const trying = hold.isPending || (askedAt !== null && until !== null && until * 1000 > now && checked <= askedAt);
+  // Asked, and no check since has acted on it: it's on its way (a new pod may still be starting, with no
+  // sailings yet). After that check, no cart means it couldn't, and the reason and the button come back.
+  const trying = hold.isPending || holdPending(trip, now);
+  if (departures.length === 0 && !trying) return null;
   const verb = departures.length === 1 ? "is" : "are";
-  const which = departures.length === 1 ? "it" : timeLabel(departures[0] ?? ""); // the pod holds the earliest
+  const target = trip.hold.holdable[0]; // the pod holds the earliest it still may
+  const which = departures.length <= 1 || !target ? "it" : timeLabel(target);
   return (
     <div className="space-y-3 rounded-xl border border-warning bg-warning-soft p-4">
       <div className="flex items-start gap-3">
         <ShoppingCart className="mt-0.5 size-5 text-warning" aria-hidden />
         <div className="min-w-0 flex-1">
           <p className="font-semibold">
-            {times(departures)} {verb} bookable, not held
+            {departures.length ? `${times(departures)} ${verb} bookable, not held` : "Checking to hold it for you"}
           </p>
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-muted-foreground" role="status">
             {trying
               ? `Trying to hold ${which} now. This page updates when it's held.`
               : trip.hold.can_request

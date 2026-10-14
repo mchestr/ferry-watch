@@ -85,11 +85,19 @@ class Messages:
         return f"{trip.origin} → {trip.destination}"
 
     def _search(self, trip: Trip) -> str:
+        return self._booking(trip) or f"{self._base}/"  # an unknown terminal: the dashboard instead
+
+    def _booking(self, trip: Trip) -> str | None:
+        """BC Ferries' booking form for the trip, if the terminal list knows its route."""
         terminals = self._terminals()
         if terminals is not None:
-            with contextlib.suppress(RouteRejected):  # an unknown terminal: the dashboard instead
+            with contextlib.suppress(RouteRejected):
                 return search_url(trip, terminals)
-        return f"{self._base}/"
+        return None
+
+    def _book_it_yourself(self, trip: Trip) -> tuple[str, str] | None:
+        url = self._booking(trip)
+        return (BOOK_IT_YOURSELF, url) if url else None
 
     def render(  # noqa: C901, PLR0911, PLR0912 - one branch per kind
         self,
@@ -145,7 +153,7 @@ class Messages:
                 body,
                 checkout,  # the trip's page: why nothing is held, "Hold it for me", and bcferries.com
                 urgency="high",
-                also=(BOOK_IT_YOURSELF, self._search(trip)),
+                also=self._book_it_yourself(trip),
             )
         if kind == "cart_failed":
             why = CART_FAILED.get(str(params.get("error_class")))
@@ -154,7 +162,7 @@ class Messages:
                 f"BC Ferries didn't let us hold it{f' ({why})' if why else ''}. Open Ferry Watch to try again.",
                 checkout,
                 urgency="high",
-                also=(BOOK_IT_YOURSELF, self._search(trip)),
+                also=self._book_it_yourself(trip),
             )
         if kind == "cart_lost":
             return Message(

@@ -18,7 +18,7 @@ function myState(overrides: Partial<MyState> = {}): MyState {
         trip: { ...makeSettings(), id: TRIP_ID },
         rev: 1,
         paused_reason: null,
-        hold: { reason: null, can_request: true, requested_at: null, requested_until: null },
+        hold: { reason: null, can_request: true, holdable: [], requested_at: null, requested_until: null },
         booking_url: null,
         browser: {
           phase: "holding",
@@ -192,7 +192,14 @@ describe("a bookable sailing nothing holds", () => {
         {
           ...base,
           booking_url: BOOK,
-          hold: { reason: "quiet_hours", can_request: true, requested_at: null, requested_until: null, ...hold },
+          hold: {
+            reason: "quiet_hours",
+            can_request: true,
+            holdable: ["09:00"],
+            requested_at: null,
+            requested_until: null,
+            ...hold,
+          },
           browser: { ...base.browser, cart: null, sailings: [SAILING], checked_at: checkedAt },
         },
       ],
@@ -240,12 +247,47 @@ describe("a bookable sailing nothing holds", () => {
     expect(screen.queryByRole("button", { name: /Hold it for me/ })).toBeNull();
   });
 
+  it("offers only bcferries.com for a sailing that was held once already", async () => {
+    const state = unheldState({ reason: "already_held", can_request: false, holdable: [] });
+    mockFetch((r) => (r.url === "/api/state" ? jsonResponse(state) : jsonResponse({ terminals: [] })));
+    renderWithProviders(<MtApp />);
+    expect(
+      await screen.findByText("It was held for you once already. You can still book it yourself."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Hold .* for me/ })).toBeNull();
+    expect(screen.getByRole("link", { name: /Book on bcferries.com/ })).toHaveAttribute("href", BOOK);
+  });
+
+  it("keeps saying it's trying while a new pod starts with no sailings yet", async () => {
+    const now = Date.now() / 1000;
+    const base = unheldState({ requested_at: now - 20, requested_until: now + 580 });
+    const trip = base.trips[0];
+    if (!trip) throw new Error("no trip");
+    const starting = {
+      ...base,
+      trips: [{ ...trip, browser: { ...trip.browser, sailings: [], phase: "starting" as const } }],
+    };
+    history.replaceState(null, "", `/c/${TRIP_ID}`);
+    mockFetch((r) => (r.url === "/api/state" ? jsonResponse(starting) : jsonResponse({ terminals: [] })));
+    renderWithProviders(<MtApp />);
+    expect(await screen.findByText("Checking to hold it for you")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Trying to hold it now.");
+  });
+
+  it("says when the trip is gone", async () => {
+    history.replaceState(null, "", "/c/ffffffffffffffff");
+    mockFetch((r) => (r.url === "/api/state" ? jsonResponse(unheldState()) : jsonResponse({ terminals: [] })));
+    renderWithProviders(<MtApp />);
+    expect(await screen.findByText("This trip isn't on your list any more")).toBeInTheDocument();
+  });
+
   it("is where a Bookable alert lands", async () => {
     history.replaceState(null, "", `/c/${TRIP_ID}`);
     mockFetch((r) => (r.url === "/api/state" ? jsonResponse(unheldState()) : jsonResponse({ terminals: [] })));
     renderWithProviders(<MtApp />);
     expect(await screen.findByText("9:00 am is bookable, not held")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Hold it for me/ })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Book on bcferries.com/ })).toHaveAttribute("href", BOOK);
     expect(screen.queryByText("Nothing is held right now")).toBeNull();
   });
 });

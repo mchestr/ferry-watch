@@ -152,8 +152,8 @@ async def test_email_stands_in_when_no_device_works(rig: Rig) -> None:
     assert [to for to, _, _ in rig.mailer.sent] == ["ann@example.com"]
     (_, _, text) = rig.mailer.sent[0]
     assert text.startswith("We don't hold carts overnight. Open Ferry Watch to hold it now.\n\n")
-    assert f"https://ferry.chestr.dev/c/{TRIP.id}\n" in text  # the trip's page first
-    assert "Or book it yourself on bcferries.com:\n" in text
+    assert f"https://ferry.chestr.dev/c/{TRIP.id}\n" in text  # the trip's page
+    assert "bcferries.com" not in text  # no terminal list here: no second link, rather than a wrong one
     assert await rig.sql("SELECT * FROM push_subscriptions") == []  # forgotten
 
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import secrets
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from datetime import time as clock_time
@@ -19,7 +19,7 @@ import asyncpg
 
 from ferry_watch.control.configure import Allowance, HubSettings, Switches, cart_gate
 from ferry_watch.control.limits import LimitKey, Limits
-from ferry_watch.control.store import USER_CHANNEL
+from ferry_watch.control.store import CLAIM_LAPSE_SECONDS, USER_CHANNEL
 from ferry_watch.models import PACIFIC, Trip, ValidationError
 from ferry_watch.polling import PollPolicy
 
@@ -39,6 +39,8 @@ HOLD_REFUSED = {
     "holding_elsewhere": "You're already holding a cart on another trip",
     "no_holds_left": "You've used today's holds",
     "limit": "You've reached today's limit for holding carts",
+    "already_held": "It was held for you once already; book it yourself on bcferries.com",
+    "paused": "This trip is paused",
 }
 
 
@@ -68,11 +70,34 @@ class HoldContext:
     settings: HubSettings
     at: datetime
 
-    def hold(self, trip: Trip, requested_until: float | None, now: float) -> dict[str, Any]:
-        """Why auto-hold won't hold this trip's sailings now (None: it would), and whether asking would help."""
-        blocked = cart_gate(trip, self.allowance, self.switches, self.settings, self.at, requested=True)
+    def hold(
+        self,
+        trip: Trip,
+        *,
+        paused: bool,
+        sailings: list[dict[str, Any]],
+        alerted: Iterable[str],
+        requested_until: float | None,
+        now: float,
+    ) -> dict[str, Any]:
+        """Why auto-hold won't hold this trip's sailings now (None: it would), whether asking would help, and
+        which bookable departures a hold could still be for (`holdable`)."""
+        if paused:  # nothing is watching it: what the last check saw is history
+            return {
+                "reason": "paused",
+                "can_request": False,
+                "holdable": [],
+                "requested_at": None,
+                "requested_until": None,
+            }
+        bookable = bookable_in_window(trip, sailings)
+        # A departure held once (then released, expired or viewed) is never carted again by the pod.
+        holdable = [d for d in bookable if d not in set(alerted)]
+        blocked: str = cart_gate(trip, self.allowance, self.switches, self.settings, self.at, requested=True)
         if blocked == "ok" and self.claimed_trip not in (None, trip.id):
             blocked = "holding_elsewhere"
+        if blocked == "ok" and bookable and not holdable:
+            blocked = "already_held"
         reason: str | None = blocked
         if blocked == "ok":
             reason = "quiet_hours" if self.settings.policy.quiet(self.at) else None
@@ -82,6 +107,7 @@ class HoldContext:
         return {
             "reason": reason,
             "can_request": blocked == "ok",
+            "holdable": holdable,
             "requested_at": requested_until - HOLD_REQUEST_S if active and requested_until else None,
             "requested_until": requested_until if active else None,
         }
@@ -89,11 +115,14 @@ class HoldContext:
 
 def bookable_in_window(trip: Trip, sailings: list[dict[str, Any]]) -> list[str]:
     """The departures the trip's latest check found open, inside its window ("HH:MM")."""
-    return [
-        s["depart"]
-        for s in sailings
-        if s.get("status") == "available" and trip.in_window(clock_time.fromisoformat(s["depart"]))
-    ]
+    found = []
+    for s in sailings:
+        try:
+            if s.get("status") == "available" and trip.in_window(clock_time.fromisoformat(s["depart"])):
+                found.append(s["depart"])
+        except (KeyError, TypeError, ValueError):
+            continue  # not a sailing as the protocol sends them; never worth failing the whole state for
+    return found
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,6 +226,8 @@ class WebStore:
             )
             if trip.search_key() != current.search_key():
                 await conn.execute("DELETE FROM alert_memory WHERE trip_id = $1", trip_id)  # a new search
+            # A hold asked for was for the trip as it was; asked again if still wanted.
+            await conn.execute("UPDATE trip_runtime SET hold_requested_until = NULL WHERE trip_id = $1", trip_id)
             if trip.enabled and not current.enabled:
                 await conn.execute("UPDATE trip_runtime SET next_check_at = NULL WHERE trip_id = $1", trip_id)
         return trip
@@ -211,6 +242,7 @@ class WebStore:
         )
         if result.endswith(" 0"):
             raise ApiError(404, "No such trip")
+        await self._pool.execute("UPDATE trip_runtime SET hold_requested_until = NULL WHERE trip_id = $1", trip_id)
 
     # ---- what users ask of their browser
 
@@ -238,21 +270,26 @@ class WebStore:
         trip, _ = await self.trip(uid, trip_id)
         now = self._clock()
         row = await self._pool.fetchrow(
-            "SELECT t.paused_reason, u.paused, s.sailings, s.cart FROM trips t JOIN users u ON u.id = t.user_id"
-            " LEFT JOIN trip_state s ON s.trip_id = t.id WHERE t.id = $1 AND t.user_id = $2",
+            "SELECT t.paused_reason, u.paused, s.sailings, s.cart, m.alerted FROM trips t"
+            " JOIN users u ON u.id = t.user_id LEFT JOIN trip_state s ON s.trip_id = t.id"
+            " LEFT JOIN alert_memory m ON m.trip_id = t.id WHERE t.id = $1 AND t.user_id = $2",
             trip_id,
             uid,
         )
         if row is None:
             raise ApiError(404, "No such trip")
-        if not trip.enabled or row["paused_reason"] is not None or row["paused"]:
-            raise ApiError(409, "This trip is paused")
+        paused = not trip.enabled or row["paused_reason"] is not None or row["paused"]
+        if paused:
+            raise ApiError(409, HOLD_REFUSED["paused"])
         cart = json.loads(row["cart"]) if row["cart"] else None
         if cart is not None and cart.get("status") in ("adding", "ready"):
             raise ApiError(409, "A cart is already being held for this trip")
-        if not bookable_in_window(trip, json.loads(row["sailings"]) if row["sailings"] else []):
+        sailings = json.loads(row["sailings"]) if row["sailings"] else []
+        if not bookable_in_window(trip, sailings):
             raise ApiError(409, "Nothing in your times is bookable right now")
-        hold = (await self.hold_context(uid, now)).hold(trip, None, now)
+        hold = (await self.hold_context(uid, now)).hold(
+            trip, paused=False, sailings=sailings, alerted=row["alerted"] or (), requested_until=None, now=now
+        )
         if not hold["can_request"]:
             raise ApiError(409, HOLD_REFUSED.get(hold["reason"], "A cart can't be held right now"))
         async with self._pool.acquire() as conn, conn.transaction():
@@ -290,7 +327,12 @@ class WebStore:
                 maintenance=bool(switches.get("maintenance", False)),
                 pause_carting=bool(switches.get("pause_carting", False)),
             ),
-            claimed_trip=await self._pool.fetchval("SELECT trip_id FROM hold_claims WHERE user_id = $1", uid),
+            claimed_trip=await self._pool.fetchval(  # a claim that lapsed doesn't count, as in ferry-control
+                "SELECT trip_id FROM hold_claims WHERE user_id = $1"
+                " AND (cart_id IS NOT NULL OR claimed_at > now() - make_interval(secs => $2))",
+                uid,
+                CLAIM_LAPSE_SECONDS,
+            ),
             settings=HubSettings(policy=self._policy),
             at=datetime.fromtimestamp(now, PACIFIC),
         )
@@ -461,8 +503,9 @@ class WebStore:
             "SELECT t.id, t.spec, t.enabled, t.paused_reason, t.rev, rt.phase, rt.mode, rt.queue_position,"
             " rt.next_check_at, rt.last_check_at, rt.hold_requested_until,"
             " s.agent_phase, s.checked_at, s.next_due, s.effective_interval,"
-            " s.sailings, s.error_class, s.consecutive_errors, s.cart, s.viewer_connected, s.heartbeat_at"
+            " s.sailings, s.error_class, s.consecutive_errors, s.cart, s.viewer_connected, s.heartbeat_at, m.alerted"
             " FROM trips t LEFT JOIN trip_runtime rt ON rt.trip_id = t.id LEFT JOIN trip_state s ON s.trip_id = t.id"
+            " LEFT JOIN alert_memory m ON m.trip_id = t.id"
             " WHERE t.user_id = $1 AND t.archived_at IS NULL ORDER BY t.created_at",
             uid,
         )
@@ -470,12 +513,21 @@ class WebStore:
         trips = []
         for r in rows:
             spec = json.loads(r["spec"]) | {"enabled": r["enabled"]}
+            sailings = json.loads(r["sailings"]) if r["sailings"] else []
+            hold = context.hold(
+                Trip.from_json(spec),
+                paused=user["paused"] or not r["enabled"] or r["paused_reason"] is not None,
+                sailings=sailings,
+                alerted=r["alerted"] or (),
+                requested_until=_epoch(r["hold_requested_until"]),
+                now=now,
+            )
             trips.append(
                 {
                     "trip": spec,
                     "rev": r["rev"],
                     "paused_reason": r["paused_reason"],
-                    "hold": context.hold(Trip.from_json(spec), _epoch(r["hold_requested_until"]), now),
+                    "hold": hold,
                     "browser": {
                         "phase": r["agent_phase"] or r["phase"] or "off",
                         "mode": r["mode"] or "off",
@@ -486,7 +538,7 @@ class WebStore:
                         "next_due": _epoch(r["next_due"]),
                         "effective_interval": r["effective_interval"],
                         "heartbeat_at": _epoch(r["heartbeat_at"]),
-                        "sailings": json.loads(r["sailings"]) if r["sailings"] else [],
+                        "sailings": sailings,
                         "error_class": r["error_class"],
                         "consecutive_errors": r["consecutive_errors"] or 0,
                         "cart": json.loads(r["cart"]) if r["cart"] else None,

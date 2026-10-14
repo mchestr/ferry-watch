@@ -215,6 +215,7 @@ class TripWatcher:
         # Carting failed here: not tried again on its own (each try spends a daily attempt), only after the
         # user asks (check now, hold it for me) or once it sells out and reopens.
         self._cart_failures: set[clock_time] = set()
+        self._failures_for: tuple[object, ...] | None = None  # the search and fare they failed under
         self._cart_error: ErrorClass | None = None
         self._seeded_key: tuple[object, ...] | None = None
 
@@ -531,6 +532,9 @@ class TripWatcher:
         self.alerted &= now_open
         self.offered &= now_open
         self._cart_failures &= now_open
+        if self._failures_for != (trip.search_key(), trip.fare):  # another date, route or fare: worth a try
+            self._cart_failures.clear()
+            self._failures_for = (trip.search_key(), trip.fare)
         for depart in sorted(before - now_open):
             self._link.event("sold_out_again", EventParams(depart=_hhmm(depart)))
 
@@ -563,13 +567,16 @@ class TripWatcher:
             params = AlertParams(departures=departures, fare=fare.name[:32], price=_price(fare.price))
             self._held_alert = self._link.alert("cart_held", params)
             self._link.event("cart_added", EventParams(depart=departures[0], fare=fare.name[:32]))
+        elif tried:
+            # Always said, even for a sailing already alerted as bookable ("Hold it for me" asks for exactly
+            # that): the alert frees the user's claim and ends the hold request.
+            others = [s for s in fresh if s.depart != target.depart]
+            self.offered |= {target.depart, *(s.depart for s in others)}
+            departures = [_hhmm(s.depart) for s in [target, *others]][:10]
+            self._link.alert("cart_failed", AlertParams(departures=departures, error_class=self._cart_error))
         elif fresh:
             self.offered |= {s.depart for s in fresh}
-            departures = [_hhmm(s.depart) for s in fresh][:10]
-            if tried:
-                self._link.alert("cart_failed", AlertParams(departures=departures, error_class=self._cart_error))
-            else:
-                self._link.alert("bookable", AlertParams(departures=departures))
+            self._link.alert("bookable", AlertParams(departures=[_hhmm(s.depart) for s in fresh][:10]))
 
     def _may_cart(self, trip: Trip) -> bool:
         return (

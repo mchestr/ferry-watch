@@ -15,7 +15,7 @@ import { MY_STATE_KEY, myApi } from "./api";
 import { navigate } from "./router";
 import type { MyState } from "./schema";
 import { NotHeld } from "./NotHeld";
-import { minutesLeft, tripTitle, unheld } from "./trips";
+import { holdPending, minutesLeft, tripTitle, unheld } from "./trips";
 
 export function CheckoutPage({
   state,
@@ -49,23 +49,43 @@ export function CheckoutPage({
       <ArrowLeft aria-hidden /> Your trips
     </Button>
   );
-  if (!trip || !cart || cart.status !== "ready") {
+  if (!trip) {
+    return (
+      <div className="mx-auto max-w-xl space-y-4">
+        {back}
+        <Card className="p-6">
+          <h1 className="font-semibold">This trip isn't on your list any more</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            It was booked or removed. Your other trips are still watched.
+          </p>
+        </Card>
+      </div>
+    );
+  }
+  if (!cart || cart.status !== "ready") {
     // Where a "Bookable" alert lands too: the sailing may be open with nothing holding it yet.
-    const bookable = trip ? unheld(trip) : [];
+    const paused =
+      trip.paused_reason === "after_checkout"
+        ? "This trip is paused until you say whether you booked it, on Your trips."
+        : !trip.trip.enabled || trip.paused_reason !== null || trip.hold.reason === "paused"
+          ? "This trip is paused, so nothing is held for it."
+          : null;
     return (
       <div className="mx-auto max-w-xl space-y-4">
         {back}
         <Card className="space-y-4 p-6">
-          {trip && <h1 className="text-lg font-bold">{tripTitle(trip, terminals)}</h1>}
-          {trip && bookable.length > 0 ? (
+          <h1 className="text-lg font-bold">{tripTitle(trip, terminals)}</h1>
+          {paused ? (
+            <p className="text-sm text-muted-foreground">{paused}</p>
+          ) : unheld(trip).length > 0 || holdPending(trip) ? (
             <NotHeld trip={trip} />
           ) : cart?.status === "adding" ? (
-            <p className="flex items-center gap-2 text-sm">
+            <p className="flex items-center gap-2 text-sm" role="status">
               <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden /> Holding it now. This page updates when
               it's held.
             </p>
           ) : (
-            <div>
+            <div role="status">
               <h2 className="font-semibold">Nothing is held right now</h2>
               <p className="mt-1 text-sm text-muted-foreground">
                 Nothing in your times is bookable at the moment. We'll alert you when a sailing opens up.

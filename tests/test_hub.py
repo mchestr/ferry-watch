@@ -270,6 +270,24 @@ async def test_checkout_seconds_are_counted_once_across_reconnects(rig: Rig, age
     await eventually(rig, "SELECT 1 FROM usage_ledger WHERE kind = 'vnc_seconds' AND amount = 150")
 
 
+async def test_checkout_seconds_already_counted_before_0003_are_not_counted_again(rig: Rig, agent: Agent) -> None:
+    """A pod live when 0003 ran: the old ferry-control counted its seconds, so its next total is the baseline."""
+    owner = await rig.db.connect()
+    try:
+        await owner.execute("UPDATE browser_pods SET vnc_boot = 'pre-0003'")
+    finally:
+        await owner.close()
+
+    def watched(seconds: int) -> State:
+        return State(**agent.client.envelope(), phase="holding", viewer=ViewerInfo(connected=True, seconds=seconds))
+
+    agent.client.publish(watched(900))
+    await eventually(rig, "SELECT 1 FROM browser_pods WHERE vnc_seconds = 900")  # the baseline, counted by nobody
+    assert await rig.fetch("SELECT 1 FROM usage_ledger WHERE kind = 'vnc_seconds'") == []
+    agent.client.publish(watched(960))
+    await eventually(rig, "SELECT 1 FROM usage_ledger WHERE kind = 'vnc_seconds' AND amount = 60")
+
+
 async def test_alerts_are_queued_once_even_when_replayed(rig: Rig, agent: Agent) -> None:
     alert = Alert(**agent.client.envelope(), kind="cart_held", params=AlertParams(departures=["09:00"], fare="Saver"))
     agent.client.send(alert)

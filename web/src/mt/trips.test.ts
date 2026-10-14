@@ -8,7 +8,7 @@ function myTrip(browser: Partial<MyTrip["browser"]> = {}, extra: Partial<MyTrip>
     trip: { ...makeSettings(), id: "3f9c0a1b2c3d4e5f", earliest: "07:00", latest: "12:00" },
     rev: 1,
     paused_reason: null,
-    hold: { reason: null, can_request: true, requested_at: null, requested_until: null },
+    hold: { reason: null, can_request: true, holdable: [], requested_at: null, requested_until: null },
     booking_url: null,
     browser: {
       phase: "watching",
@@ -106,6 +106,12 @@ describe("bookable, not held", () => {
     expect(unheld(adding)).toEqual([]);
     expect(tripBadge(adding).text).toBe("Holding it…");
     expect(unheld(myTrip({ sailings: [open("09:00")] }, { paused_reason: "after_checkout" }))).toEqual([]);
+    const pausedAccount = myTrip({ sailings: [open("09:00")] });
+    expect(unheld({ ...pausedAccount, hold: { ...pausedAccount.hold, reason: "paused" } })).toEqual([]);
+    // Trouble checking says more than old results do.
+    expect(tripBadge(myTrip({ sailings: [open("09:00")], consecutive_errors: 3 })).text).toBe(
+      "Having trouble checking",
+    );
   });
 
   it("says why", () => {

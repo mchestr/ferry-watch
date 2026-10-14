@@ -11,3 +11,5 @@ ALTER TABLE trip_runtime ADD COLUMN hold_requested_until timestamptz;
 ALTER TABLE browser_pods
     ADD COLUMN vnc_boot text,
     ADD COLUMN vnc_seconds integer NOT NULL DEFAULT 0 CHECK (vnc_seconds >= 0);
+-- Pods live now were counted by the ferry-control before this one: their next report sets the baseline.
+UPDATE browser_pods SET vnc_boot = 'pre-0003' WHERE ended_at IS NULL;

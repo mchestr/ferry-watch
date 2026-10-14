@@ -32,6 +32,7 @@ HeldBack = Literal[
     "auto_cart_off", "quiet_hours", "no_holds_left", "limit", "carting_paused", "holding_elsewhere", "unknown"
 ]
 CLAIM_LAPSE_SECONDS = 120  # a claim without cart_held or cart_failed by then is dropped
+VNC_BEFORE_0003 = "pre-0003"  # browser_pods.vnc_boot of pods that were live when migration 0003 ran
 AFTER_CHECKOUT = "after_checkout"  # trips.paused_reason until "Did you book it?" is answered
 _PHASES = {"starting": "starting", "watching": "watching", "holding": "holding", "draining": "draining"}
 
@@ -108,9 +109,13 @@ class ControlStore:
         return trip_row, row["state"] == "active"
 
     async def holding_elsewhere(self, binding: Binding) -> bool:
-        """Whether the user's one hold is claimed by another pod."""
+        """Whether the user's one hold is claimed by another pod (a claim that lapsed doesn't count)."""
         found = await self._pool.fetchval(
-            "SELECT 1 FROM hold_claims WHERE user_id = $1 AND pod <> $2", binding.user_id, binding.pod
+            "SELECT 1 FROM hold_claims WHERE user_id = $1 AND pod <> $2"
+            " AND (cart_id IS NOT NULL OR claimed_at > now() - make_interval(secs => $3))",
+            binding.user_id,
+            binding.pod,
+            CLAIM_LAPSE_SECONDS,
         )
         return found is not None
 
@@ -157,8 +162,13 @@ class ControlStore:
             pod,
         )
 
-    async def consume_command(self, command_id: int) -> None:
-        await self._pool.execute("UPDATE agent_commands SET consumed_at = now() WHERE id = $1", command_id)
+    async def consume_command(self, command_id: int) -> bool:
+        """Mark a command consumed. False if something else already had (each is sent at most once)."""
+        consumed = await self._pool.fetchval(
+            "UPDATE agent_commands SET consumed_at = now() WHERE id = $1 AND consumed_at IS NULL RETURNING id",
+            command_id,
+        )
+        return consumed is not None
 
     # ---- what a pod reports
 
@@ -357,13 +367,17 @@ class ControlStore:
             )
             if row is None:
                 return
-            counted = row["vnc_seconds"] if row["vnc_boot"] == boot else 0
-            if total <= counted:
+            if row["vnc_boot"] == VNC_BEFORE_0003:
+                counted = total  # the ferry-control before 0003 counted this boot's seconds as they came
+            else:
+                counted = row["vnc_seconds"] if row["vnc_boot"] == boot else 0
+            if total < counted or (total == counted and row["vnc_boot"] == boot):
                 return
             await conn.execute(
                 "UPDATE browser_pods SET vnc_boot = $2, vnc_seconds = $3 WHERE name = $1", binding.pod, boot, total
             )
-            await _count(conn, binding.user_id, now, "vnc_seconds", total - counted)
+            if total > counted:
+                await _count(conn, binding.user_id, now, "vnc_seconds", total - counted)
 
 
 async def _count(

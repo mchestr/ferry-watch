@@ -62,8 +62,11 @@ export const HoldSchema = z.object({
     "no_holds_left",
     "limit",
     "carting_paused",
+    "already_held",
+    "paused",
   ]).nullable(),
   can_request: z.boolean(),
+  holdable: z.array(timeOfDay).default([]), // the bookable departures a hold could still be for
   requested_at: epoch.nullable().default(null),
   requested_until: epoch.nullable(),
 });
@@ -73,7 +76,13 @@ export const MyTripSchema = z.object({
   rev: z.number().int(),
   paused_reason: z.string().nullable(),
   browser: BrowserSchema,
-  hold: HoldSchema.default({ reason: null, can_request: false, requested_at: null, requested_until: null }),
+  hold: HoldSchema.default({
+    reason: null,
+    can_request: false,
+    holdable: [],
+    requested_at: null,
+    requested_until: null,
+  }),
   // BC Ferries' booking form for the route and date, to book it yourself. Only ever a bcferries.com link.
   booking_url: z.string().url().startsWith("https://www.bcferries.com/").nullable().catch(null).default(null),
 });
