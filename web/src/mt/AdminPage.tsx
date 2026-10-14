@@ -18,6 +18,7 @@ import { cn, plural } from "@/lib/utils";
 import {
   ADMIN_KEYS,
   adminApi,
+  browserVersions,
   LIMIT_LABELS,
   quantityGiB,
   USAGE_LABELS,
@@ -171,7 +172,10 @@ export function AdminPage({ meId }: { meId: string }) {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
-        <h1 className="text-xl font-bold tracking-tight">Admin</h1>
+        <div className="min-w-0">
+          <h1 className="text-xl font-bold tracking-tight">Admin</h1>
+          <Versions />
+        </div>
         <div className="flex gap-1 rounded-xl bg-muted p-1" role="group" aria-label="Admin pages">
           {(["fleet", "people"] as const).map((name) => (
             <Button
@@ -194,6 +198,39 @@ export function AdminPage({ meId }: { meId: string }) {
         <Loading error={people.error} />
       )}
     </div>
+  );
+}
+
+/**
+ * Which release each part runs: this page, ferry-web, ferry-control and the browsers. A page left open across
+ * a deploy keeps its old code, so it offers a reload when it's older than ferry-web.
+ */
+function Versions() {
+  const overview = useQuery({ queryKey: ADMIN_KEYS.overview, queryFn: ({ signal }) => adminApi.overview(signal) });
+  const versions = overview.data?.versions;
+  const web = versions?.web?.version ?? null;
+  const parts = [`Dashboard ${__APP_VERSION__}`];
+  if (versions) {
+    parts.push(`Web ${web ?? "—"}`, `Control ${versions.control?.version ?? "—"}`);
+    const browsers = browserVersions(versions.browsers);
+    if (browsers) parts.push(`Browsers ${browsers}`);
+  }
+  return (
+    <p className="text-sm text-muted-foreground">
+      {parts.join(" · ")}
+      {web !== null && web !== __APP_VERSION__ && (
+        <>
+          {" · "}
+          <button
+            type="button"
+            className="font-medium text-foreground underline underline-offset-2"
+            onClick={() => location.reload()}
+          >
+            Reload to update
+          </button>
+        </>
+      )}
+    </p>
   );
 }
 

@@ -11,6 +11,8 @@ WORKDIR /web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY web/ ./
+# The dashboard shows its version; vite.config.ts reads it from ../pyproject.toml.
+COPY pyproject.toml /pyproject.toml
 RUN npm run build
 
 FROM ghcr.io/astral-sh/uv:0.7.8@sha256:0178a92d156b6f6dbe60e3b52b33b421021f46d634aa9f81f42b91445bb81cdf AS uv

@@ -1,7 +1,7 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { jsonResponse, mockFetch, renderWithProviders, type RecordedRequest } from "@/test/render";
-import { quantityGiB, type Overview, type People, type Unmatched } from "./admin";
+import { browserVersions, quantityGiB, type Overview, type People, type Unmatched } from "./admin";
 import { AdminPage } from "./AdminPage";
 
 const ME = "a".repeat(20);
@@ -90,6 +90,14 @@ function overview(): Overview {
       { kind: "delivery_failing", trip: null, user: BEA, at: Date.now() / 1000 - 600, detail: null },
       { kind: "release_unverified", trip: TRIP, user: null, at: Date.now() / 1000 - 3600, detail: null },
     ],
+    versions: {
+      web: { version: __APP_VERSION__ },
+      control: { version: "0.6.3", at: Date.now() / 1000 - 90 },
+      browsers: [
+        { version: "0.6.3", image: "sha256:aaa", pods: 2 },
+        { version: null, image: null, pods: 1 },
+      ],
+    },
   };
 }
 
@@ -156,6 +164,43 @@ describe("fleet", () => {
       }),
     );
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("says which version each part runs, on both pages", async () => {
+    api();
+    const { user } = renderWithProviders(<AdminPage meId={ME} />);
+    const line = `Dashboard ${__APP_VERSION__} · Web ${__APP_VERSION__} · Control 0.6.3 · Browsers 0.6.3 ×2, unknown ×1`;
+    expect(await screen.findByText(line)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reload to update" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "People" }));
+    expect(await screen.findByRole("button", { name: "Suspend bea" })).toBeInTheDocument();
+    expect(screen.getByText(line)).toBeInTheDocument();
+  });
+
+  it("offers a reload when ferry-web is newer than this page", async () => {
+    const reload = vi.fn();
+    vi.stubGlobal("location", { ...window.location, reload });
+    api((r) =>
+      r.url === "/api/admin/overview"
+        ? jsonResponse({ ...overview(), versions: { web: { version: "9.9.9" }, control: null, browsers: [] } })
+        : undefined,
+    );
+    const { user } = renderWithProviders(<AdminPage meId={ME} />);
+    expect(
+      await screen.findByText(`Dashboard ${__APP_VERSION__} · Web 9.9.9 · Control —`, { exact: false }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Reload to update" }));
+    expect(reload).toHaveBeenCalled();
+  });
+
+  it("shows only its own version for a server that doesn't say", async () => {
+    const older: Partial<Overview> = overview();
+    delete older.versions;
+    api((r) => (r.url === "/api/admin/overview" ? jsonResponse(older) : undefined));
+    renderWithProviders(<AdminPage meId={ME} />);
+    expect(await screen.findByText("3 queued")).toBeInTheDocument();
+    expect(screen.getByText(`Dashboard ${__APP_VERSION__}`)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reload to update" })).toBeNull();
   });
 
   it("reports capacity and budget from ferry-control's last pass", async () => {
@@ -488,5 +533,20 @@ describe("quantityGiB", () => {
     expect(quantityGiB("1536Mi")).toBe(1.5);
     expect(quantityGiB("2G")).toBeCloseTo(1.863, 3);
     expect(quantityGiB("lots")).toBeNull();
+  });
+});
+
+describe("browserVersions", () => {
+  it("counts the pods by version, most first", () => {
+    expect(
+      browserVersions([
+        { version: "0.6.2", image: "sha256:old", pods: 1 },
+        { version: "0.6.3", image: "sha256:a", pods: 1 },
+        { version: "0.6.3", image: "sha256:b", pods: 2 },
+        { version: null, image: null, pods: 1 },
+        { version: "0.6.1", image: null, pods: 0 },
+      ]),
+    ).toBe("0.6.3 ×3, 0.6.2 ×1, unknown ×1");
+    expect(browserVersions([])).toBe("");
   });
 });

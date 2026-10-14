@@ -44,6 +44,16 @@ export const AttentionSchema = z.object({
   detail: z.string().nullish().catch(null),
 });
 
+/** Which release runs where. Each part may be missing: from an older server, or before ferry-control's first pass. */
+export const VersionsSchema = z.object({
+  web: z.object({ version: z.string() }).nullish().catch(null),
+  control: z.object({ version: z.string(), at: epoch.nullish() }).nullish().catch(null),
+  // Live browser pods by agent version and image; a pod that hasn't said hello yet has no version.
+  browsers: z
+    .array(z.object({ version: z.string().nullish(), image: z.string().nullish(), pods: z.number().int() }))
+    .catch([]),
+});
+
 export const OverviewSchema = z.object({
   pods: z.array(z.object({ mode: z.string(), phase: z.string(), count: z.number().int() })),
   queued: z.number().int(),
@@ -74,6 +84,7 @@ export const OverviewSchema = z.object({
   control_seen: epoch.nullish(),
   /** Newest first: ids and usernames only, never sailings. */
   attention: z.array(AttentionSchema).optional(),
+  versions: VersionsSchema.nullish().catch(null),
 });
 
 export const AdminUserSchema = z.object({
@@ -116,6 +127,7 @@ export const UnmatchedSchema = z.array(
 export type FleetReport = z.infer<typeof FleetReportSchema>;
 export type Attention = z.infer<typeof AttentionSchema>;
 export type Overview = z.infer<typeof OverviewSchema>;
+export type Versions = z.infer<typeof VersionsSchema>;
 export type AdminUser = z.infer<typeof AdminUserSchema>;
 export type Invite = z.infer<typeof InviteSchema>;
 export type People = z.infer<typeof PeopleSchema>;
@@ -173,6 +185,20 @@ export function quantityGiB(value: string): number | null {
   const [, amount = "", unit = ""] = match;
   const bytes = UNIT_BYTES[unit];
   return bytes === undefined ? null : (Number(amount) * bytes) / 2 ** 30;
+}
+
+/** The browser pods by version, most first: "0.6.3 ×2, 0.6.2 ×1". Empty when none run. */
+export function browserVersions(browsers: Versions["browsers"]): string {
+  const pods = new Map<string, number>();
+  for (const b of browsers) {
+    const version = b.version ?? "unknown";
+    pods.set(version, (pods.get(version) ?? 0) + b.pods);
+  }
+  return [...pods]
+    .filter(([, n]) => n > 0)
+    .sort(([, a], [, b]) => b - a)
+    .map(([version, n]) => `${version} ×${n}`)
+    .join(", ");
 }
 
 const userPath = (id: string) => `/api/admin/users/${encodeURIComponent(id)}`;
