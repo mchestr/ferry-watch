@@ -70,7 +70,7 @@ class Peer:
     rev: int = 0
     last_heard: float = field(default_factory=time.time)
     sent_configure: Configure | None = None
-    vnc_seconds: int = 0  # as last reported, to count only what's new
+    vnc_seconds: int = 0  # as last reported on this socket, to skip the store when nothing is new
     seq: itertools.count[int] = field(default_factory=lambda: itertools.count(1))
 
     def envelope(self) -> dict[str, Any]:
@@ -217,9 +217,8 @@ class HubEndpoint:
         peer.last_heard = now
         if isinstance(message, State):
             await self._store.record_state(binding, peer.boot, message)
-            new_seconds = message.viewer.seconds - peer.vnc_seconds
-            if new_seconds > 0:
-                await self._store.add_vnc_seconds(binding.user_id, new_seconds, now)
+            if message.viewer.seconds > peer.vnc_seconds:  # the store counts each second once, across reconnects
+                await self._store.count_vnc_seconds(binding, peer.boot, message.viewer.seconds, now)
                 peer.vnc_seconds = message.viewer.seconds
         elif isinstance(message, CartClaim):
             await self._answer_claim(peer, message)

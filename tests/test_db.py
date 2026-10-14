@@ -117,10 +117,14 @@ async def test_web_cannot_write_what_agents_report(db: Database) -> None:
             "INSERT INTO trip_state (trip_id) VALUES ('3f9c0a1b2c3d4e5f')",
             "INSERT INTO hold_claims (user_id, trip_id, pod) VALUES ('u5yq2kz7m4c3x8a1b2d3', '3f9c0a1b2c3d4e5f', 'x')",
             "UPDATE browser_pods SET phase = 'gone'",
+            "UPDATE browser_pods SET vnc_seconds = 0",
+            "UPDATE trip_runtime SET failures = 0",
             "INSERT INTO hold_outcomes (user_id, trip_id, day, outcome) VALUES ('x', 'y', now(), 'booked')",
         ):
             with pytest.raises(asyncpg.InsufficientPrivilegeError):
                 await web.execute(statement)
+        # What it may do to the runtime: make a check due now, and ask for a hold.
+        await web.execute("UPDATE trip_runtime SET next_check_at = now(), hold_requested_until = now()")
     finally:
         await web.close()
 

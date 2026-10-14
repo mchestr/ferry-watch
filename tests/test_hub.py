@@ -253,6 +253,23 @@ async def test_state_is_recorded(rig: Rig, agent: Agent) -> None:
     assert usage[0]["amount"] == 90
 
 
+async def test_checkout_seconds_are_counted_once_across_reconnects(rig: Rig, agent: Agent) -> None:
+    def watched(seconds: int) -> State:
+        return State(**agent.client.envelope(), phase="holding", viewer=ViewerInfo(connected=True, seconds=seconds))
+
+    async def counted() -> int:
+        rows = await rig.fetch("SELECT amount FROM usage_ledger WHERE kind = 'vnc_seconds'")
+        return rows[0]["amount"] if rows else 0
+
+    agent.client.publish(watched(90))
+    await eventually(rig, "SELECT 1 FROM usage_ledger WHERE kind = 'vnc_seconds' AND amount = 90")
+    await rig.hub._peers[POD].ws.close()  # a dropped socket, or a restarted ferry-control: the agent says hello again
+    await until(lambda: rig.hub.connected(POD) and rig.hub._peers[POD].vnc_seconds == 90)
+    assert await counted() == 90  # the hello's snapshot repeats the running total; it isn't counted again
+    agent.client.publish(watched(150))
+    await eventually(rig, "SELECT 1 FROM usage_ledger WHERE kind = 'vnc_seconds' AND amount = 150")
+
+
 async def test_alerts_are_queued_once_even_when_replayed(rig: Rig, agent: Agent) -> None:
     alert = Alert(**agent.client.envelope(), kind="cart_held", params=AlertParams(departures=["09:00"], fare="Saver"))
     agent.client.send(alert)
@@ -272,6 +289,26 @@ async def test_one_hold_per_user(rig: Rig, agent: Agent) -> None:
     rows = await rig.fetch("SELECT pod FROM hold_claims")
     assert [r["pod"] for r in rows] == [POD]
     assert (await rig.fetch("SELECT amount FROM usage_ledger WHERE kind = 'cart_attempts'"))[0]["amount"] == 1
+
+
+async def test_a_hold_that_ends_without_an_alert_frees_the_claim(rig: Rig, agent: Agent) -> None:
+    """Released on the dashboard, nobody viewing: the pod watches on, and the user may hold again."""
+    assert await agent.client.claim("09:00", "saver") is True
+    ready = CartInfo(id="abc123", status="ready", depart="09:00", ready_at=NOON)
+    agent.client.publish(State(**agent.client.envelope(), phase="holding", cart=ready))
+    await eventually(rig, "SELECT 1 FROM hold_claims WHERE cart_id = 'abc123'")
+    agent.client.publish(State(**agent.client.envelope(), phase="watching"))
+    async with asyncio.timeout(5):
+        while await rig.fetch("SELECT 1 FROM hold_claims"):  # noqa: ASYNC110 - polls the database
+            await asyncio.sleep(0.02)
+    assert await agent.client.claim("11:00", "saver") is True
+
+
+async def test_a_claim_waiting_for_its_cart_is_kept(rig: Rig, agent: Agent) -> None:
+    assert await agent.client.claim("09:00", "saver") is True
+    agent.client.publish(State(**agent.client.envelope(), phase="watching", checked_at=NOON))
+    await eventually(rig, "SELECT 1 FROM trip_state WHERE checked_at IS NOT NULL")
+    assert len(await rig.fetch("SELECT 1 FROM hold_claims")) == 1
 
 
 async def test_no_carts_in_quiet_hours(rig: Rig, agent: Agent) -> None:

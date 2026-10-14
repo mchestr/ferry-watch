@@ -290,7 +290,7 @@ async def test_a_failed_cart_alerts_and_can_be_dismissed(rig: Rig) -> None:
     rig.site.cart_error = MarkupChanged("no fare buttons")
     open_up(rig, 9)
     await rig.check()
-    assert rig.link.kinds == ["cart_failed"]
+    assert rig.link.alerts == [("cart_failed", AlertParams(departures=["09:00"], error_class="markup_changed"))]
     cart = rig.watcher.cart
     assert cart is not None
     assert cart.status is CartStatus.FAILED
@@ -298,10 +298,40 @@ async def test_a_failed_cart_alerts_and_can_be_dismissed(rig: Rig) -> None:
     assert rig.watcher.cart is None
 
 
+async def test_a_failed_cart_is_left_alone_until_the_user_asks(rig: Rig) -> None:
+    """Each try spends one of the user's daily cart attempts, so a failure isn't retried on every check."""
+    rig.site.cart_error = MarkupChanged("no fare buttons")
+    open_up(rig, 9, 11)
+    for _ in range(4):
+        await rig.check()
+    assert rig.link.claims == [("09:00", "cheapest"), ("11:00", "cheapest")]  # each tried once
+    assert rig.link.kinds == ["cart_failed"]
+    rig.watcher.check_now()  # "Check now" or "Hold it for me"
+    await rig.check()
+    assert rig.link.claims[-1] == ("09:00", "cheapest")
+    rig.site.cart_error = None
+    rig.watcher.check_now()
+    await rig.check()
+    assert rig.watcher.holding
+    assert rig.link.kinds == ["cart_failed", "cart_held"]
+
+
+async def test_a_failed_sailing_is_tried_again_after_it_sells_out_and_reopens(rig: Rig) -> None:
+    rig.site.cart_error = MarkupChanged("no fare buttons")
+    open_up(rig, 9)
+    await rig.check()
+    open_up(rig)
+    await rig.check()
+    open_up(rig, 9)
+    await rig.check()
+    assert rig.link.claims == [("09:00", "cheapest"), ("09:00", "cheapest")]
+
+
 async def test_cart_attempts_are_capped(rig: Rig) -> None:
     rig.site.cart_error = MarkupChanged("no fare buttons")
     open_up(rig, 9)
     for _ in range(MAX_CART_ATTEMPTS + 2):
+        rig.watcher.check_now()
         await rig.check()
     assert len(rig.link.claims) == MAX_CART_ATTEMPTS
 

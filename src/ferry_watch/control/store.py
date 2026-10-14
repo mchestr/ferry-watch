@@ -198,6 +198,15 @@ class ControlStore:
                     binding.pod,
                     cart.id,
                 )
+            else:
+                # The hold this claim was for has ended without an alert that frees it (released on the
+                # dashboard, or the trip edited, on a pod nobody viewed). The pod watches on; the user may hold
+                # again. A claim still waiting for its cart (cart_id NULL) is left alone.
+                await conn.execute(
+                    "DELETE FROM hold_claims WHERE user_id = $1 AND pod = $2 AND cart_id IS NOT NULL",
+                    binding.user_id,
+                    binding.pod,
+                )
             await conn.execute(
                 "INSERT INTO alert_memory (trip_id, key_hash, alerted, offered) VALUES ($1, '', $2, $3)"
                 " ON CONFLICT (trip_id) DO UPDATE SET alerted = $2, offered = $3",
@@ -312,10 +321,21 @@ class ControlStore:
         """Tell ferry-web this user's dashboard has something new (LISTEN fw_user)."""
         await self._pool.execute("SELECT pg_notify($1, $2)", USER_CHANNEL, user_id)
 
-    async def add_vnc_seconds(self, user_id: str, seconds: int, now: float) -> None:
-        if seconds > 0:
-            async with self._pool.acquire() as conn:
-                await _count(conn, user_id, now, "vnc_seconds", seconds)
+    async def count_vnc_seconds(self, binding: Binding, boot: str, total: int, now: float) -> None:
+        """Add to the user's day the checkout seconds of this boot's `total` not counted yet."""
+        async with self._pool.acquire() as conn, conn.transaction():
+            row = await conn.fetchrow(
+                "SELECT vnc_boot, vnc_seconds FROM browser_pods WHERE name = $1 FOR UPDATE", binding.pod
+            )
+            if row is None:
+                return
+            counted = row["vnc_seconds"] if row["vnc_boot"] == boot else 0
+            if total <= counted:
+                return
+            await conn.execute(
+                "UPDATE browser_pods SET vnc_boot = $2, vnc_seconds = $3 WHERE name = $1", binding.pod, boot, total
+            )
+            await _count(conn, binding.user_id, now, "vnc_seconds", total - counted)
 
 
 async def _count(
