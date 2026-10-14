@@ -72,6 +72,9 @@ async def _archive(conn: asyncpg.pool.PoolConnectionProxy, uid: str, trip_id: st
     return True
 
 
+_OLD_QUIET_HOURS = {"start": "23:00", "end": "06:00"}  # 0.6.2's fleet-wide quiet hours, for its dashboard
+
+
 def _quiet_json(quiet: QuietHours | None) -> dict[str, Any] | None:
     """Quiet hours as the API has them: {"start": "HH:MM", "end": "HH:MM"}, or None for none."""
     if quiet is None:
@@ -632,8 +635,9 @@ class WebStore:
                 "reason": None if len(trips) < max_trips else f"You can watch up to {max_trips} trips",
             },
             "settings": {"quiet_hours": quiet_json},
-            # The same quiet hours, and whether it's quiet now (None: the user has none).
-            "quiet_hours": quiet_json | {"now": context.allowance.quiet_now(context.at)} if quiet_json else None,
+            # The same quiet hours, and whether it's quiet now. Always an object for a release: a 0.6.2
+            # dashboard still open requires one, so a user with none gets the old fleet-wide hours, never now.
+            "quiet_hours": (quiet_json or _OLD_QUIET_HOURS) | {"now": context.allowance.quiet_now(context.at)},
             "devices": await self.devices(uid),
             "events": [
                 {

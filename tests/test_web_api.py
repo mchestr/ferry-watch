@@ -430,9 +430,12 @@ async def test_the_old_account_pause_is_ignored(rig: Rig) -> None:
 # ---- quiet hours
 
 
+NOT_QUIET = {"start": "23:00", "end": "06:00", "now": False}  # for a 0.6.2 dashboard, which needs an object
+
+
 async def test_quiet_hours_are_each_users_own(rig: Rig) -> None:
     state = await (await rig.call("GET", "/api/state")).json()
-    assert (state["settings"], state["quiet_hours"]) == ({"quiet_hours": None}, None)  # none, by default
+    assert (state["settings"], state["quiet_hours"]) == ({"quiet_hours": None}, NOT_QUIET)  # none, by default
     night = {"start": "23:00", "end": "06:30"}
     response = await rig.call("PATCH", "/api/me", json={"quiet_hours": night})
     assert response.status == 200, await response.text()
@@ -442,9 +445,9 @@ async def test_quiet_hours_are_each_users_own(rig: Rig) -> None:
     rows = await rig.sql("SELECT user_id, quiet_start, quiet_end FROM user_settings")
     assert [tuple(r) for r in rows] == [(ANN, dt_time(23, 0), dt_time(6, 30))]
     bob = await (await rig.call("GET", "/api/state", BOB)).json()
-    assert (bob["settings"], bob["quiet_hours"]) == ({"quiet_hours": None}, None)
+    assert (bob["settings"], bob["quiet_hours"]) == ({"quiet_hours": None}, NOT_QUIET)
     state = await (await rig.call("PATCH", "/api/me", json={"quiet_hours": None})).json()
-    assert (state["settings"], state["quiet_hours"]) == ({"quiet_hours": None}, None)
+    assert (state["settings"], state["quiet_hours"]) == ({"quiet_hours": None}, NOT_QUIET)
 
 
 @pytest.mark.parametrize(
