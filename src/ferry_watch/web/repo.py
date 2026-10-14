@@ -615,7 +615,7 @@ class WebStore:
             "SELECT id, trip_id, ts, kind, code, params FROM events WHERE user_id = $1 ORDER BY ts DESC LIMIT 50", uid
         )
         max_trips = limits["maxTrips"]["value"]
-        quiet_hours = _quiet_json(context.allowance.quiet)
+        quiet_json = _quiet_json(context.allowance.quiet)
         return {
             "me": {
                 "id": user["id"],
@@ -631,9 +631,9 @@ class WebStore:
                 "can_add": len(trips) < max_trips,
                 "reason": None if len(trips) < max_trips else f"You can watch up to {max_trips} trips",
             },
-            "settings": {"quiet_hours": quiet_hours},
+            "settings": {"quiet_hours": quiet_json},
             # The same quiet hours, and whether it's quiet now (None: the user has none).
-            "quiet_hours": quiet_hours | {"now": context.allowance.quiet_now(context.at)} if quiet_hours else None,
+            "quiet_hours": quiet_json | {"now": context.allowance.quiet_now(context.at)} if quiet_json else None,
             "devices": await self.devices(uid),
             "events": [
                 {
