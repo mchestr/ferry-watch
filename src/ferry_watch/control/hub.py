@@ -231,6 +231,7 @@ class HubEndpoint:
             else:
                 await self._store.record_bye(binding, peer.boot, message, now)
             await self._send(peer, Ack(**peer.envelope(), acked=message.seq))
+        await self._store.notify(binding.user_id)
 
     async def _answer_claim(self, peer: Peer, claim: CartClaim) -> None:
         binding, now = peer.binding, self._clock()

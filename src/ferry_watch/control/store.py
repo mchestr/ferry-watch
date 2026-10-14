@@ -25,6 +25,7 @@ from .limits import Limits
 
 log = logging.getLogger(__name__)
 
+USER_CHANNEL = "fw_user"  # NOTIFY payload: a user id whose dashboard changed
 CLAIM_LAPSE_SECONDS = 120  # a claim without cart_held or cart_failed by then is dropped
 AFTER_CHECKOUT = "after_checkout"  # trips.paused_reason until "Did you book it?" is answered
 _PHASES = {"starting": "starting", "watching": "watching", "holding": "holding", "draining": "draining"}
@@ -301,6 +302,10 @@ class ControlStore:
                 kind,
                 key,
             )
+
+    async def notify(self, user_id: str) -> None:
+        """Tell ferry-web this user's dashboard has something new (LISTEN fw_user)."""
+        await self._pool.execute("SELECT pg_notify($1, $2)", USER_CHANNEL, user_id)
 
     async def add_vnc_seconds(self, user_id: str, seconds: int, now: float) -> None:
         if seconds > 0:

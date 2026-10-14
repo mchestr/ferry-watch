@@ -198,7 +198,10 @@ class Accounts:
         """The signed-in user behind a bearer token, or why there isn't one."""
         if not token:
             return "missing"
-        digest = token_hash(token)
+        return await self.resolve_hash(token_hash(token))
+
+    async def resolve_hash(self, digest: bytes) -> SignedIn | Unauthorized:
+        """As `resolve`, for a session already identified by its hash (an open dashboard socket)."""
         row = await self._pool.fetchrow(
             "SELECT s.user_id, s.revoked_at, s.idle_expires_at, s.expires_at, s.verified_at, s.last_used_at,"
             " u.state, u.username, u.is_admin FROM sessions s JOIN users u ON u.id = s.user_id"

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from collections.abc import AsyncIterator, Callable
@@ -84,6 +85,7 @@ async def rig(db: Database, aiohttp_client: Callable[..., Any]) -> AsyncIterator
         try:
             yield Rig(client, db, tokens)
         finally:
+            await client.close()  # stops the change feed, which holds a pool connection
             await pool.close()
 
 
@@ -314,3 +316,54 @@ async def test_the_fleet_switches(rig: Rig) -> None:
     assert overview["switches"]["pause_carting"] is True
     body = {"switch": "brake", "on": True, "reason": "no"}
     assert (await rig.call("POST", "/api/admin/switches", json=body)).status == 400
+
+
+# ---- the live socket
+
+
+async def live(rig: Rig, user: str = ANN) -> aiohttp.ClientWebSocketResponse:
+    ws = await rig.client.ws_connect("/api/ws")
+    await ws.send_json({"type": "auth", "token": rig.tokens[user]})
+    return ws
+
+
+async def next_state(ws: aiohttp.ClientWebSocketResponse) -> dict[str, Any]:
+    frame = await asyncio.wait_for(ws.receive(), 5)
+    assert frame.type == aiohttp.WSMsgType.TEXT, frame
+    message = json.loads(frame.data)
+    assert message["type"] == "state"
+    return dict(message["state"])
+
+
+async def test_the_live_socket_follows_the_users_own_changes(rig: Rig) -> None:
+    ann, bob = await live(rig), await live(rig, BOB)
+    assert (await next_state(ann))["trips"] == []
+    assert (await next_state(bob))["trips"] == []
+    await rig.add()
+    assert len((await next_state(ann))["trips"]) == 1
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(bob.receive(), 0.5)  # nothing of Ann's reaches Bob
+    await ann.close()
+    await bob.close()
+
+
+async def test_the_live_socket_needs_a_token_first(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
+    ws = await rig.client.ws_connect("/api/ws")
+    await ws.send_json({"type": "auth", "token": "nope"})
+    await ws.receive()
+    assert ws.close_code == 4401
+    monkeypatch.setattr("ferry_watch.web.live.AUTH_DEADLINE_SECONDS", 0.1)
+    ws = await rig.client.ws_connect("/api/ws")
+    await ws.receive()  # said nothing: closed
+    assert ws.close_code == 4401
+
+
+async def test_a_revoked_session_closes_its_socket(rig: Rig) -> None:
+    ws = await live(rig)
+    await next_state(ws)
+    await rig.call("POST", "/auth/logout")
+    await rig.add(BOB)  # any change wakes the hub... but only Bob's sockets; so nudge Ann's
+    await rig.sql("SELECT pg_notify('fw_user', $1)", ANN)
+    frame = await asyncio.wait_for(ws.receive(), 5)
+    assert frame.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSED)
+    assert ws.close_code == 4401

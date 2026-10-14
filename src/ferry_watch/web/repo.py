@@ -17,6 +17,7 @@ from typing import Any
 import asyncpg
 
 from ferry_watch.control.limits import LimitKey, Limits
+from ferry_watch.control.store import USER_CHANNEL
 from ferry_watch.models import PACIFIC, Trip, ValidationError
 from ferry_watch.polling import PollPolicy
 
@@ -69,6 +70,10 @@ class WebStore:
         self._limits = limits
         self._policy = policy
         self._clock = clock
+
+    async def notify(self, uid: str) -> None:
+        """Wake this user's other dashboards (LISTEN fw_user)."""
+        await self._pool.execute("SELECT pg_notify($1, $2)", USER_CHANNEL, uid)
 
     # ---- limits
 

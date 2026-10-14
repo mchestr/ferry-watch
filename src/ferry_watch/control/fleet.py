@@ -30,6 +30,7 @@ from .kube import Cluster, KubeError, ObservedPod
 from .limits import Limits
 from .planner import FleetView, PodView, Start, TripView, UserView, plan
 from .pods import DEADLINE_SECONDS, EGRESS_ALLOWLIST, EGRESS_HOLD, LABEL_EGRESS, PodParams, browser_pod, pod_name
+from .store import USER_CHANNEL
 
 log = logging.getLogger(__name__)
 
@@ -188,6 +189,7 @@ class Fleet:
                         _ts(self._clock() + minutes * 60),
                         failures >= NEEDS_ATTENTION_AFTER,
                     )
+        await self._pool.execute("SELECT pg_notify($1, $2)", USER_CHANNEL, row.user_id)
         log.info("%s ended: %s (%s)", row.name, phase, reason)
 
     async def _sync(
@@ -417,6 +419,7 @@ class Fleet:
             )
             return
         await self._pool.execute("UPDATE browser_pods SET uid = $2, phase = 'starting' WHERE name = $1", name, pod.uid)
+        await self._pool.execute("SELECT pg_notify($1, $2)", USER_CHANNEL, start.user_id)
         log.info("Started %s (%s)", name, start.mode)
         report.started.append(name)
 

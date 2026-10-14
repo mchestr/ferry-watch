@@ -57,34 +57,40 @@ async def get_state(request: web.Request) -> web.Response:
 async def add_trip(request: web.Request) -> web.Response:
     user = signed_in(request)
     await request.app[STORE].add_trip(user.uid, await json_body(request))
+    await request.app[STORE].notify(signed_in(request).uid)
     return await get_state(request)
 
 
 async def update_trip(request: web.Request) -> web.Response:
     user = signed_in(request)
     await request.app[STORE].update_trip(user.uid, _trip_id(request), await json_body(request))
+    await request.app[STORE].notify(signed_in(request).uid)
     return await get_state(request)
 
 
 async def delete_trip(request: web.Request) -> web.Response:
     await request.app[STORE].archive_trip(signed_in(request).uid, _trip_id(request))
+    await request.app[STORE].notify(signed_in(request).uid)
     return await get_state(request)
 
 
 async def check_now(request: web.Request) -> web.Response:
     await request.app[STORE].check_now(signed_in(request).uid, _trip_id(request))
+    await request.app[STORE].notify(signed_in(request).uid)
     return await get_state(request)
 
 
 async def release_cart(request: web.Request) -> web.Response:
     cart_id = _cart_id(await json_body(request))
     await request.app[STORE].command(signed_in(request).uid, _trip_id(request), "release", cart_id)
+    await request.app[STORE].notify(signed_in(request).uid)
     return await get_state(request)
 
 
 async def dismiss_cart(request: web.Request) -> web.Response:
     cart_id = _cart_id(await json_body(request))
     await request.app[STORE].command(signed_in(request).uid, _trip_id(request), "dismiss", cart_id)
+    await request.app[STORE].notify(signed_in(request).uid)
     return await get_state(request)
 
 
@@ -96,6 +102,7 @@ async def answer_booked(request: web.Request) -> web.Response:
     if reason is not None and not isinstance(reason, str):
         raise ApiError(400, "Not a reason", "reason")
     await request.app[STORE].answer_booked(signed_in(request).uid, _trip_id(request), booked, reason)
+    await request.app[STORE].notify(signed_in(request).uid)
     return await get_state(request)
 
 
@@ -105,6 +112,7 @@ async def update_me(request: web.Request) -> web.Response:
     if set(body) != {"paused"} or not isinstance(paused, bool):
         raise ApiError(400, "Only paused can be changed", "paused")
     await request.app[STORE].set_paused(signed_in(request).uid, paused)
+    await request.app[STORE].notify(signed_in(request).uid)
     return await get_state(request)
 
 

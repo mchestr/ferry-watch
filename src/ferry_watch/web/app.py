@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import AsyncIterator
+
 import asyncpg
 from aiohttp import web
 
@@ -12,7 +15,10 @@ from .accounts import Accounts
 from .api import CHECKOUT, STORE, CheckoutSigner
 from .http import errors, same_origin, security_headers
 from .identity import OidcClient
+from .live import LiveHub
 from .repo import WebStore
+
+LIVE = web.AppKey("live", LiveHub)
 
 
 async def livez(_: web.Request) -> web.Response:
@@ -40,4 +46,15 @@ def build(
     app.router.add_routes(api.routes())
     admin.install(app, pool, limits)
     app.router.add_get("/livez", livez, allow_head=False)
+    hub = LiveHub(pool, accounts, store.snapshot)
+    app[LIVE] = hub
+    app.router.add_get("/api/ws", hub.serve, allow_head=False)
+
+    async def change_feed(app: web.Application) -> AsyncIterator[None]:
+        task = asyncio.create_task(app[LIVE].listen(), name="change feed")
+        yield
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    app.cleanup_ctx.append(change_feed)
     return app
