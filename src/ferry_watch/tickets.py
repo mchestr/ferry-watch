@@ -83,6 +83,7 @@ def mint(
     pod: str,
     cart_id: str,
     disp: Display | None = None,
+    jti: str | None = None,
     now: float | None = None,
 ) -> str:
     if not _KEY_ID.fullmatch(key_id):
@@ -93,7 +94,7 @@ def mint(
         trip=trip,
         pod=pod,
         cart_id=cart_id,
-        jti=secrets.token_urlsafe(16),
+        jti=jti or secrets.token_urlsafe(16),
         iat=issued,
         exp=issued + TTL_SECONDS,
         disp=disp,
