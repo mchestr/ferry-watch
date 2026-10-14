@@ -218,7 +218,10 @@ class PodBrowser:
                 "--kiosk",
                 f"--disk-cache-size={POD_DISK_CACHE_BYTES}",
             ],
-            ignore_default_args=["--disable-popup-blocking"],  # the managed policy decides
+            ignore_default_args=[
+                "--disable-popup-blocking",  # the managed policy decides
+                "--enable-automation",  # its "controlled by automated test software" bar would sit atop the checkout
+            ],
             env=self._env,
             handle_sigint=False,
             handle_sigterm=False,
