@@ -278,9 +278,12 @@ class TripWatcher:
         self._wake.set()
 
     def state(self, envelope: dict[str, Any]) -> State:
-        """Everything the dashboard shows, as a `state` message (page-derived text trimmed to fit)."""
+        """Everything the dashboard shows, as a `state` message (page-derived text trimmed to fit).
+
+        Page loads are counted since `navs_sent()` was last called.
+        """
         error = ErrorInfo(kind=self.error[0], text=self.error[1][:300]) if self.error else None
-        navs, self._navs = self._navs, _Navs()
+        navs = self._navs
         viewer = self._viewer
         seconds = viewer.seconds + (self._clock() - viewer.connected_since if viewer.connected_since else 0.0)
         return State(
@@ -306,6 +309,10 @@ class TripWatcher:
             lockdown_ok=self._lockdown_ok(),
             bucket=round(self._bucket.level(self._clock()), 2),
         )
+
+    def navs_sent(self) -> None:
+        """The page-load counts went out in a state message; count afresh."""
+        self._navs = _Navs()
 
     def effective_interval(self) -> int:
         latest = self._store.latest

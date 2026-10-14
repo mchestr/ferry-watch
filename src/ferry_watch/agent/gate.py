@@ -46,6 +46,7 @@ MAX_FAILURES_PER_MINUTE = 5
 RATE_WINDOW_SECONDS = 60.0
 MAX_CLIENT_FRAME_BYTES = 256 * 1024
 READ_CHUNK_BYTES = 64 * 1024
+CLOSE_TIMEOUT_SECONDS = 2.0  # for a stale viewer's close frame, before the socket is dropped anyway
 
 _NONCE = re.compile(r"[A-Za-z0-9_-]{22,64}")  # at least 128 bits
 
@@ -192,7 +193,10 @@ class Gate:
         if cart_id is None:
             raise Refused(409, "no checkout open")
         ws = web.WebSocketResponse(
-            protocols=(SUBPROTOCOL,), heartbeat=HEARTBEAT_SECONDS, max_msg_size=MAX_CLIENT_FRAME_BYTES
+            protocols=(SUBPROTOCOL,),
+            heartbeat=HEARTBEAT_SECONDS,
+            max_msg_size=MAX_CLIENT_FRAME_BYTES,
+            timeout=CLOSE_TIMEOUT_SECONDS,
         )
         ready = ws.can_prepare(request)
         if not ready.ok or ready.protocol != SUBPROTOCOL:

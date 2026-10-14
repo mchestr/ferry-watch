@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import logging
 import re
+import shutil
 import urllib.parse
 import weakref
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, datetime, time
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
@@ -148,6 +150,95 @@ class SiteBrowser:
         session = SiteSession(name, context, page, self._terminals, self._debug_dir, base_url=self._base_url)
         await session.install_handlers()
         self._sessions.add(session)
+        return session
+
+
+# Chromium's cache lives in memory-backed /tmp in a pod, so it's capped (with the managed policy's DiskCacheSize).
+POD_DISK_CACHE_BYTES = 32 * 1024 * 1024
+
+
+class PodBrowser:
+    """A browser pod's Chromium (docs/multi-tenant/design-reference.md §5.2, §5.6).
+
+    One window, full screen (kiosk), so the viewer sees the checkout and nothing else. Each session is
+    a fresh persistent profile under /tmp: a new session closes the old one and wipes its profile, so
+    a fresh start really is fresh. Chromium ignores signals; the agent decides when it closes, after
+    emptying any cart. `after_launch` runs the lockdown self-tests on every launch.
+    """
+
+    def __init__(
+        self,
+        terminals: TerminalProvider,
+        *,
+        profile_dir: Path,
+        window_size: tuple[int, int],
+        env: Mapping[str, str],
+        sandbox: bool = False,
+        debug_dir: Path | None = None,
+        base_url: str = BASE_URL,
+        after_launch: Callable[[BrowserContext], Awaitable[None]] | None = None,
+    ) -> None:
+        self._terminals = terminals
+        self._profile_dir = profile_dir
+        self._window_size = window_size
+        self._env: dict[str, str | float | bool] = dict(env)
+        self._sandbox = sandbox
+        self._debug_dir = debug_dir
+        self._base_url = base_url
+        self._after_launch = after_launch
+        self._playwright: Playwright | None = None
+        self._session: SiteSession | None = None
+
+    async def start(self) -> None:
+        self._playwright = await async_playwright().start()
+
+    async def stop(self) -> None:
+        if self._session is not None:
+            await self._session.close()
+            self._session = None
+        if self._playwright is not None:
+            await self._playwright.stop()
+            self._playwright = None
+
+    async def new_session(self, name: str) -> SiteSession:
+        if self._playwright is None:
+            raise RuntimeError("PodBrowser.start() hasn't been called")
+        if self._session is not None:
+            await self._session.close()
+            self._session = None
+        shutil.rmtree(self._profile_dir, ignore_errors=True)
+        width, height = self._window_size
+        log.info("Launching Chromium")
+        context = await self._playwright.chromium.launch_persistent_context(
+            str(self._profile_dir),
+            headless=False,
+            args=[
+                f"--window-size={width},{height}",
+                "--window-position=0,0",
+                "--kiosk",
+                f"--disk-cache-size={POD_DISK_CACHE_BYTES}",
+            ],
+            ignore_default_args=["--disable-popup-blocking"],  # the managed policy decides
+            env=self._env,
+            handle_sigint=False,
+            handle_sigterm=False,
+            handle_sighup=False,
+            chromium_sandbox=self._sandbox,
+            user_agent=USER_AGENT,
+            no_viewport=True,
+        )
+        try:
+            if self._after_launch is not None:
+                await self._after_launch(context)
+            page = context.pages[0] if context.pages else await context.new_page()
+            page.set_default_timeout(ACTION_TIMEOUT_MS)
+            page.set_default_navigation_timeout(NAVIGATION_TIMEOUT_MS)
+            session = SiteSession(name, context, page, self._terminals, self._debug_dir, base_url=self._base_url)
+            await session.install_handlers()
+        except BaseException:
+            await context.close()
+            raise
+        self._session = session
         return session
 
 

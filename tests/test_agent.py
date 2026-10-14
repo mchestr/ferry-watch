@@ -20,6 +20,7 @@ from ferry_watch.protocol import (
     Ack,
     Alert,
     AlertParams,
+    Bye,
     CartClaim,
     CartClaimResult,
     ClaimReason,
@@ -99,7 +100,7 @@ class FakeOperator:
             async with self.got:
                 self.received.append(message)
                 self.got.notify_all()
-            if self.ack and isinstance(message, Event | Alert):
+            if self.ack and isinstance(message, Event | Alert | Bye):
                 await ws.send_bytes(encode(Ack(**_envelope(), acked=message.seq)))
             if isinstance(message, CartClaim) and self.grant is not None:
                 reason: ClaimReason = "ok" if self.grant else "holding_elsewhere"

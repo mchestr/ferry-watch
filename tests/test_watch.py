@@ -558,7 +558,8 @@ async def test_state_crosses_the_wire(rig: Rig) -> None:
     assert state.sailings[1].vessel == "x" * 64
     assert state.sailings[1].fares[0].price is None  # page text that doesn't look like a price is left out
     assert state.navs.search == 1
-    assert rig.watcher.state(envelope()).navs.search == 0  # counts are since the last state
+    rig.watcher.navs_sent()
+    assert rig.watcher.state(envelope()).navs.search == 0  # counts are since the last state sent
 
 
 async def test_check_now_is_rate_limited(rig: Rig) -> None:

@@ -928,6 +928,10 @@ After a viewed hold the pod exits.
 
 **Rate and usage:** viewer seconds are reported in `state` and charged to `vncMinutesPerDay`. The gate
 refuses more than 5 *failed* upgrade attempts per minute; successful reconnects are not counted.
+*As built* (`src/ferry_watch/agent/gate.py`): only step-3 failures count (a bad or missing ticket or nonce),
+and the limit holds back first connects only. A reconnect with the right nonce is always let in, so a burst of
+bad attempts can't lock the owner out of a checkout they already opened. Refusals send a bare status code
+(403, 409, 429, 502) and log the reason locally.
 
 **Why there is no gateway-level auth on the VNC host:** Envoy checks only the upgrade, and SNAT makes headers
 unprovable at the pod. A second IdP session on the VNC origin is also fragile in iOS home-screen apps, which
@@ -973,7 +977,12 @@ watches for `ERR_BLOCKED_BY_ADMINISTRATOR`, `ERR_NAME_NOT_RESOLVED` or a refused
 reports `checkout_host_blocked` (R16).
 
 **Self-tests** run at startup and after any Chromium relaunch (never during a hold), and fail closed
-(`lockdown_ok=false`):
+(`lockdown_ok=false`). *As built* (`src/ferry_watch/agent/lockdown.py`, run by `PodBrowser` after every
+launch): the TCP check is exact; for unix sockets it requires `rfb.sock` listening with mode 0600 and logs
+the others (X11's own socket, Chromium's profile singleton), since `ss -ltnx` would list those too. Check 3
+runs its probes from `about:blank`, whose opaque origin fails the gate's Origin check just as bcferries.com's
+would, so the self-test costs no request to BC Ferries. Until the first launch, `lockdown_ok` is false, which
+is harmless: nothing can cart or open the gate before a check has launched Chromium.
 1. `chrome://version`, `file:///etc/passwd` and `view-source:https://www.bcferries.com/` must each fail with
    `ERR_BLOCKED_BY_ADMINISTRATOR`; `https://example.com/` must fail at the network (`ERR_NAME_NOT_RESOLVED`,
    the allowlist egress state).
