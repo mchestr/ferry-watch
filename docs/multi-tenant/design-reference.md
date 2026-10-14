@@ -1689,7 +1689,9 @@ and global `maintenance` is off. A trip that is only out for quiet hours is drai
   any free slot.
 - No preemption. Holding pods are never displaced, including a short-check pod that carted. The exception is
   a removed trip: its pod is drained even while holding, which lets the cart go, since nobody can open its
-  checkout any more (0.6.4).
+  checkout any more (0.6.4). The fleet loop reads a removed trip while its pod lives, so only a trip it sees
+  archived counts as removed; a trip whose spec it can't read (a newer ferry-web's field, mid-rollout) keeps
+  its held cart.
 - A successor pod for a trip is created only after its predecessor is gone, so at most one pod per trip
   exists and the quota needs only one pod of headroom (§8.4).
 

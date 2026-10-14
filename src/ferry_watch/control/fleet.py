@@ -310,7 +310,7 @@ class Fleet:
         ]
         result = plan(users, trips, pods, fleet, self._settings.policy, now)
         at = datetime.fromtimestamp(now, PACIFIC)
-        by_trip = {t.id: t for t in trips}
+        by_trip = {t.id: t for t in trips if not t.archived}
         warm = [by_trip[p.trip_id].trip for p in pods if p.mode == "warm" and p.trip_id in by_trip]
         intervals = [curve_interval(t, at, self._settings.policy) for t in warm]
         self.stretch = stretch(intervals, self._settings.checks_per_minute)
@@ -373,12 +373,14 @@ class Fleet:
             for r in user_records
         ]
         trips = []
-        # A trip's quiet hours are lifted by a manual check (quiet_lifted_until) or "Hold it for me".
+        # A trip's quiet hours are lifted by a manual check (quiet_lifted_until) or "Hold it for me". A removed
+        # trip comes too while its pod lives, so the planner knows it was removed and lets a held cart go.
         for r in await self._pool.fetch(
-            "SELECT t.id, t.user_id, t.spec, t.enabled, t.paused_reason, rt.next_check_at, rt.backoff_until,"
-            " rt.needs_attention, rt.queued_since,"
+            "SELECT t.id, t.user_id, t.spec, t.enabled, t.paused_reason, t.archived_at IS NOT NULL AS archived,"
+            " rt.next_check_at, rt.backoff_until, rt.needs_attention, rt.queued_since,"
             " greatest(rt.quiet_lifted_until, rt.hold_requested_until) AS lifted_until"
             " FROM trips t LEFT JOIN trip_runtime rt ON rt.trip_id = t.id WHERE t.archived_at IS NULL"
+            " OR t.id IN (SELECT trip_id FROM browser_pods WHERE ended_at IS NULL)"
         ):
             try:
                 trip = Trip.from_json(json.loads(r["spec"]) | {"enabled": r["enabled"]})
@@ -390,6 +392,7 @@ class Fleet:
                     trip,
                     r["user_id"],
                     paused_reason=r["paused_reason"],
+                    archived=r["archived"],
                     next_check_at=_epoch(r["next_check_at"]),
                     backoff_until=_epoch(r["backoff_until"]),
                     needs_attention=bool(r["needs_attention"]),

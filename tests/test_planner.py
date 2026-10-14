@@ -157,18 +157,19 @@ def test_a_pod_for_a_deleted_trip_is_drained() -> None:
 
 def test_removing_a_trip_drains_its_pod_even_while_it_holds_a_cart() -> None:
     """Nobody can check out of a removed trip's cart, so it isn't kept: draining lets it go."""
-    removed, archived = trip(9, 2), trip(8, 3, archived=True)
-    result = run([archived], [pod(removed, "holding"), pod(archived, "holding")])
-    assert sorted(result.drain, key=lambda d: d.pod) == [
-        Drain(f"fw-{archived.id}-g1", "deleted"),
-        Drain(f"fw-{removed.id}-g1", "deleted"),
+    removed = trip(9, 2, archived=True, enabled=False)  # as ferry-web archives it
+    assert run([removed], [pod(removed, "holding")]).drain == [Drain(f"fw-{removed.id}-g1", "deleted")]
+    assert run([removed], [pod(removed, "holding")], maintenance=True).drain == [
+        Drain(f"fw-{removed.id}-g1", "deleted")
     ]
-    assert run([], [pod(removed, "draining")]).drain == []  # already on its way out
+    assert run([removed], [pod(removed, "draining")]).drain == []  # already on its way out
+    # A trip that isn't in the inputs at all may only be one ferry-control can't read: its cart is kept.
+    assert run([], [pod(trip(8, 3), "holding")]).drain == []
 
 
 def test_a_removed_trip_s_held_warm_browser_hands_over_to_the_next_trip() -> None:
-    removed, next_trip = trip(9, 1), trip(2, 2)
-    result = run([next_trip], [pod(removed, "holding")])
+    removed, next_trip = trip(9, 1, archived=True, enabled=False), trip(2, 2)
+    result = run([removed, next_trip], [pod(removed, "holding")])
     assert result.drain == [Drain(f"fw-{removed.id}-g1", "deleted")]
     assert result.start == []  # no short check meanwhile: the warm browser comes once the old pod is gone
 

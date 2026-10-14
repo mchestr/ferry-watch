@@ -8,8 +8,9 @@ pods to start, which to drain, and where the rest wait. The loop applies it; tes
   a pod that is starting, holding or draining stays where it is.
 - Every other eligible trip gets a *short check* when due: a pod that checks once and exits.
 - In a user's quiet hours their trips are treated as paused, except one whose quiet hours they lifted.
-- A trip has at most one pod. Holding pods are never displaced, but a removed trip's pod is drained even
-  while it holds a cart: nobody can check out of it any more, and draining lets the cart go.
+- A trip has at most one pod. Holding pods are never displaced, but a removed (archived) trip's pod is drained
+  even while it holds a cart: nobody can check out of it any more, and draining lets the cart go. A pod whose
+  trip isn't in the inputs at all (one ferry-control can't read, say) keeps its cart.
 - Caps: total pods, with `short_check_slots` kept free of warm pods; at most 2 starting; 30 starts an
   hour; a user's starts at least 20 s apart. Nothing is created that would wait as Pending.
 """
@@ -50,7 +51,7 @@ class TripView:
     trip: Trip
     user_id: str
     paused_reason: str | None = None  # e.g. after_checkout, until "Did you book it?" is answered
-    archived: bool = False
+    archived: bool = False  # removed by the user (the fleet loop passes these only while a pod is live)
     next_check_at: float | None = None  # a short check is due then (None: now)
     backoff_until: float | None = None
     needs_attention: bool = False
@@ -117,12 +118,12 @@ def _ineligible(
     """Why this trip may not have a browser now (None: it may)."""
     quiet = user is not None and user.quiet_now(at) and not view.quiet_lifted(now)
     reasons: list[tuple[bool, CommandReason]] = [
+        (view.archived, "deleted"),  # first: it's what lets a removed trip's held cart go
         (fleet.maintenance, "maintenance"),
         (user is None or not user.active, "suspended"),
         (user is not None and user.paused, "paused"),
         (not view.trip.enabled or view.paused_reason is not None, "paused"),
         (quiet, "paused"),  # the user's quiet hours: not checked at all, as if paused
-        (view.archived, "deleted"),
         (time_until(view.trip, at) is None, "past"),
         (view.needs_attention or (view.backoff_until is not None and view.backoff_until > now), "limit"),
     ]
@@ -181,8 +182,8 @@ class _Planner:
             pod = self.pod_by_trip.get(view.id)
             if pod is not None and pod.phase != "draining" and (pod.phase != "holding" or reason == "deleted"):
                 self.result.drain.append(Drain(pod.name, reason))
-        for pod in self.pods:  # pods for trips that no longer exist at all (removed): holding or not
-            if pod.trip_id not in self.trips and pod.phase != "draining":
+        for pod in self.pods:  # pods for trips not in the inputs: gone, or a spec ferry-control can't read
+            if pod.trip_id not in self.trips and pod.phase not in ("holding", "draining"):
                 self.result.drain.append(Drain(pod.name, "deleted"))
 
     def _warm_browsers(self) -> list[TripView]:
