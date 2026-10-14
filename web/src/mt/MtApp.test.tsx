@@ -371,6 +371,98 @@ describe("releasing a held cart", () => {
   });
 });
 
+describe("removing a trip", () => {
+  beforeEach(() => {
+    localStorage.setItem("fw.token", "t-1");
+  });
+
+  type Cart = MyState["trips"][number]["browser"]["cart"];
+
+  /** ferry-web archives the trip at once (ferry-control then lets any cart go); a second DELETE is a 404. */
+  function api(cart?: Cart) {
+    const base = myState().trips[0];
+    if (!base) throw new Error("no trip");
+    let state = cart === undefined ? myState() : myState({ trips: [{ ...base, browser: { ...base.browser, cart } }] });
+    return mockFetch((r) => {
+      if (r.url === `/api/trips/${TRIP_ID}` && r.method === "DELETE") {
+        if (state.trips.length === 0) return jsonResponse({ error: "No such trip" }, 404);
+        state = myState({ trips: [] });
+      }
+      if (r.url === "/api/state" || r.url.startsWith("/api/trips/")) return jsonResponse(state);
+      return jsonResponse({ terminals: [] });
+    });
+  }
+
+  const removals = (requests: { method: string; url: string }[]) =>
+    requests.filter((r) => r.method === "DELETE" && r.url === `/api/trips/${TRIP_ID}`).length;
+
+  const held = myState().trips[0]?.browser.cart ?? null;
+
+  it.each<[string, Cart, string]>([
+    ["a held cart", held, "Removing it releases the 9:00 am sailing in your cart."],
+    [
+      "a cart being added",
+      held && { ...held, status: "adding" },
+      "Removing it stops adding the 9:00 am sailing to your cart.",
+    ],
+    ["nothing held", null, "You'll stop getting alerts for it."],
+  ])("asks first, from the card, and says what happens to %s", async (_, cart, consequence) => {
+    const { requests } = api(cart);
+    const { user } = renderWithProviders(<MtApp />);
+    await user.click(await screen.findByRole("button", { name: "Remove" }));
+    const dialog = screen.getByRole("alertdialog", { name: "Remove this trip?" });
+    expect(dialog).toHaveTextContent(consequence);
+    expect(removals(requests)).toBe(0);
+
+    await user.click(within(dialog).getByRole("button", { name: "Remove trip" }));
+    expect(await screen.findByText("Trip removed")).toBeInTheDocument();
+    expect(screen.getByText("No trips yet")).toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(removals(requests)).toBe(1);
+  });
+
+  it("keeps the trip on cancel", async () => {
+    const { requests } = api();
+    const { user } = renderWithProviders(<MtApp />);
+    await user.click(await screen.findByRole("button", { name: "Remove" }));
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(screen.getByText("9:00 am is held for you (Saver, $93.45)")).toBeInTheDocument();
+    expect(removals(requests)).toBe(0);
+  });
+
+  it("says so when it was already removed somewhere else", async () => {
+    const { requests } = api();
+    const { user, queryClient } = renderWithProviders(<MtApp />);
+    await user.click(await screen.findByRole("button", { name: "Remove" }));
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Remove trip" }));
+    expect(await screen.findByText("No trips yet")).toBeInTheDocument();
+    act(() => {
+      queryClient.setQueryData(MY_STATE_KEY, myState()); // a stale view, from before the removal
+    });
+    await user.click(await screen.findByRole("button", { name: "Remove" }));
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Remove trip" }));
+    expect(await screen.findByText("That trip was already removed.")).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(await screen.findByText("No trips yet")).toBeInTheDocument(); // fetched afresh
+    expect(removals(requests)).toBe(2);
+  });
+
+  it("still works from the trip form", async () => {
+    const { requests } = api();
+    const { user } = renderWithProviders(<MtApp />);
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    const sheet = await screen.findByRole("dialog", { name: "Edit trip" });
+    await user.click(within(sheet).getByRole("button", { name: "Remove" }));
+    const dialog = screen.getByRole("alertdialog", { name: "Remove this trip?" });
+    expect(dialog).toHaveTextContent("Removing it releases the 9:00 am sailing in your cart.");
+    await user.click(within(dialog).getByRole("button", { name: "Remove trip" }));
+    expect(await screen.findByText("Trip removed")).toBeInTheDocument();
+    expect(await screen.findByText("No trips yet")).toBeInTheDocument();
+    expect(removals(requests)).toBe(1);
+  });
+});
+
 describe("did you book it?", () => {
   beforeEach(() => {
     localStorage.setItem("fw.token", "t-1");

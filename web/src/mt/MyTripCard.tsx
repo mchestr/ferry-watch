@@ -1,11 +1,14 @@
 /** One of the user's trips: its browser's status, its sailings, a held cart and the questions it raises. */
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, Loader2, Pause, Pencil, Play, RefreshCw, ShoppingCart } from "lucide-react";
+import { ChevronRight, Loader2, Pause, Pencil, Play, RefreshCw, ShoppingCart, Trash2 } from "lucide-react";
+import { useState } from "react";
 import { toast } from "sonner";
+import { RemoveTripDialog } from "@/components/RemoveTripDialog";
 import { SailingsList } from "@/components/SailingsList";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { hasStatus } from "@/lib/api";
 import { reportError, useNow } from "@/lib/hooks";
 import type { Terminal } from "@/lib/schema";
 import { clock, timeLabel } from "@/lib/time";
@@ -73,6 +76,49 @@ function HeldCart({ trip }: { trip: MyTrip }) {
   );
 }
 
+/**
+ * Remove, after asking. ferry-control drains the trip's browser even while it holds a cart, so the dialog's
+ * "releases the sailing in your cart" is what happens.
+ */
+function RemoveButton({ trip, title }: { trip: MyTrip; title: string }) {
+  const qc = useQueryClient();
+  const [confirming, setConfirming] = useState(false);
+  const remove = useMutation({
+    mutationFn: () => myApi.removeTrip(trip.trip.id),
+    onSuccess: (state) => {
+      qc.setQueryData(MY_STATE_KEY, state);
+      toast.success("Trip removed");
+    },
+    onError: (error) => {
+      if (hasStatus(error, 404)) {
+        toast.info("That trip was already removed.");
+        void qc.invalidateQueries({ queryKey: MY_STATE_KEY });
+      } else reportError(qc, error);
+    },
+  });
+  return (
+    <>
+      <Button size="sm" variant="ghost" className="hover:text-danger" onClick={() => setConfirming(true)}>
+        <Trash2 aria-hidden /> Remove
+      </Button>
+      <RemoveTripDialog
+        trip={{ title, cart: trip.browser.cart }}
+        open={confirming}
+        onOpenChange={setConfirming}
+        pending={remove.isPending}
+        onConfirm={() =>
+          remove.mutate(undefined, {
+            onSuccess: () => setConfirming(false),
+            onError: (error) => {
+              if (hasStatus(error, 404)) setConfirming(false); // already gone; otherwise they can try again
+            },
+          })
+        }
+      />
+    </>
+  );
+}
+
 export function MyTripCard({
   trip,
   terminals,
@@ -98,11 +144,12 @@ export function MyTripCard({
   const sailings = asSailings(trip);
   const checked = trip.browser.checked_at;
   const next = nextCheck(trip);
+  const title = tripTitle(trip, terminals);
   return (
     <Card className="space-y-4 p-4 sm:p-5">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <h2 className="truncate font-semibold">{tripTitle(trip, terminals)}</h2>
+          <h2 className="truncate font-semibold">{title}</h2>
           <p className="text-sm text-muted-foreground">
             {timeLabel(trip.trip.earliest)}–{timeLabel(trip.trip.latest)}
             {checked ? ` · checked ${clock(checked * 1000)}` : ""}
@@ -151,6 +198,7 @@ export function MyTripCard({
         <Button size="sm" variant="ghost" onClick={onEdit}>
           <Pencil aria-hidden /> Edit
         </Button>
+        <RemoveButton trip={trip} title={title} />
       </div>
     </Card>
   );

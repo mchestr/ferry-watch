@@ -2592,6 +2592,8 @@ The size is L: about 2-2.5k changed or added lines, including tests [R:map-front
      "Checked every 6 h · next 2:05 pm" (short checks), "Checking now", "Waiting for a free browser (#2)",
      "Starting", "Holding a cart", "Did you book it?" (paused until answered), "Needs attention". The trip
      form says which trip will get close watching and when ("closely watched from Jul 25, 7 days before").
+     Each card has Edit and Remove (0.6.4). Remove asks first, as the trip form's does, and with a cart held
+     or being added it says that removing lets that sailing go.
    - `/c/:trip`: the held sailing, the deadlines, and **Check out on this device** / **I'll use my computer**
      / **Release and book it myself**, with "Checkout will be locked to the device you choose" and "Check
      out as a guest. Don't sign in to BC Ferries here: it doesn't accept a sign-in while a cart is held"
