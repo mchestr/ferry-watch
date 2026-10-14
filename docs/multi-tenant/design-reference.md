@@ -1528,7 +1528,7 @@ the cluster admin can technically see everything (R1).
 | `POST /auth/logout` | **New.** Revokes the current session and closes its sockets. |
 | `POST /auth/start`, `POST /auth/redeem` | **Only if S-IOS fails:** the handoff-code fallback (§6.2.4). |
 | `GET /api/me/sessions`, `DELETE /api/me/sessions` | **New.** List my sessions; "sign out everywhere". |
-| `GET /api/state` | Per-user snapshot: `me` (`paused` is kept for one release and is always false), `limits` (effective value plus source), `usage`, `trips[].browser{phase, mode (warm, short_check, off), reason, queue_position, next_check_at, last_check_at, effective_interval, next_due, heartbeat_at, cart, viewer, lockdown_ok}`, `trips[].quiet` (in the user's quiet hours and not lifted: not checked), `capacity{can_add, reason}`, `settings{quiet_hours: {start, end} or null}`, `quiet_hours{start, end, now}` (null when the user has none), `links{kofi}`, events. Drops the global `checkout_url`, `login_configured`, `alerts_configured` and `max_trips` (`views.py:118-143`). |
+| `GET /api/state` | Per-user snapshot: `me` (`paused` is kept for one release and is always false), `limits` (effective value plus source), `usage`, `trips[].browser{phase, mode (warm, short_check, off), reason, queue_position, next_check_at, last_check_at, effective_interval, next_due, heartbeat_at, cart, viewer, lockdown_ok}`, `trips[].quiet` (in the user's quiet hours and not lifted: not checked; `next_check_at` is then when they end), `capacity{can_add, reason}`, `settings{quiet_hours: {start, end} or null}`, `quiet_hours{start, end, now}` (for one release always an object, which a 0.6.2 dashboard needs: a user with none gets 23:00-06:00 with `now` false; read the setting from `settings`), `links{kofi}`, events. Drops the global `checkout_url`, `login_configured`, `alerts_configured` and `max_trips` (`views.py:118-143`). |
 | `POST/PATCH/DELETE /api/trips[/{id}]` | Scoped to the user, with transactional limits (§9.2): `maxTrips` and the 30-day horizon. Enabling never fails for `maxActiveBrowsers`; the fleet loop picks the warm trip (§6.6). DELETE sends `drain`; the cart is returned before the row is archived. |
 | `POST /api/trips/{id}/check` | Replaces `POST /api/check` (`server.py:403-407`). On the warm trip it sends `check_now`; on another trip it makes a short check due now (a pod start). Lifts the user's quiet hours for the trip for 10 minutes (`trip_runtime.quiet_lifted_until`). 6/h per user. |
 | `POST /api/trips/{id}/hold` | "Hold it for me": a bookable sailing in the trip's times that nothing holds. Sets `trip_runtime.hold_requested_until` (now + 10 min) and checks now (counted as a manual check). While it lasts, ferry-control's gate skips quiet hours and the trip's auto-cart off for that trip; nothing else. 409 with the reason when there's nothing to hold, the trip is paused, every bookable departure was held once already (`alert_memory.alerted`: the pod never carts those again), or a limit stands in the way (a claim that lapsed doesn't count as holding elsewhere). Each trip in `GET /api/state` and the live socket's state carries `hold{reason, can_request, holdable, requested_at, requested_until}` and `booking_url`. |
@@ -1561,7 +1561,7 @@ the cluster admin can technically see everything (R1).
 
 | Table | Key columns | Writer(s) |
 |---|---|---|
-| `users` | `id text pk (uid)`, state (active/suspended), username, email, display, is_admin, paused (unread since 0.6.3; 0004 moved it onto each trip, a later release drops it), created_at, last_seen_at | web |
+| `users` | `id text pk (uid)`, state (active/suspended), username, email, display, is_admin, paused (0004 moved it onto each trip; for 0.6.3 only, while a 0.6.2 ferry-web may still set it, ferry-control pauses all the user's trips on it and ferry-web moves it onto each trip on the next state read; a later release drops it), created_at, last_seen_at | web |
 | `user_settings` | user_id pk, quiet_start, quiet_end (Pacific `time`s, both or neither, different), updated_at | web; control (read) |
 | `identities` | (iss, sub) pk, uid (a cache of the derived uid; must equal it, C23), username, email, last_groups, first/last_seen | web |
 | `unmatched_identities` | (iss, sub) pk, preferred_username, email, first_seen, last_seen | web |
@@ -2560,7 +2560,7 @@ The size is L: about 2-2.5k changed or added lines, including tests [R:map-front
    breaks the whole dashboard (`api.ts:125-131`).
 2. **Schema** (`schema.ts:100-115`):
    - Add `me{id, name, email, is_admin, push_enabled}` (`paused` stays a release, always false),
-     `settings{quiet_hours}`, `quiet_hours{start, end, now}` or null, per-trip `quiet`,
+     `settings{quiet_hours}`, `quiet_hours{start, end, now}`, per-trip `quiet`,
      `limits{value, source}`, `usage`, `capacity{can_add, reason}`, `links{kofi}`, and per-trip
      `browser{phase, mode, reason, queue_position, next_check_at, last_check_at, effective_interval, next_due,
      heartbeat_at, lockdown_ok}`.
