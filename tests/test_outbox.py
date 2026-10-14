@@ -151,7 +151,7 @@ async def test_email_stands_in_when_no_device_works(rig: Rig) -> None:
     await rig.outbox.deliver_due()
     assert [to for to, _, _ in rig.mailer.sent] == ["ann@example.com"]
     (_, _, text) = rig.mailer.sent[0]
-    assert text.startswith("We don't hold carts overnight. Open Ferry Watch to hold it now.\n\n")
+    assert text.startswith("It's in your quiet hours, so we didn't hold it. Open Ferry Watch to hold it now.\n\n")
     assert f"https://ferry.chestr.dev/c/{TRIP.id}\n" in text  # the trip's page
     assert "bcferries.com" not in text  # no terminal list here: no second link, rather than a wrong one
     assert await rig.sql("SELECT * FROM push_subscriptions") == []  # forgotten
@@ -163,7 +163,10 @@ def test_unheld_alerts_say_why_and_link_to_the_trip(terminals: Terminals) -> Non
     page = f"https://ferry.chestr.dev/c/{TRIP.id}"
     quiet = messages.render("bookable", {"departures": ["09:00"], "held_back": "quiet_hours"}, trip)
     assert quiet is not None
-    assert (quiet.url, quiet.body) == (page, "We don't hold carts overnight. Open Ferry Watch to hold it now.")
+    assert (quiet.url, quiet.body) == (
+        page,
+        "It's in your quiet hours, so we didn't hold it. Open Ferry Watch to hold it now.",
+    )
     assert quiet.also is not None
     assert quiet.also[1].startswith("https://www.bcferries.com/?sailing=true&departureLocation=NAN")
     older = messages.render("bookable", {"departures": ["09:00"]}, trip)  # queued before held_back existed

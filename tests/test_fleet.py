@@ -285,6 +285,30 @@ async def test_a_paused_trip_s_pod_is_drained(rig: Rig) -> None:
     assert rig.hub.commands == [(name, "drain", "paused")]
 
 
+async def test_quiet_hours_stop_a_users_browsers_until_lifted(rig: Rig) -> None:
+    await rig.add_trip(NEAR)
+    await rig.run("INSERT INTO user_settings (user_id, quiet_start, quiet_end) VALUES ($1, '23:00', '06:00')", ANN)
+    await rig.run("INSERT INTO trip_runtime (trip_id) VALUES ($1)", NEAR.id)
+    rig.clock[0] = datetime(2026, 10, 12, 23, 30, tzinfo=PACIFIC).timestamp()
+
+    async def lift(column: str) -> None:
+        await rig.run(f"UPDATE trip_runtime SET {column} = $1", datetime.fromtimestamp(rig.clock[0] + 600, UTC))  # noqa: S608
+
+    assert (await rig.fleet.reconcile()).started == []  # Ann's quiet hours: nothing is checked
+    await lift("hold_requested_until")  # "Hold it for me"
+    name = f"fw-{NEAR.id}-g1"
+    assert (await rig.fleet.reconcile()).started == [name]
+    await rig.run("UPDATE browser_pods SET phase = 'watching'")
+    rig.hub.connected.add(name)
+    rig.advance(601)  # the request lapsed
+    rig.hub.heard[name] = rig.clock[0]
+    assert (await rig.fleet.reconcile()).drained == [name]
+    assert rig.hub.commands == [(name, "drain", "paused")]
+    rig.cluster.set_phase(name, "Succeeded", "drained -")
+    await lift("quiet_lifted_until")  # a manual check
+    assert (await rig.fleet.reconcile()).started == [f"fw-{NEAR.id}-g2"]
+
+
 async def test_a_disconnected_pod_is_deleted_instead(rig: Rig) -> None:
     await rig.add_trip(NEAR)
     await rig.fleet.reconcile()

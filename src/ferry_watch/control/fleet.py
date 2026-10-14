@@ -24,6 +24,7 @@ from typing import Any, Protocol
 import asyncpg
 
 from ferry_watch.models import PACIFIC, Trip, ValidationError
+from ferry_watch.polling import quiet_hours
 from ferry_watch.protocol import CommandOp, CommandReason
 
 from .configure import HubSettings, curve_interval, demand, stretch
@@ -352,7 +353,10 @@ class Fleet:
         )
 
     async def _inputs(self, now: float) -> tuple[list[UserView], list[TripView], FleetView, dict[str, Any]]:
-        user_records = await self._pool.fetch("SELECT id, state, paused FROM users")
+        user_records = await self._pool.fetch(
+            "SELECT u.id, u.state, u.paused, s.quiet_start, s.quiet_end FROM users u"
+            " LEFT JOIN user_settings s ON s.user_id = u.id"
+        )
         overrides: dict[str, dict[str, int]] = {}
         for r in await self._pool.fetch("SELECT user_id, key, value FROM user_limits"):
             overrides.setdefault(r["user_id"], {})[r["key"]] = r["value"]
@@ -362,14 +366,17 @@ class Fleet:
                 active=r["state"] == "active",
                 paused=r["paused"],
                 max_active_browsers=self._limits.value("maxActiveBrowsers", overrides.get(r["id"], {})),
+                quiet=quiet_hours(r["quiet_start"], r["quiet_end"]),
             )
             for r in user_records
         ]
         trips = []
+        # A trip's quiet hours are lifted by a manual check (quiet_lifted_until) or "Hold it for me".
         for r in await self._pool.fetch(
             "SELECT t.id, t.user_id, t.spec, t.enabled, t.paused_reason, rt.next_check_at, rt.backoff_until,"
-            " rt.needs_attention, rt.queued_since FROM trips t LEFT JOIN trip_runtime rt ON rt.trip_id = t.id"
-            " WHERE t.archived_at IS NULL"
+            " rt.needs_attention, rt.queued_since,"
+            " greatest(rt.quiet_lifted_until, rt.hold_requested_until) AS lifted_until"
+            " FROM trips t LEFT JOIN trip_runtime rt ON rt.trip_id = t.id WHERE t.archived_at IS NULL"
         ):
             try:
                 trip = Trip.from_json(json.loads(r["spec"]) | {"enabled": r["enabled"]})
@@ -385,6 +392,7 @@ class Fleet:
                     backoff_until=_epoch(r["backoff_until"]),
                     needs_attention=bool(r["needs_attention"]),
                     queued_since=_epoch(r["queued_since"]),
+                    quiet_lifted_until=_epoch(r["lifted_until"]),
                 )
             )
         switches = {

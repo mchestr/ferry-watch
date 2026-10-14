@@ -18,6 +18,7 @@ import asyncpg
 import msgspec
 
 from ferry_watch.models import Trip, ValidationError
+from ferry_watch.polling import quiet_hours
 from ferry_watch.protocol import Alert, Brake, Bye, ClaimReason, Event, Mode, State
 
 from .configure import Allowance, Switches, TripRow, pacific_date
@@ -39,6 +40,10 @@ _PHASES = {"starting": "starting", "watching": "watching", "holding": "holding",
 
 def _ts(epoch: float | None) -> datetime | None:
     return datetime.fromtimestamp(epoch, UTC) if epoch is not None else None
+
+
+def _epoch(value: datetime | None) -> float | None:
+    return value.timestamp() if value is not None else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,7 +89,7 @@ class ControlStore:
         """The trip as configured, and whether its owner is active."""
         row = await self._pool.fetchrow(
             "SELECT t.spec, t.rev, t.enabled, t.paused_reason, t.archived_at, u.state, m.alerted, m.offered,"
-            " r.hold_requested_until"
+            " r.hold_requested_until, r.quiet_lifted_until"
             " FROM trips t JOIN users u ON u.id = t.user_id LEFT JOIN alert_memory m ON m.trip_id = t.id"
             " LEFT JOIN trip_runtime r ON r.trip_id = t.id"
             " WHERE t.id = $1",
@@ -104,7 +109,8 @@ class ControlStore:
             paused_reason=row["paused_reason"],
             alerted=tuple(row["alerted"] or ()),
             offered=tuple(row["offered"] or ()),
-            hold_requested_until=row["hold_requested_until"].timestamp() if row["hold_requested_until"] else None,
+            hold_requested_until=_epoch(row["hold_requested_until"]),
+            quiet_lifted_until=_epoch(row["quiet_lifted_until"]),
         )
         return trip_row, row["state"] == "active"
 
@@ -120,6 +126,7 @@ class ControlStore:
         return found is not None
 
     async def allowance(self, user_id: str, now: float) -> Allowance:
+        """The user's limits, today's usage and quiet hours."""
         overrides = {
             r["key"]: r["value"]
             for r in await self._pool.fetch("SELECT key, value FROM user_limits WHERE user_id = $1", user_id)
@@ -130,6 +137,9 @@ class ControlStore:
                 "SELECT kind, amount FROM usage_ledger WHERE user_id = $1 AND day = $2", user_id, pacific_date(now)
             )
         }
+        settings = await self._pool.fetchrow(
+            "SELECT quiet_start, quiet_end FROM user_settings WHERE user_id = $1", user_id
+        )
         return Allowance(
             holds_per_day=self._limits.value("maxHoldsPerDay", overrides),
             cart_attempts_per_day=self._limits.value("maxCartAttemptsPerDay", overrides),
@@ -137,6 +147,7 @@ class ControlStore:
             holds_today=usage.get("holds", 0),
             cart_attempts_today=usage.get("cart_attempts", 0),
             vnc_seconds_today=usage.get("vnc_seconds", 0),
+            quiet=quiet_hours(settings["quiet_start"], settings["quiet_end"]) if settings else None,
         )
 
     async def switches(self) -> Switches:

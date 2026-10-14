@@ -21,7 +21,7 @@ from ferry_watch.control.configure import Allowance, HubSettings, Switches, cart
 from ferry_watch.control.limits import LimitKey, Limits
 from ferry_watch.control.store import CLAIM_LAPSE_SECONDS, USER_CHANNEL
 from ferry_watch.models import PACIFIC, Trip, ValidationError
-from ferry_watch.polling import PollPolicy
+from ferry_watch.polling import PollPolicy, QuietHours, quiet_hours
 
 from .http import ApiError
 from .push import Subscription
@@ -33,6 +33,7 @@ BOOKED_REASONS = frozenset(
 MANUAL_CHECK_WINDOW_S = 3600
 MINT_WINDOW_S = 60
 HOLD_REQUEST_S = 600  # how long "Hold it for me" lets the trip's pod cart through quiet hours
+QUIET_LIFT_S = 600  # how long a manual check lifts the user's quiet hours for the trip
 # Why a hold the user asks for can't happen now, in their words.
 HOLD_REFUSED = {
     "carting_paused": "Holding carts is paused right now",
@@ -56,6 +57,13 @@ def _today(now: float) -> date:
     return datetime.fromtimestamp(now, PACIFIC).date()
 
 
+def _quiet_json(quiet: QuietHours | None) -> dict[str, Any] | None:
+    """Quiet hours as the API has them: {"start": "HH:MM", "end": "HH:MM"}, or None for none."""
+    if quiet is None:
+        return None
+    return {"start": quiet.start.strftime("%H:%M"), "end": quiet.end.strftime("%H:%M")}
+
+
 @dataclass(frozen=True, slots=True)
 class HoldContext:
     """What decides whether this user's trips may hold a cart now (ferry-control's gate decides for real).
@@ -64,24 +72,30 @@ class HoldContext:
     length), so it takes the defaults; at worst a hold it offers is refused and the alert says why.
     """
 
-    allowance: Allowance
+    allowance: Allowance  # with the user's quiet hours
     switches: Switches
     claimed_trip: str | None  # the trip holding the user's one cart claim, if any
     settings: HubSettings
     at: datetime
+
+    def quiet(self, lifted_until: float | None, now: float) -> bool:
+        """Whether a trip isn't checked now for the user's quiet hours: they're on, and not lifted for it."""
+        return self.allowance.quiet_now(self.at) and not (lifted_until is not None and now < lifted_until)
 
     def hold(
         self,
         trip: Trip,
         *,
         paused: bool,
+        quiet: bool,
         sailings: list[dict[str, Any]],
         alerted: Iterable[str],
         requested_until: float | None,
         now: float,
     ) -> dict[str, Any]:
         """Why auto-hold won't hold this trip's sailings now (None: it would), whether asking would help, and
-        which bookable departures a hold could still be for (`holdable`)."""
+        which bookable departures a hold could still be for (`holdable`). `quiet`: in the user's quiet hours,
+        not lifted for this trip."""
         if paused:  # nothing is watching it: what the last check saw is history
             return {
                 "reason": "paused",
@@ -93,14 +107,15 @@ class HoldContext:
         bookable = bookable_in_window(trip, sailings)
         # A departure held once (then released, expired or viewed) is never carted again by the pod.
         holdable = [d for d in bookable if d not in set(alerted)]
-        blocked: str = cart_gate(trip, self.allowance, self.switches, self.settings, self.at, requested=True)
+        # What a hold asked for now would face: asking lifts quiet hours.
+        blocked: str = cart_gate(trip, self.allowance, self.switches, self.settings, self.at, lifted=True)
         if blocked == "ok" and self.claimed_trip not in (None, trip.id):
             blocked = "holding_elsewhere"
         if blocked == "ok" and bookable and not holdable:
             blocked = "already_held"
         reason: str | None = blocked
         if blocked == "ok":
-            reason = "quiet_hours" if self.settings.policy.quiet(self.at) else None
+            reason = "quiet_hours" if quiet else None
             if reason is None and not trip.auto_cart:
                 reason = "auto_cart_off"
         active = requested_until is not None and requested_until > now
@@ -257,11 +272,15 @@ class WebStore:
         )
 
     async def check_now(self, uid: str, trip_id: str) -> None:
-        """A manual check: the warm browser checks at once; any other trip gets a short check now."""
+        """A manual check: the warm browser checks at once; any other trip gets a short check now. It lifts the
+        user's quiet hours for the trip for the next few minutes, so the check happens and may hold a cart."""
         await self.trip(uid, trip_id)
         now = self._clock()
         async with self._pool.acquire() as conn, conn.transaction():
             await self._check_now(conn, uid, trip_id, now)
+            await conn.execute(
+                "UPDATE trip_runtime SET quiet_lifted_until = $2 WHERE trip_id = $1", trip_id, _ts(now + QUIET_LIFT_S)
+            )
 
     async def request_hold(self, uid: str, trip_id: str) -> None:
         """ "Hold it for me": the trip's pod may cart through quiet hours (and with the trip's auto-cart off)
@@ -288,7 +307,13 @@ class WebStore:
         if not bookable_in_window(trip, sailings):
             raise ApiError(409, "Nothing in your times is bookable right now")
         hold = (await self.hold_context(uid, now)).hold(
-            trip, paused=False, sailings=sailings, alerted=row["alerted"] or (), requested_until=None, now=now
+            trip,
+            paused=False,
+            quiet=False,  # asking lifts quiet hours
+            sailings=sailings,
+            alerted=row["alerted"] or (),
+            requested_until=None,
+            now=now,
         )
         if not hold["can_request"]:
             raise ApiError(409, HOLD_REFUSED.get(hold["reason"], "A cart can't be held right now"))
@@ -322,6 +347,7 @@ class WebStore:
                 holds_today=usage.get("holds", 0),
                 cart_attempts_today=usage.get("cart_attempts", 0),
                 vnc_seconds_today=usage.get("vnc_seconds", 0),
+                quiet=await self.user_quiet_hours(uid),
             ),
             switches=Switches(
                 maintenance=bool(switches.get("maintenance", False)),
@@ -389,8 +415,22 @@ class WebStore:
                 "booked" if booked else (reason or "not_booked"),
             )
 
-    async def set_paused(self, uid: str, paused: bool) -> None:
-        await self._pool.execute("UPDATE users SET paused = $2 WHERE id = $1", uid, paused)
+    # ---- settings
+
+    async def user_quiet_hours(self, uid: str) -> QuietHours | None:
+        """The user's quiet hours (none unless they set some)."""
+        row = await self._pool.fetchrow("SELECT quiet_start, quiet_end FROM user_settings WHERE user_id = $1", uid)
+        return quiet_hours(row["quiet_start"], row["quiet_end"]) if row else None
+
+    async def set_settings(self, uid: str, *, quiet: QuietHours | None) -> None:
+        """The user's own settings: their quiet hours, or None for none."""
+        await self._pool.execute(
+            "INSERT INTO user_settings (user_id, quiet_start, quiet_end) VALUES ($1, $2, $3) ON CONFLICT (user_id)"
+            " DO UPDATE SET quiet_start = $2, quiet_end = $3, updated_at = now()",
+            uid,
+            quiet.start if quiet else None,
+            quiet.end if quiet else None,
+        )
 
     # ---- alerts
 
@@ -501,7 +541,7 @@ class WebStore:
         }
         rows = await self._pool.fetch(
             "SELECT t.id, t.spec, t.enabled, t.paused_reason, t.rev, rt.phase, rt.mode, rt.queue_position,"
-            " rt.next_check_at, rt.last_check_at, rt.hold_requested_until,"
+            " rt.next_check_at, rt.last_check_at, rt.hold_requested_until, rt.quiet_lifted_until,"
             " s.agent_phase, s.checked_at, s.next_due, s.effective_interval,"
             " s.sailings, s.error_class, s.consecutive_errors, s.cart, s.viewer_connected, s.heartbeat_at, m.alerted"
             " FROM trips t LEFT JOIN trip_runtime rt ON rt.trip_id = t.id LEFT JOIN trip_state s ON s.trip_id = t.id"
@@ -514,12 +554,17 @@ class WebStore:
         for r in rows:
             spec = json.loads(r["spec"]) | {"enabled": r["enabled"]}
             sailings = json.loads(r["sailings"]) if r["sailings"] else []
+            requested_until = _epoch(r["hold_requested_until"])
+            # A manual check or "Hold it for me" lifts the user's quiet hours for the trip.
+            lifted = [t for t in (requested_until, _epoch(r["quiet_lifted_until"])) if t is not None]
+            quiet = context.quiet(max(lifted, default=None), now)
             hold = context.hold(
                 Trip.from_json(spec),
                 paused=user["paused"] or not r["enabled"] or r["paused_reason"] is not None,
+                quiet=quiet,
                 sailings=sailings,
                 alerted=r["alerted"] or (),
-                requested_until=_epoch(r["hold_requested_until"]),
+                requested_until=requested_until,
                 now=now,
             )
             trips.append(
@@ -527,6 +572,7 @@ class WebStore:
                     "trip": spec,
                     "rev": r["rev"],
                     "paused_reason": r["paused_reason"],
+                    "quiet": quiet,  # in the user's quiet hours, and not lifted: it isn't being checked
                     "hold": hold,
                     "browser": {
                         "phase": r["agent_phase"] or r["phase"] or "off",
@@ -561,7 +607,7 @@ class WebStore:
             "SELECT id, trip_id, ts, kind, code, params FROM events WHERE user_id = $1 ORDER BY ts DESC LIMIT 50", uid
         )
         max_trips = limits["maxTrips"]["value"]
-        at = datetime.fromtimestamp(now, PACIFIC)
+        quiet_hours = _quiet_json(context.allowance.quiet)
         return {
             "me": {
                 "id": user["id"],
@@ -577,11 +623,9 @@ class WebStore:
                 "can_add": len(trips) < max_trips,
                 "reason": None if len(trips) < max_trips else f"You can watch up to {max_trips} trips",
             },
-            "quiet_hours": {
-                "start": self._policy.quiet_start.strftime("%H:%M"),
-                "end": self._policy.quiet_end.strftime("%H:%M"),
-                "now": self._policy.quiet(at),
-            },
+            "settings": {"quiet_hours": quiet_hours},
+            # The same quiet hours, and whether it's quiet now (None: the user has none).
+            "quiet_hours": quiet_hours | {"now": context.allowance.quiet_now(context.at)} if quiet_hours else None,
             "devices": await self.devices(uid),
             "events": [
                 {

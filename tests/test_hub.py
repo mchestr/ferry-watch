@@ -44,6 +44,7 @@ TRIP = Trip(id="3f9c0a1b2c3d4e5f", origin="SWB", destination="TSA", date=date(20
 POD = f"fw-{TRIP.id}-g1"
 UID = "11111111-2222-3333-4444-555555555555"
 NOON = datetime(2026, 10, 15, 12, 0, tzinfo=PACIFIC).timestamp()  # 19 h before the trip: the 60 s tier
+NIGHT = datetime(2026, 10, 15, 23, 30, tzinfo=PACIFIC).timestamp()
 
 
 @dataclass
@@ -329,25 +330,42 @@ async def test_a_claim_waiting_for_its_cart_is_kept(rig: Rig, agent: Agent) -> N
     assert len(await rig.fetch("SELECT 1 FROM hold_claims")) == 1
 
 
-async def test_no_carts_in_quiet_hours(rig: Rig, agent: Agent) -> None:
-    rig.clock[0] = datetime(2026, 10, 15, 23, 30, tzinfo=PACIFIC).timestamp()
-    assert await agent.client.claim("09:00", "saver") is False
-    assert await rig.fetch("SELECT * FROM hold_claims") == []
-
-
-async def request_hold(rig: Rig, minutes: int = 10) -> None:
+async def quiet_hours(rig: Rig, start: time = time(23, 0), end: time = time(6, 0)) -> None:
+    """The user's own quiet hours (there are none unless they set some)."""
     owner = await rig.db.connect()
     try:
         await owner.execute(
-            "UPDATE trip_runtime SET hold_requested_until = to_timestamp($1)", rig.clock[0] + minutes * 60
+            "INSERT INTO user_settings (user_id, quiet_start, quiet_end) VALUES ($1, $2, $3)", USER, start, end
         )
     finally:
         await owner.close()
 
 
+async def lift(rig: Rig, column: str, minutes: int = 10) -> None:
+    """Lift the user's quiet hours for the trip: "Hold it for me" (hold_requested_until) or a manual check."""
+    owner = await rig.db.connect()
+    try:
+        await owner.execute(f"UPDATE trip_runtime SET {column} = to_timestamp($1)", rig.clock[0] + minutes * 60)  # noqa: S608
+    finally:
+        await owner.close()
+
+
+async def test_no_carts_in_the_users_quiet_hours(rig: Rig, agent: Agent) -> None:
+    await quiet_hours(rig)
+    rig.clock[0] = NIGHT
+    assert await agent.client.claim("09:00", "saver") is False
+    assert await rig.fetch("SELECT * FROM hold_claims") == []
+
+
+async def test_no_quiet_hours_unless_the_user_sets_some(rig: Rig, agent: Agent) -> None:
+    rig.clock[0] = NIGHT
+    assert await agent.client.claim("09:00", "saver") is True
+
+
 async def test_a_hold_the_user_asks_for_is_claimed_in_quiet_hours(rig: Rig, agent: Agent) -> None:
-    rig.clock[0] = datetime(2026, 10, 15, 23, 30, tzinfo=PACIFIC).timestamp()
-    await request_hold(rig)
+    await quiet_hours(rig)
+    rig.clock[0] = NIGHT
+    await lift(rig, "hold_requested_until")
     assert await agent.client.claim("09:00", "saver") is True
     held = Alert(**agent.client.envelope(), kind="cart_held", params=AlertParams(departures=["09:00"]))
     agent.client.send(held)
@@ -356,10 +374,39 @@ async def test_a_hold_the_user_asks_for_is_claimed_in_quiet_hours(rig: Rig, agen
     assert rows[0]["hold_requested_until"] is None  # tried: quiet hours apply again
 
 
-async def test_a_lapsed_request_is_quiet_hours_again(rig: Rig, agent: Agent) -> None:
-    rig.clock[0] = datetime(2026, 10, 15, 23, 30, tzinfo=PACIFIC).timestamp()
-    await request_hold(rig, minutes=-1)
+async def test_a_manual_check_lifts_quiet_hours_too(rig: Rig, agent: Agent) -> None:
+    await quiet_hours(rig)
+    rig.clock[0] = NIGHT
+    await lift(rig, "quiet_lifted_until")
+    assert await agent.client.claim("09:00", "saver") is True
+
+
+@pytest.mark.parametrize("column", ["hold_requested_until", "quiet_lifted_until"])
+async def test_a_lapsed_lift_is_quiet_hours_again(rig: Rig, agent: Agent, column: str) -> None:
+    await quiet_hours(rig)
+    rig.clock[0] = NIGHT
+    await lift(rig, column, minutes=-1)
     assert await agent.client.claim("09:00", "saver") is False
+
+
+async def test_in_quiet_hours_the_pod_stops_checking_until_lifted(rig: Rig, agent: Agent) -> None:
+    await until(lambda: agent.store.config.enabled)
+    await quiet_hours(rig)
+    rig.clock[0] = NIGHT
+    await rig.hub.refresh()  # within 5 s of quiet hours starting
+    await until(lambda: not agent.store.config.enabled)
+    await lift(rig, "quiet_lifted_until")  # a manual check
+    await rig.hub.refresh()
+    await until(lambda: agent.store.config.enabled)
+    latest = agent.store.latest
+    assert latest is not None
+    assert latest.auto_cart  # and it may hold a cart
+    rig.clock[0] = NIGHT + 601
+    await rig.hub.refresh()
+    await until(lambda: not agent.store.config.enabled)
+    rig.clock[0] = datetime(2026, 10, 16, 6, 0, tzinfo=PACIFIC).timestamp()  # morning
+    await rig.hub.refresh()
+    await until(lambda: agent.store.config.enabled)
 
 
 @pytest.mark.parametrize(
@@ -375,7 +422,8 @@ async def test_a_bookable_alert_says_why_nothing_was_held(rig: Rig, agent: Agent
     owner = await rig.db.connect()
     try:
         if setup == "quiet":
-            rig.clock[0] = datetime(2026, 10, 15, 23, 30, tzinfo=PACIFIC).timestamp()
+            await quiet_hours(rig)
+            rig.clock[0] = NIGHT
         elif setup == "manual":
             spec = TRIP.to_json() | {"auto_cart": False}
             await owner.execute("UPDATE trips SET spec = $1", json.dumps(spec))

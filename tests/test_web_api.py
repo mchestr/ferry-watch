@@ -9,6 +9,7 @@ import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from datetime import time as dt_time
 from typing import Any
 
 import aiohttp
@@ -40,11 +41,17 @@ def soon(days: int = 3) -> str:
     return (datetime.now(PACIFIC).date() + timedelta(days=days)).isoformat()  # the server's "today" is Pacific
 
 
+def today_at(hour: int, minute: int = 0) -> float:
+    """A fixed time of day today, Pacific: for what depends on the hour, whenever the tests run."""
+    return datetime.combine(datetime.now(PACIFIC).date(), dt_time(hour, minute), PACIFIC).timestamp()
+
+
 @dataclass
 class Rig:
     client: TestClient
     db: Database
     tokens: dict[str, str]
+    clock: list[float]  # what ferry-web takes as now; 0: the real time
 
     async def call(self, method: str, path: str, user: str = ANN, **kw: Any) -> aiohttp.ClientResponse:
         headers = {"Authorization": f"Bearer {self.tokens[user]}"} | kw.pop("headers", {})
@@ -75,12 +82,13 @@ async def rig(db: Database, aiohttp_client: Callable[..., Any]) -> AsyncIterator
     pool = await asyncpg.create_pool(db.dsn(ROLES.web), min_size=1, max_size=4)
     accounts = Accounts(pool, IdentityPolicy(bootstrap_admins=BOOTSTRAP))
     tokens = {uid: await accounts.create_session(uid, Principal(ISSUER, uid), None) for uid in (ANN, BOB)}
+    clock = [0.0]
     async with aiohttp.ClientSession() as http:
         oidc = OidcClient(http, OidcSettings(issuer="https://idp", client_id="c", client_secret="s", redirect_uri="x"))
         app = build(
             accounts,
             oidc,
-            WebStore(pool, Limits(), PollPolicy(), clock=time.time),
+            WebStore(pool, Limits(), PollPolicy(), clock=lambda: clock[0] or time.time()),
             CheckoutSigner(KEY, "k1", ORIGIN),
             pool=pool,
             limits=Limits(),
@@ -89,7 +97,7 @@ async def rig(db: Database, aiohttp_client: Callable[..., Any]) -> AsyncIterator
         )
         client: TestClient = await aiohttp_client(app)
         try:
-            yield Rig(client, db, tokens)
+            yield Rig(client, db, tokens, clock)
         finally:
             await client.close()  # stops the change feed, which holds a pool connection
             await pool.close()
@@ -273,11 +281,12 @@ async def test_no_hold_is_offered_for_a_sailing_already_held_once(rig: Rig) -> N
     )
 
 
-async def test_a_paused_account_offers_no_hold(rig: Rig) -> None:
+async def test_a_paused_trip_offers_no_hold(rig: Rig) -> None:
     trip_id = await rig.add()
     await seen(rig, trip_id, sailing("09:00"))  # what the last check saw, before the pause
-    await rig.call("PATCH", "/api/me", json={"paused": True})
-    state = await (await rig.call("GET", "/api/state")).json()
+    response = await rig.call("PATCH", f"/api/trips/{trip_id}", json={"enabled": False})
+    assert response.status == 200
+    state = await response.json()
     assert state["trips"][0]["hold"] == {
         "reason": "paused",
         "can_request": False,
@@ -320,10 +329,8 @@ async def test_the_state_says_why_a_trip_wouldnt_be_held(rig: Rig) -> None:
     trip_id = await rig.add(auto_cart=False)
     state = await (await rig.call("GET", "/api/state")).json()
     hold = state["trips"][0]["hold"]
-    # Quiet hours come first when it's night where the ferries are; this runs at any hour.
-    expected = "quiet_hours" if state["quiet_hours"]["now"] else "auto_cart_off"
     assert hold == {
-        "reason": expected,
+        "reason": "auto_cart_off",  # at any hour: there are no quiet hours unless the user sets some
         "can_request": True,
         "holdable": [],
         "requested_at": None,
@@ -350,10 +357,91 @@ async def test_did_you_book_it(rig: Rig) -> None:
     assert (await rig.sql("SELECT archived_at FROM trips"))[0]["archived_at"] is not None
 
 
-async def test_pausing_everything(rig: Rig) -> None:
-    response = await rig.call("PATCH", "/api/me", json={"paused": True})
-    assert (await response.json())["me"]["paused"] is True
-    assert (await rig.call("PATCH", "/api/me", json={"is_admin": True})).status == 400
+async def test_pausing_and_resuming_one_trip(rig: Rig) -> None:
+    """Trips are paused one at a time ("pause all" is gone); resuming one checks it soon."""
+    trip_id, other = await rig.add(), await rig.add()
+    state = await (await rig.call("PATCH", f"/api/trips/{trip_id}", json={"enabled": False})).json()
+    assert [(t["trip"]["id"], t["trip"]["enabled"]) for t in state["trips"]] == [(trip_id, False), (other, True)]
+    assert state["me"]["paused"] is False  # kept a release for the old dashboard; always false
+    await rig.sql("UPDATE trip_runtime SET next_check_at = now() + interval '6 hours'")
+    assert (await rig.call("PATCH", f"/api/trips/{trip_id}", json={"enabled": True})).status == 200
+    rows = await rig.sql("SELECT trip_id, next_check_at IS NULL AS now FROM trip_runtime ORDER BY trip_id = $1", other)
+    assert [(r["trip_id"], r["now"]) for r in rows] == [(trip_id, True), (other, False)]
+
+
+# ---- quiet hours
+
+
+async def test_quiet_hours_are_each_users_own(rig: Rig) -> None:
+    state = await (await rig.call("GET", "/api/state")).json()
+    assert (state["settings"], state["quiet_hours"]) == ({"quiet_hours": None}, None)  # none, by default
+    night = {"start": "23:00", "end": "06:30"}
+    response = await rig.call("PATCH", "/api/me", json={"quiet_hours": night})
+    assert response.status == 200, await response.text()
+    state = await response.json()
+    assert state["settings"] == {"quiet_hours": night}
+    assert {k: v for k, v in state["quiet_hours"].items() if k != "now"} == night
+    rows = await rig.sql("SELECT user_id, quiet_start, quiet_end FROM user_settings")
+    assert [tuple(r) for r in rows] == [(ANN, dt_time(23, 0), dt_time(6, 30))]
+    bob = await (await rig.call("GET", "/api/state", BOB)).json()
+    assert (bob["settings"], bob["quiet_hours"]) == ({"quiet_hours": None}, None)
+    state = await (await rig.call("PATCH", "/api/me", json={"quiet_hours": None})).json()
+    assert (state["settings"], state["quiet_hours"]) == ({"quiet_hours": None}, None)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {},
+        {"paused": True},  # pausing is per trip now
+        {"quiet_hours": None, "paused": False},
+        {"quiet_hours": "23:00-06:00"},
+        {"quiet_hours": {"start": "23:00"}},
+        {"quiet_hours": {"start": "23:00", "end": "06:00", "days": "weekdays"}},
+        {"quiet_hours": {"start": "24:00", "end": "06:00"}},
+        {"quiet_hours": {"start": "7:00", "end": "09:00"}},
+        {"quiet_hours": {"start": "23:00:00", "end": "06:00"}},
+        {"quiet_hours": {"start": 2300, "end": "06:00"}},
+        {"quiet_hours": {"start": "06:00", "end": "06:00"}},  # covers nothing
+    ],
+)
+async def test_quiet_hours_are_two_different_times_of_day(rig: Rig, body: dict[str, Any]) -> None:
+    response = await rig.call("PATCH", "/api/me", json=body)
+    assert (response.status, (await response.json())["field"]) == (400, "quiet_hours")
+    assert await rig.sql("SELECT * FROM user_settings") == []
+
+
+async def test_in_quiet_hours_a_trip_isnt_checked_until_lifted(rig: Rig) -> None:
+    checked, asked = await rig.add(), await rig.add()
+    await seen(rig, checked, sailing("09:00"))
+    await seen(rig, asked, sailing("09:00"))
+    await rig.call("PATCH", "/api/me", json={"quiet_hours": {"start": "23:00", "end": "06:00"}})
+    rig.clock[0] = today_at(23, 30)
+
+    async def trips() -> dict[str, dict[str, Any]]:
+        state = await (await rig.call("GET", "/api/state")).json()
+        return {t["trip"]["id"]: t for t in state["trips"]}
+
+    state = await (await rig.call("GET", "/api/state")).json()
+    assert state["quiet_hours"] == {"start": "23:00", "end": "06:00", "now": True}
+    for trip in (await trips()).values():
+        assert trip["quiet"] is True
+        # Not held for the quiet hours, but "Hold it for me" lifts them.
+        assert (trip["hold"]["reason"], trip["hold"]["can_request"]) == ("quiet_hours", True)
+
+    assert (await rig.call("POST", f"/api/trips/{checked}/check")).status == 200  # a manual check lifts them
+    (row,) = await rig.sql("SELECT quiet_lifted_until FROM trip_runtime WHERE trip_id = $1", checked)
+    assert row["quiet_lifted_until"].timestamp() == rig.clock[0] + 600
+    assert (await rig.call("POST", f"/api/trips/{asked}/hold")).status == 200  # and so does asking for a hold
+    for trip in (await trips()).values():
+        assert (trip["quiet"], trip["hold"]["reason"]) == (False, None)  # checked, and it may hold a cart
+
+    rig.clock[0] += 601
+    assert [t["quiet"] for t in (await trips()).values()] == [True, True]  # 10 minutes, then quiet again
+    rig.clock[0] = today_at(12)
+    state = await (await rig.call("GET", "/api/state")).json()
+    assert state["quiet_hours"]["now"] is False
+    assert [(t["quiet"], t["hold"]["reason"]) for t in state["trips"]] == [(False, None), (False, None)]
 
 
 # ---- checkout
