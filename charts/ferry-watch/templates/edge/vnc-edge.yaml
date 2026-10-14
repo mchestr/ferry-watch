@@ -24,7 +24,7 @@ spec:
         {{- include "fw.podSecurity" 101 | nindent 8 }}
       containers:
         - name: nginx
-          image: {{ include "fw.image" .Values.images.vncEdge }}
+          image: {{ include "fw.image" (list $ .Values.images.vncEdge) }}
           ports:
             - {name: http, containerPort: 8080}
           livenessProbe:

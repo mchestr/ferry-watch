@@ -27,7 +27,7 @@ spec:
         {{- include "fw.podSecurity" 65532 | nindent 8 }}
       containers:
         - name: web
-          image: {{ include "fw.image" .Values.images.control }}
+          image: {{ include "fw.image" (list $ .Values.images.control) }}
           args: [ferry-web, run]
           env:
             - {name: FW_WEB_CONFIG, value: /etc/ferry-web/config.json}

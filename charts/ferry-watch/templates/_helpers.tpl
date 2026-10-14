@@ -6,11 +6,14 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" }}
 {{- end }}
 
-{{/* An image reference: repository[:tag][@digest]. */}}
+{{/* An image reference, repository[:tag][@digest], from (list $ image). With neither, the chart's appVersion. */}}
 {{- define "fw.image" -}}
-{{- $ref := .repository -}}
-{{- if .tag }}{{ $ref = printf "%s:%s" $ref .tag }}{{ end -}}
-{{- if .digest }}{{ $ref = printf "%s@%s" $ref .digest }}{{ end -}}
+{{- $root := index . 0 -}}
+{{- $image := index . 1 -}}
+{{- $tag := $image.tag | default (and (not $image.digest) $root.Chart.AppVersion) -}}
+{{- $ref := $image.repository -}}
+{{- if $tag }}{{ $ref = printf "%s:%s" $ref $tag }}{{ end -}}
+{{- if $image.digest }}{{ $ref = printf "%s@%s" $ref $image.digest }}{{ end -}}
 {{- $ref -}}
 {{- end }}
 

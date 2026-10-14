@@ -48,7 +48,7 @@ spec:
         {{- include "fw.podSecurity" 65534 | nindent 8 }}
       containers:
         - name: init
-          image: {{ include "fw.image" .Values.images.postgresInit }}
+          image: {{ include "fw.image" (list $ .Values.images.postgresInit) }}
           envFrom:
             - secretRef: {name: {{ .Values.database.init.secret }}}
           resources:
@@ -91,7 +91,7 @@ spec:
         {{- include "fw.podSecurity" 65532 | nindent 8 }}
       containers:
         - name: migrate
-          image: {{ include "fw.image" .Values.images.control }}
+          image: {{ include "fw.image" (list $ .Values.images.control) }}
           args: [ferry-control, migrate]
           env:
             - {name: FW_CONTROL_CONFIG, value: /etc/ferry-control/config.json}

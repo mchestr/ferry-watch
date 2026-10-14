@@ -147,8 +147,9 @@ Each is a two-way door.
 - **Frontend** (§10): the session list. The admin pages cover what the admin API does today; §9.4's
   revoke sessions, release a cart, recycle a pod, close the breaker, make admin and delete user need API
   first.
-- **Chart and CI follow-ups** (§7, §11): publishing the chart to `oci://ghcr.io/mchestr/charts`; the
-  PrometheusRule and PodMonitors once there are metrics; kind-lite (the positive pod-lock cases that need a
+- **Chart and CI follow-ups** (§7, §11): the chart is pushed to `oci://ghcr.io/mchestr/charts` on each `v*`
+  tag, but GHCR makes a new package private: make `charts/ferry-watch` public once, so flux-local can render
+  it anonymously. Then: the PrometheusRule and PodMonitors once there are metrics; kind-lite (the positive pod-lock cases that need a
   kubelet, and the egress flip on a running pod); the `agent-e2e` and `fake-bcferries` images and the compose
   job; the home-cluster PR.
 - **Agent follow-ups**: the smoke trip, the page watchdog (`checkout_host_blocked`), porting the

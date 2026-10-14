@@ -2146,7 +2146,8 @@ lints, renders and runs kubeconform, refuses a fleet that doesn't fit `browserMe
 `apiserver` job proves the admission and RBAC rules. In the release namespace, default deny selects the chart's
 own pods (`app.kubernetes.io/part-of: ferry-watch`), since home-cluster's pg-backups CronJob runs there too.
 db-init and db-migrate are pre-install and pre-upgrade hooks; migrate reads a hook copy of ferry-control's
-config, because hooks run before the release's ConfigMaps exist. The chart isn't published to OCI yet.
+config, because hooks run before the release's ConfigMaps exist. CI publishes the chart on each `v*` tag, after
+the images; an image with neither tag nor digest in values defaults to the chart's appVersion.
 
 **Dropped in round 2:** the ext-auth SecurityPolicy, the ReferenceGrant entry for `ferry-watch`, the Authelia
 `access_control` rule for the ferry hosts and the gatus forged-header canary (identity is app-native OIDC).

@@ -276,3 +276,29 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=vnc-edge
+
+  chart-publish:
+    name: Publish the chart
+    # Releases only, after the images it names by default (the chart's appVersion) are pushed.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [chart, apiserver, image, vnc-edge]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    env:
+      HELM_IMAGE: alpine/helm:3.19.0@sha256:aef9b56f64e866207d9591d0abd8f6d767b36aadd12edf68f8a719716d9d29c9
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Package and push to oci://ghcr.io/${{ github.repository_owner }}/charts
+        env:
+          REGISTRY_USER: ${{ github.actor }}
+          REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p "$RUNNER_TEMP/helm"
+          helm() { docker run --rm -i -v "$PWD:/w" -w /w -v "$RUNNER_TEMP/helm:/root/.config/helm" "$HELM_IMAGE" "$@"; }
+          echo "$REGISTRY_PASSWORD" | helm registry login ghcr.io -u "$REGISTRY_USER" --password-stdin
+          helm package charts/ferry-watch --version "$version" --app-version "$version" -d dist
+          helm push "dist/ferry-watch-${version}.tgz" "oci://ghcr.io/${OWNER}/charts"
