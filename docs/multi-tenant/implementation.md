@@ -52,6 +52,30 @@ running until cutover.
 | `outbox.py`, `push.py`, `messages.py` | The alert outbox: Web Push (RFC 8291/8292) and email. |
 | `config.py`, `main.py`, `http.py`, `app.py` | Config and secrets, middleware, the SPA shell. |
 
+### The web app (`web/src/mt/`)
+
+| Module | What |
+|---|---|
+| `MtApp.tsx`, `auth.ts`, `router.ts` | Sign-in (one button; the code leaves the address bar at once), quiet re-verification on a 401, the signed-out screen, `/`, `/c/<trip>` and `/auth/callback`. |
+| `MyTripCard.tsx`, `trips.ts` | Each trip in plain words (watching closely, checked every 6 h, waiting for a free browser, holding a cart, "Did you book it?"), the held cart, release and dismiss, check now, the shared trip editor. |
+| `CheckoutPage.tsx` | `/c/<trip>`: never opens the checkout by itself; "Check out on this device" mints the one-minute link. |
+| `AccountCard.tsx`, `push.ts`, `public/sw.js` | Web Push for the device, a test alert, pause everything, sign out everywhere, the Ko-fi link. |
+| `live.ts`, `api.ts`, `schema.ts` | The per-user socket (first-message auth) and the bearer API. |
+
+### vnc-edge (`vnc-edge/`)
+
+| File | What |
+|---|---|
+| `Dockerfile`, `build.py` | Stock nginx-unprivileged plus KasmVNC 1.5.0's web client from the sha256-checked package, with one line inserted in `vnc.html`. `build.py` computes the CSP from the shipped page and fails the build if the page no longer has exactly one inline script and one module script. |
+| `default.conf.in` | §7.9's nginx config: the landing page, the client's files, and one WebSocket proxy per pod, nothing else. |
+| `site/fw/shim.js` | Offers the device's nonce, and the ticket until the first connect succeeds, on this checkout's socket only; reloads with back-off if the client gives up; stops at the hard deadline. |
+| `site/fw/landing.html`, `landing.js`, `site/gone.html` | The ticket in, the nonce made and kept, the sailing and deadlines shown as text; an expired ticket goes back to Ferry Watch to open it again. |
+| `smoke-test.sh` | Run by CI against the image, read-only and unprivileged. |
+
+`tests/browser/test_checkout_edge.py` drives KasmVNC's stock client in Chromium through the shim into the
+real gate (with a minimal RFB server for Xvnc): first connect with ticket and nonce, a reload by nonce alone,
+an expired ticket, no key at all, and the end of the hold.
+
 ## Where the build departs from the plan's wording
 
 Each is a two-way door.
@@ -78,17 +102,27 @@ Each is a two-way door.
   now), and delete a trip's alert memory, beyond §6.4's grants.
 - **ferry-web loads BC Ferries' public terminal list** for route names in alerts and the trip editor:
   one more egress host for ferry-web (`www.bcferries.com:443`), not in §7.6 yet.
+- **The SPA picks its shell at runtime**: `/auth/config` answers on ferry-web and not on the single-container
+  app, so one build serves both until cutover.
+- **vnc-edge has its own Dockerfile** (`vnc-edge/`) rather than a target in one shared Dockerfile (§11.2):
+  its build context then holds nothing but the edge's own files. The checkout host and the dashboard origin
+  are build arguments.
+- **vnc-edge details** (§7.9): KasmVNC's client puts the default port in its socket URL
+  (`wss://ferry-checkout.chestr.dev:443/...`), so the shim matches the parsed URL (same host, the socket path)
+  rather than the literal pattern. The shim returns a real `WebSocket`, not a subclass, because the client
+  checks the object's own prototype. `connect-src` also allows `data:`: the client fetches one to probe the
+  browser's video decoders. The landing page opens the viewer after two seconds (or at once on "Open
+  checkout"), and keeps the pending ticket in the tab's sessionStorage, out of the address bar.
 - **Web Push without pywebpush**: encryption and VAPID are built on `cryptography` (pywebpush pulls in
   `requests`); they match RFC 8291's worked example. Devices may subscribe only with endpoints at the
   big push services, so ferry-web never posts to an address a user supplied.
 
 ## Still to do
 
-- **Frontend** (§10): sign-in, the per-user dashboard, `/c/<trip>`, the Account card, admin pages.
-- **vnc-edge** (§7.9): the static checkout host, its landing page (ticket and nonce handling) and the
-  per-pod WebSocket proxy.
-- **Helm chart, images and CI tiers** (§7, §11): the browser, control and vnc-edge images; VAPs,
-  network policies, RBAC; the envtest VAP matrix; the home-cluster PR.
+- **Frontend** (§10): the admin pages (the API is built), and the session list.
+- **Helm chart, images and CI tiers** (§7, §11): the browser and control images (vnc-edge's is built and
+  smoke-tested in CI); VAPs, network policies, RBAC, vnc-edge's HTTPRoute; the envtest VAP matrix; the
+  home-cluster PR.
 - **Agent follow-ups**: the smoke trip, the page watchdog (`checkout_host_blocked`), porting the
   disabled login path.
 - **ferry-web follow-ups**: `DELETE /api/me` (delete my data), the session list, pre-auth rate limits

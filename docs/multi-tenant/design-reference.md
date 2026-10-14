@@ -2057,6 +2057,15 @@ server {
 - vnc-edge stays stock and logic-free: no app code, no secrets, no Lua, so its attack surface is nginx and a
   static directory (§4.5).
 
+*As built* (`vnc-edge/`, tested by `tests/browser/test_checkout_edge.py`): KasmVNC 1.5.0's client builds its
+socket URL with the default port (`wss://ferry-checkout.chestr.dev:443/t/.../ws`), so the shim compares the
+parsed URL (same host as the page, the checkout's socket path, no query) instead of the literal pattern above.
+The client checks the socket's own prototype for the WebSocket members, so the shim returns a real `WebSocket`
+from a wrapper function rather than a subclass. `connect-src` also lists `data:`, which the client fetches to
+probe the browser's video decoders (a `data:` URL never leaves the page). The landing page keeps the pending
+ticket in the tab's sessionStorage, strips it from the address bar, and opens the viewer after two seconds or
+on "Open checkout". The client's request for `/package.json` gets the 404 every unlisted path gets.
+
 ### 7.10 Helm chart layout and the home-cluster split
 
 The chart is published from this repo as a **public** OCI chart, `oci://ghcr.io/mchestr/charts/ferry-watch`,

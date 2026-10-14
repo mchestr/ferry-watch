@@ -1,0 +1,270 @@
+"""vnc-edge end to end: KasmVNC's stock client, through the shim, into a real VNC gate.
+
+A local server stands in for nginx (the same routes and security headers, with the gate mounted where
+nginx proxies the socket), and a minimal RFB server stands in for Xvnc. If a KasmVNC upgrade changes
+how the client builds its socket URL or picks subprotocols, these fail (docs/multi-tenant/design-reference.md
+§7.9).
+
+The client's files come from the KasmVNC package: set FW_KASMVNC_WWW to its extracted ``www`` directory
+(CI does; see .github/workflows/ci.yml).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import importlib.util
+import os
+import struct
+import sys
+import time
+from collections.abc import AsyncIterator, Awaitable, Callable
+from dataclasses import dataclass, field
+from pathlib import Path
+from types import ModuleType
+
+import pytest
+from aiohttp import web
+from aiohttp.test_utils import TestServer, unused_port
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from playwright.async_api import Browser, Page, Route, async_playwright
+
+from ferry_watch.agent.gate import Gate, GateSettings
+from ferry_watch.tickets import Display, mint
+
+pytestmark = pytest.mark.browser
+
+EDGE = Path(__file__).resolve().parents[2] / "vnc-edge"
+APP = "https://ferry.chestr.dev"
+KEY = Ed25519PrivateKey.generate()
+OWNER = "a" * 20
+TRIP = "3f9c0a1b2c3d4e5f"
+GEN = 4
+POD = f"fw-{TRIP}-g{GEN}"
+CART = "cart-1"
+LANDING = f"/t/{TRIP}/g/{GEN}/"
+
+
+def _load_build() -> ModuleType:
+    spec = importlib.util.spec_from_file_location("vnc_edge_build", EDGE / "build.py")
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module  # dataclasses look their module up
+    spec.loader.exec_module(module)
+    return module
+
+
+@dataclass(frozen=True)
+class Site:
+    www: Path
+    csp: str
+
+
+@pytest.fixture(scope="module")
+def site(tmp_path_factory: pytest.TempPathFactory) -> Site:
+    www = os.environ.get("FW_KASMVNC_WWW")
+    if not www:
+        pytest.skip("FW_KASMVNC_WWW isn't set to KasmVNC's www directory")
+    built = _load_build().build(
+        Path(www), tmp_path_factory.mktemp("vnc-edge"), checkout_host="ferry-checkout.chestr.dev", app_origin=APP
+    )
+    return Site(built.www, built.csp)
+
+
+@dataclass
+class FakeXvnc:
+    """Just enough RFB 3.8 for the client to connect: no authentication, a 640x480 screen."""
+
+    path: Path
+    connections: int = 0
+    writers: list[asyncio.StreamWriter] = field(default_factory=list)
+
+    async def serve(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        self.connections += 1
+        self.writers.append(writer)
+        try:
+            writer.write(b"RFB 003.008\n")
+            await reader.readexactly(12)
+            writer.write(bytes([1, 1]))  # one security type: None
+            await reader.readexactly(1)
+            writer.write(struct.pack(">I", 0))  # security result: OK
+            await reader.readexactly(1)  # ClientInit
+            pixel_format = struct.pack(">BBBBHHHBBBxxx", 32, 24, 0, 1, 255, 255, 255, 16, 8, 0)
+            name = b"checkout"
+            writer.write(struct.pack(">HH", 640, 480) + pixel_format + struct.pack(">I", len(name)) + name)
+            while await reader.read(4096):
+                pass  # the client's requests go unanswered; a still screen is enough
+        except (asyncio.IncompleteReadError, ConnectionError):
+            pass
+        finally:
+            writer.close()
+
+
+@dataclass
+class Edge:
+    url: str
+    gate: Gate
+    offers: list[list[str]]  # the subprotocols of each socket the client opened
+    viewers: list[bool]
+    xvnc: FakeXvnc
+
+
+def edge_app(site: Site, gate: Gate, offers: list[list[str]]) -> web.Application:
+    """vnc-edge's nginx config, in aiohttp."""
+
+    @web.middleware
+    async def headers(
+        request: web.Request, handler: Callable[[web.Request], Awaitable[web.StreamResponse]]
+    ) -> web.StreamResponse:
+        if request.path.endswith("/ws"):
+            offers.append([p.strip() for p in request.headers.get("Sec-WebSocket-Protocol", "").split(",")])
+            return await handler(request)
+        response = await handler(request)
+        response.headers.update(
+            {
+                "Content-Security-Policy": site.csp,
+                "Referrer-Policy": "no-referrer",
+                "X-Content-Type-Options": "nosniff",
+                "Cache-Control": "no-store",
+            }
+        )
+        return response
+
+    def file(path: Path) -> Callable[[web.Request], Awaitable[web.FileResponse]]:
+        async def serve(_: web.Request) -> web.FileResponse:
+            return web.FileResponse(path)
+
+        return serve
+
+    app = web.Application(middlewares=[headers])
+    app.router.add_get(r"/t/{trip:[a-f0-9]{16}}/g/{gen:[0-9]{1,6}}/", file(site.www / "fw" / "landing.html"))
+    app.router.add_get("/vnc.html", file(site.www / "vnc.html"))
+    app.router.add_get("/gone.html", file(site.www / "gone.html"))
+    for directory in ("assets", "app", "core", "fw"):
+        app.router.add_static(f"/{directory}", site.www / directory)
+    (upgrade,) = gate.app().router.routes()  # GET /ws, which nginx proxies this path to
+    app.router.add_get(f"/t/{TRIP}/g/{GEN}/ws", upgrade.handler, allow_head=False)
+    return app
+
+
+@pytest.fixture
+async def edge(site: Site, tmp_path: Path) -> AsyncIterator[Edge]:
+    xvnc = FakeXvnc(tmp_path / "rfb.sock")
+    rfb = await asyncio.start_unix_server(xvnc.serve, path=xvnc.path)
+    port = unused_port()
+    origin = f"http://127.0.0.1:{port}"
+    offers: list[list[str]] = []
+    viewers: list[bool] = []
+    gate = Gate(
+        GateSettings(
+            origin=origin,
+            owner=OWNER,
+            trip_id=TRIP,
+            pod_name=POD,
+            keys={"k1": KEY.public_key()},
+            rfb_socket=xvnc.path,
+        ),
+        checkout_cart=lambda: CART,
+        viewer_changed=viewers.append,
+    )
+    server = TestServer(edge_app(site, gate, offers), host="127.0.0.1", port=port)
+    await server.start_server()
+    try:
+        yield Edge(origin, gate, offers, viewers, xvnc)
+    finally:
+        await gate.close("test over")
+        await server.close()
+        for writer in xvnc.writers:
+            writer.close()
+        rfb.close()
+        await rfb.wait_closed()
+
+
+@pytest.fixture
+async def browser() -> AsyncIterator[Browser]:
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch(args=["--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1"])
+        yield browser
+        await browser.close()
+
+
+@pytest.fixture
+async def page(browser: Browser) -> AsyncIterator[Page]:
+    context = await browser.new_context()
+    page = await context.new_page()
+    yield page
+    await context.close()
+
+
+def ticket(*, issued: float | None = None, hold_s: int = 3600) -> str:
+    now = time.time() if issued is None else issued
+    display = Display(
+        route="Swartz Bay → Tsawwassen",
+        date="2026-10-16",
+        depart="09:00",
+        fare="Saver",
+        session_s=900,
+        hard_deadline=int(now) + hold_s,
+    )
+    return mint(KEY, "k1", sub=OWNER, trip=TRIP, pod=POD, cart_id=CART, disp=display, now=now)
+
+
+def csp_violations(page: Page) -> list[str]:
+    violations: list[str] = []
+    page.on("console", lambda m: violations.append(m.text) if "Content Security Policy" in m.text else None)
+    return violations
+
+
+async def test_the_client_opens_the_checkout_with_the_ticket_then_comes_back_with_the_nonce(
+    edge: Edge, page: Page
+) -> None:
+    violations = csp_violations(page)
+    issued = ticket()
+    await page.goto(f"{edge.url}{LANDING}#{issued}")
+    assert page.url == f"{edge.url}{LANDING}"  # the ticket is out of the address bar and history
+    assert await page.text_content("#sailing") == "Swartz Bay → Tsawwassen · Fri, Oct 16 · 9:00 am · Saver"
+    assert "(paused while you're on the payment page)" in (await page.text_content("#deadline") or "")
+    await page.click("#open")
+    await page.wait_for_selector("html.noVNC_connected")
+    (first,) = edge.offers
+    nonce = next(p for p in first if p.startswith("fw.n1."))
+    assert sorted(first) == sorted(["binary", nonce, f"fw.t1.{issued}"])
+    assert edge.viewers == [True]
+
+    # A reload is a reconnect: the same nonce, and the ticket is gone.
+    await page.reload()
+    await page.wait_for_selector("html.noVNC_connected")  # the gate let it in before the client saw it open
+    assert edge.viewers[-1]
+    assert sorted(edge.offers[1]) == ["binary", nonce]
+    assert edge.xvnc.connections == 2
+    assert violations == []
+
+
+async def test_an_expired_ticket_goes_back_to_ferry_watch_to_open_it_again(edge: Edge, page: Page) -> None:
+    async def dashboard(route: Route) -> None:
+        await route.fulfill(body="Ferry Watch", content_type="text/plain")
+
+    await page.route(f"{APP}/**", dashboard)
+    await page.goto(f"{edge.url}{LANDING}#{ticket(issued=time.time() - 120)}")
+    await page.wait_for_url(f"{APP}/c/{TRIP}")
+    assert edge.offers == []
+
+
+async def test_without_a_ticket_or_a_key_there_is_only_the_way_back(edge: Edge, page: Page) -> None:
+    await page.goto(f"{edge.url}/vnc.html#path=t/{TRIP}/g/{GEN}/ws&autoconnect=1")
+    await page.wait_for_url(f"{edge.url}{LANDING}")  # the shim had nothing to open it with
+    assert await page.text_content("h1") == "No checkout here"
+    assert not await page.is_visible("#details")
+    assert await page.get_attribute("#back", "href") == f"{APP}/"
+    assert edge.offers == []
+
+
+async def test_after_the_hold_ends_the_page_stops_reconnecting(edge: Edge, page: Page) -> None:
+    await page.goto(f"{edge.url}{LANDING}#{ticket(hold_s=2)}")
+    await page.click("#open")
+    await page.wait_for_selector("html.noVNC_connected")
+    await asyncio.sleep(2)
+    await edge.gate.close("the hold ended")
+    await page.wait_for_url(f"{edge.url}/gone.html")
+    assert await page.text_content("h1") == "No checkout is open for this trip"
+    assert len(edge.offers) == 1
