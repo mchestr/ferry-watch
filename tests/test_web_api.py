@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import secrets
 import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
@@ -28,6 +29,8 @@ from ferry_watch.web.repo import WebStore
 from tests.postgres import ROLES, Database
 
 ANN, BOB = "a" * 20, "b" * 20
+ISSUER = "https://idp"
+BOOTSTRAP = frozenset({(ISSUER, "boss")})  # whoever signs in as "boss" is an admin by config
 KEY = Ed25519PrivateKey.generate()
 ORIGIN = "https://ferry-checkout.chestr.dev"
 
@@ -69,8 +72,8 @@ async def rig(db: Database, aiohttp_client: Callable[..., Any]) -> AsyncIterator
     finally:
         await owner.close()
     pool = await asyncpg.create_pool(db.dsn(ROLES.web), min_size=1, max_size=4)
-    accounts = Accounts(pool, IdentityPolicy())
-    tokens = {uid: await accounts.create_session(uid, Principal("https://idp", uid), None) for uid in (ANN, BOB)}
+    accounts = Accounts(pool, IdentityPolicy(bootstrap_admins=BOOTSTRAP))
+    tokens = {uid: await accounts.create_session(uid, Principal(ISSUER, uid), None) for uid in (ANN, BOB)}
     async with aiohttp.ClientSession() as http:
         oidc = OidcClient(http, OidcSettings(issuer="https://idp", client_id="c", client_secret="s", redirect_uri="x"))
         app = build(
@@ -316,6 +319,298 @@ async def test_the_fleet_switches(rig: Rig) -> None:
     assert overview["switches"]["pause_carting"] is True
     body = {"switch": "brake", "on": True, "reason": "no"}
     assert (await rig.call("POST", "/api/admin/switches", json=body)).status == 400
+
+
+async def test_the_overview_shows_the_fleet_and_what_needs_attention(rig: Rig) -> None:
+    await make_admin(rig)
+    overview = await (await rig.call("GET", "/api/admin/overview")).json()
+    assert (overview["fleet"], overview["control_seen"], overview["attention"]) == (None, None, [])
+    report = {"at": 1_000.0, "browsers": {"max": 7, "live": 1}, "breaker": "closed"}
+    await rig.sql("INSERT INTO fleet_state (key, value) VALUES ('fleet_report', $1)", json.dumps(report))
+    trip_id = await rig.add(BOB)
+    await rig.sql("UPDATE trip_runtime SET needs_attention = true, failures = 5, updated_at = now() - interval '1 h'")
+    for kind, sent, attempts, age in [
+        ("cart_held", None, 3, "2 hours"),  # not delivered
+        ("release_unverified", "now()", 1, "1 minute"),
+        ("checkout_blocked", "now()", 1, "8 days"),  # too long ago
+        ("cart_lost", None, 1, "1 minute"),  # still trying
+    ]:
+        await rig.sql(
+            f"INSERT INTO notifications (user_id, trip_id, kind, params, sent_at, attempts, last_error, created_at)"  # noqa: S608
+            f" VALUES ($1, $2, $3, $4, {sent or 'NULL'}, $5, 'Undelivered', now() - interval '{age}')",
+            BOB,
+            trip_id,
+            kind,
+            json.dumps({"departures": ["09:00"], "fare": "Saver"}),
+            attempts,
+        )
+    overview = await (await rig.call("GET", "/api/admin/overview")).json()
+    assert overview["fleet"] == report
+    assert "fleet_report" not in overview["switches"]
+    assert overview["control_seen"] == 1_000.0
+    attention = overview["attention"]
+    assert [(a["kind"], a["trip"], a["user"], a["username"]) for a in attention] == [
+        ("release_unverified", trip_id, BOB, BOB),
+        ("needs_attention", trip_id, BOB, BOB),
+        ("delivery_failing", trip_id, BOB, BOB),
+    ]
+    assert attention[1]["detail"] == "Its browser failed 5 times; checks are stopped"
+    assert attention[2]["detail"] == "Not delivered after 3 tries: cart held (Undelivered)"
+    assert "09:00" not in json.dumps(attention)  # never a sailing
+    await rig.sql("INSERT INTO fleet_state (key, value) VALUES ('control_alive_at', '2000')")
+    overview = await (await rig.call("GET", "/api/admin/overview")).json()
+    assert overview["control_seen"] == 2_000.0
+
+
+async def held(rig: Rig, trip_id: str, user: str = BOB) -> str:
+    """A live pod for the trip, holding cart abc123. Returns the pod's name."""
+    pod = f"fw-{trip_id}-g1"
+    await rig.sql(
+        "INSERT INTO browser_pods (name, trip_id, user_id, gen, mode, deadline_at)"
+        " VALUES ($1, $2, $3, 1, 'warm', now() + interval '1 day')",
+        pod,
+        trip_id,
+        user,
+    )
+    cart = {"id": "abc123", "status": "ready", "depart": "09:00", "hard_deadline": time.time() + 3000}
+    await rig.sql("INSERT INTO trip_state (trip_id, pod, cart) VALUES ($1, $2, $3)", trip_id, pod, json.dumps(cart))
+    await rig.sql(
+        "INSERT INTO hold_claims (user_id, trip_id, pod, cart_id) VALUES ($1, $2, $3, 'abc123')", user, trip_id, pod
+    )
+    return pod
+
+
+async def test_an_admin_releases_a_held_cart(rig: Rig) -> None:
+    await make_admin(rig)
+    trip_id = await rig.add(BOB)
+    path = f"/api/admin/trips/{trip_id}/release"
+    response = await rig.call("POST", path, json={"reason": "stuck"})
+    assert (response.status, (await response.json())["error"]) == (404, "Nothing is held")
+    pod = await held(rig, trip_id)
+    overview = await (await rig.call("GET", "/api/admin/overview")).json()
+    assert [(h["trip"], h["pod"]) for h in overview["holds"]] == [(trip_id, pod)]
+    assert (await rig.call("POST", path, BOB, json={"reason": "mine"})).status == 403
+    assert (await rig.call("POST", path, json={})).status == 400  # no reason
+    response = await rig.call("POST", path, json={"reason": "they asked by email"})
+    assert await response.json() == {"ok": True}
+    rows = await rig.sql("SELECT trip_id, op, cart_id, requested_by FROM agent_commands")
+    assert [tuple(r) for r in rows] == [(trip_id, "release", "abc123", f"admin:{ANN}")]
+    audit = await rig.sql("SELECT action, target_id, after, reason FROM audit_log")
+    assert [(a["action"], a["target_id"], json.loads(a["after"]), a["reason"]) for a in audit] == [
+        ("release_cart", trip_id, {"cart_id": "abc123"}, "they asked by email")
+    ]
+
+
+@pytest.mark.parametrize(
+    ("cart", "why"),
+    [
+        # Its pod would drop the release: the cart gets a new id once it's in.
+        ({"status": "adding"}, "Still being added; try again in a moment"),
+        # Pulling the cart mid-payment could charge them for nothing.
+        ({"status": "ready", "payment_in_progress": True}, "They're paying for it now"),
+    ],
+)
+async def test_an_admin_cant_release_a_cart_being_added_or_paid_for(
+    rig: Rig, cart: dict[str, object], why: str
+) -> None:
+    await make_admin(rig)
+    trip_id = await rig.add(BOB)
+    await held(rig, trip_id)
+    await rig.sql("UPDATE trip_state SET cart = cart || $2::jsonb WHERE trip_id = $1", trip_id, json.dumps(cart))
+    overview = await (await rig.call("GET", "/api/admin/overview")).json()
+    assert [h["cart"].get("payment_in_progress") for h in overview["holds"]] == [cart.get("payment_in_progress")]
+    response = await rig.call("POST", f"/api/admin/trips/{trip_id}/release", json={"reason": "stuck"})
+    assert (response.status, (await response.json())["error"]) == (409, why)
+    assert await rig.sql("SELECT * FROM agent_commands") == []
+    assert await rig.sql("SELECT * FROM audit_log") == []
+
+
+async def test_an_admin_recycles_a_pod(rig: Rig) -> None:
+    await make_admin(rig)
+    trip_id = await rig.add(BOB)
+    path = f"/api/admin/trips/{trip_id}/recycle"
+    assert (await rig.call("POST", path, json={"reason": "wedged"})).status == 404  # no browser
+    pod = await held(rig, trip_id)
+    response = await rig.call("POST", path, json={"reason": "wedged"})
+    assert await response.json() == {"ok": True}
+    rows = await rig.sql("SELECT op, cart_id, requested_by FROM agent_commands")
+    assert [tuple(r) for r in rows] == [("recycle", None, f"admin:{ANN}")]
+    audit = await rig.sql("SELECT action, after FROM audit_log")
+    assert [(a["action"], json.loads(a["after"])) for a in audit] == [("recycle_pod", {"pod": pod})]
+
+
+async def test_only_ferry_control_opens_the_breaker(rig: Rig) -> None:
+    await make_admin(rig)
+    await rig.sql("INSERT INTO fleet_state (key, value) VALUES ('breaker', '\"open\"')")
+    response = await rig.call("POST", "/api/admin/switches", json={"switch": "breaker", "on": True, "reason": "x"})
+    assert (response.status, (await response.json())["error"]) == (400, "Only ferry-control opens the breaker")
+    body = {"switch": "breaker", "on": False, "reason": "BC Ferries is back"}
+    assert (await rig.call("POST", "/api/admin/switches", json=body)).status == 200
+    overview = await (await rig.call("GET", "/api/admin/overview")).json()
+    assert overview["switches"]["breaker"] == "closed"
+    audit = await rig.sql("SELECT action, target_id, after FROM audit_log")
+    assert [(a["action"], a["target_id"], json.loads(a["after"])) for a in audit] == [
+        ("set_switch", "breaker", {"breaker": "closed"})
+    ]
+
+
+async def test_signing_someone_out_everywhere(rig: Rig) -> None:
+    await make_admin(rig)
+    path = f"/api/admin/users/{BOB}/revoke-sessions"
+    response = await rig.call("POST", path, json={"reason": "lost phone"})
+    assert await response.json() == {"revoked": 1}
+    assert (await rig.call("GET", "/api/state", BOB)).status == 401
+    assert (
+        await rig.call("POST", "/api/admin/users/cccccccccccccccccccc/revoke-sessions", json={"reason": "x"})
+    ).status == 404
+    audit = await rig.sql("SELECT action, target_id, after FROM audit_log")
+    assert [(a["action"], a["target_id"], json.loads(a["after"])) for a in audit] == [
+        ("revoke_sessions", BOB, {"revoked": 1})
+    ]
+
+
+async def test_making_and_unmaking_admins(rig: Rig) -> None:
+    await make_admin(rig)
+    path = f"/api/admin/users/{BOB}"
+    response = await rig.call("PATCH", f"/api/admin/users/{ANN}", json={"is_admin": False, "reason": "x"})
+    assert (response.status, (await response.json())["error"]) == (409, "You can't change your own admin")
+    assert (await rig.call("PATCH", path, json={"is_admin": "yes", "reason": "x"})).status == 400
+    response = await rig.call("PATCH", path, json={"is_admin": True, "reason": "helps run it"})
+    assert await response.json() == {"is_admin": True}
+    assert (await rig.call("GET", "/api/admin/users", BOB)).status == 200  # at once
+    response = await rig.call("PATCH", path, json={"is_admin": False, "reason": "done helping"})
+    assert await response.json() == {"is_admin": False}
+    assert (await rig.call("GET", "/api/admin/users", BOB)).status == 403
+    audit = await rig.sql("SELECT action, before, after FROM audit_log ORDER BY id")
+    assert [(a["action"], json.loads(a["before"]), json.loads(a["after"])) for a in audit] == [
+        ("set_admin", {"is_admin": False}, {"is_admin": True}),
+        ("set_admin", {"is_admin": True}, {"is_admin": False}),
+    ]
+    # Bob also signs in as "boss", whom the config makes an admin: only the config can undo that.
+    await rig.sql("INSERT INTO identities (iss, sub, uid, username) VALUES ($1, 'boss-sub', $2, 'boss')", ISSUER, BOB)
+    assert (await rig.call("PATCH", path, json={"is_admin": True, "reason": "bootstrap"})).status == 200
+    response = await rig.call("PATCH", path, json={"is_admin": False, "reason": "x"})
+    assert (response.status, (await response.json())["error"]) == (409, "Bootstrap admins are set in the config")
+    people = await (await rig.call("GET", "/api/admin/users")).json()
+    assert {u["id"]: u["bootstrap"] for u in people["users"]} == {ANN: False, BOB: True}
+
+
+async def test_deleting_someone(rig: Rig) -> None:
+    await make_admin(rig)
+    trip_id = await rig.add(BOB)
+    await rig.sql(
+        "INSERT INTO events (user_id, trip_id, kind, code) VALUES ($1, $2, 'agent', 'cart_added')", BOB, trip_id
+    )
+    await rig.sql("INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth) VALUES ($1, 'e', 'p', 'a')", BOB)
+    await rig.sql(
+        "INSERT INTO hold_outcomes (user_id, trip_id, day, outcome) VALUES ($1, $2, now(), 'booked')", BOB, trip_id
+    )
+    await rig.sql("INSERT INTO usage_ledger (user_id, day, kind, amount) VALUES ($1, now(), 'holds', 1)", BOB)
+    path = f"/api/admin/users/{BOB}"
+    response = await rig.call("DELETE", f"/api/admin/users/{ANN}", json={"reason": "x"})
+    assert (response.status, (await response.json())["error"]) == (409, "You can't delete yourself")
+    response = await rig.call("DELETE", path, json={"reason": "asked to leave"})
+    assert (response.status, (await response.json())["error"]) == (409, "Suspend them first, so their browsers stop")
+    body = {"state": "suspended", "reason": "asked to leave"}
+    assert (await rig.call("POST", f"{path}/state", json=body)).status == 200
+    pod = await held(rig, trip_id)
+    assert (await rig.call("DELETE", path, json={"reason": "asked to leave"})).status == 409  # still running
+    await rig.sql("UPDATE browser_pods SET ended_at = now(), phase = 'gone' WHERE name = $1", pod)
+    assert (await rig.call("DELETE", path, json={})).status == 400  # no reason
+    response = await rig.call("DELETE", path, json={"reason": "asked to leave"})
+    assert await response.json() == {"ok": True}
+    for table in ("trips", "trip_state", "hold_claims", "events", "push_subscriptions"):
+        assert await rig.sql(f"SELECT 1 FROM {table}") == [], table  # noqa: S608 - fixed names
+    assert [r["id"] for r in await rig.sql("SELECT id FROM users")] == [ANN]
+    assert len(await rig.sql("SELECT 1 FROM hold_outcomes UNION ALL SELECT 1 FROM usage_ledger")) == 2  # kept
+    audit = await rig.sql("SELECT action, target_id, before FROM audit_log WHERE action = 'delete_user'")
+    assert [(a["target_id"], json.loads(a["before"])) for a in audit] == [(BOB, {"username": BOB})]
+    assert (await rig.call("DELETE", path, json={"reason": "again"})).status == 404
+
+
+async def test_suspending_releases_a_held_cart_only_if_asked(rig: Rig) -> None:
+    await make_admin(rig)
+    trip_id = await rig.add(BOB)
+    await held(rig, trip_id)
+    path = f"/api/admin/users/{BOB}/state"
+    bad = {"state": "suspended", "holds": "drop", "reason": "x"}
+    assert (await rig.call("POST", path, json=bad)).status == 400
+    assert (await rig.call("POST", path, json={"state": "suspended", "reason": "let it finish"})).status == 200
+    assert await rig.sql("SELECT * FROM agent_commands") == []
+    assert (await rig.call("POST", path, json={"state": "active", "reason": "oops"})).status == 200
+    body = {"state": "suspended", "holds": "release", "reason": "abuse"}
+    assert (await rig.call("POST", path, json=body)).status == 200
+    rows = await rig.sql("SELECT trip_id, op, cart_id, requested_by FROM agent_commands")
+    assert [tuple(r) for r in rows] == [(trip_id, "release", "abc123", f"admin:{ANN}")]
+    audit = await rig.sql("SELECT after FROM audit_log WHERE action = 'set_state' ORDER BY id")
+    assert [json.loads(a["after"]) for a in audit] == [
+        {"state": "suspended", "holds": "finish"},
+        {"state": "active"},
+        {"state": "suspended", "holds": "release"},
+    ]
+
+
+async def test_suspending_with_release_leaves_a_paid_for_cart_and_recycles_one_being_added(rig: Rig) -> None:
+    await make_admin(rig)
+    trip_id = await rig.add(BOB)
+    await held(rig, trip_id)
+    path = f"/api/admin/users/{BOB}/state"
+    body = {"state": "suspended", "holds": "release", "reason": "abuse"}
+    for cart in [{"payment_in_progress": True}, {"status": "adding", "id": "def456", "payment_in_progress": False}]:
+        await rig.sql("UPDATE trip_state SET cart = cart || $2::jsonb WHERE trip_id = $1", trip_id, json.dumps(cart))
+        assert (await rig.call("POST", path, json=body)).status == 200
+        assert (await rig.call("POST", path, json={"state": "active", "reason": "oops"})).status == 200
+    rows = await rig.sql("SELECT trip_id, op, cart_id FROM agent_commands")
+    assert [tuple(r) for r in rows] == [(trip_id, "recycle", None)]  # its drain empties the cart once it's in
+    audit = await rig.sql("SELECT after FROM audit_log WHERE action = 'set_state' ORDER BY id")
+    assert [json.loads(a["after"]) for a in audit] == [
+        {"state": "suspended", "holds": "release", "left_paying": [trip_id]},
+        {"state": "active"},
+        {"state": "suspended", "holds": "release"},
+        {"state": "active"},
+    ]
+
+
+async def test_the_people_list_shows_sessions_devices_usage_and_emails(rig: Rig) -> None:
+    await make_admin(rig)
+    await rig.sql("UPDATE users SET email = 'bob@example.com' WHERE id = $1", BOB)
+    for sub, email in [("s1", "BOB@example.com"), ("s2", "bob@elsewhere.example"), ("s3", None)]:
+        await rig.sql(
+            "INSERT INTO identities (iss, sub, uid, username, email) VALUES ($1, $2, $3, 'bob', $4)",
+            ISSUER,
+            sub,
+            BOB,
+            email,
+        )
+    await rig.sql("INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth) VALUES ($1, 'e', 'p', 'a')", BOB)
+    today = datetime.now(PACIFIC).date()
+    await rig.sql(
+        "INSERT INTO usage_ledger (user_id, day, kind, amount) VALUES ($1, $2, 'holds', 2), ($1, $3, 'mints', 9)",
+        BOB,
+        today,
+        today - timedelta(days=1),  # yesterday's isn't today's
+    )
+    await rig.call("POST", "/auth/logout", BOB)  # one session ended, one expired, two live
+    for ends in ("now() - interval '1 minute'", "now() + interval '1 day'", "now() + interval '1 day'"):
+        await rig.sql(
+            "INSERT INTO sessions (token_hash, user_id, iss, sub, idle_expires_at, expires_at)"  # noqa: S608
+            f" VALUES ($1, $2, $3, $2, {ends}, {ends})",
+            secrets.token_bytes(32),
+            BOB,
+            ISSUER,
+        )
+    people = {u["id"]: u for u in (await (await rig.call("GET", "/api/admin/users")).json())["users"]}
+    bob = people[BOB]
+    assert (bob["sessions"], bob["devices"], bob["usage_today"]) == (2, 1, {"holds": 2})
+    assert bob["emails_seen"] == ["bob@elsewhere.example"]
+    ann = people[ANN]
+    assert (ann["sessions"], ann["devices"], ann["usage_today"], ann["bootstrap"], ann["emails_seen"]) == (
+        1,
+        0,
+        {},
+        False,
+        [],
+    )
 
 
 # ---- the live socket

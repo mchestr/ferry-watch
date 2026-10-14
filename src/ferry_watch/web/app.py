@@ -51,7 +51,7 @@ def build(
     app[PUBLIC] = public or {}
     app.router.add_routes(auth.routes())
     app.router.add_routes(api.routes())
-    admin.install(app, pool, limits)
+    admin.install(app, pool, limits, accounts.policy)
     app.router.add_get("/livez", livez, allow_head=False)
     hub = LiveHub(pool, accounts, store.snapshot)
     app[LIVE] = hub

@@ -279,9 +279,12 @@ class HubEndpoint:
         await self._send(peer, configure)
 
     async def _push_commands(self, peer: Peer) -> None:
-        for row in await self._store.pending_commands(peer.binding.trip_id):
-            command = Command(**peer.envelope(), id=row["id"], op=row["op"], cart_id=row["cart_id"])
-            await self._send(peer, command)
+        for row in await self._store.pending_commands(peer.binding.trip_id, peer.binding.pod):
+            if row["op"] != "recycle":
+                await self._send(peer, Command(**peer.envelope(), id=row["id"], op=row["op"], cart_id=row["cart_id"]))
+            elif not row["stale"]:
+                # An admin's recycle: the pod drains (handing back any cart) and the fleet starts the next one.
+                await self._send(peer, Command(**peer.envelope(), id=row["id"], op="drain", reason="recycle"))
             await self._store.consume_command(row["id"])
 
     async def _send(self, peer: Peer, message: ControlMessage) -> None:

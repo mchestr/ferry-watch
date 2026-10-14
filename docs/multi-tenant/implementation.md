@@ -61,7 +61,7 @@ running until cutover.
 | `CheckoutPage.tsx` | `/c/<trip>`: never opens the checkout by itself; "Check out on this device" mints the one-minute link. |
 | `AccountCard.tsx`, `push.ts`, `public/sw.js` | Web Push for the device, a test alert, pause everything, sign out everywhere, the Ko-fi link. |
 | `live.ts`, `api.ts`, `schema.ts` | The per-user socket (first-message auth) and the bearer API. |
-| `AdminPage.tsx`, `admin.ts`, `ReasonDialog.tsx` | `/admin`, for admins: the two switches, browsers by phase, the queue, holds now (cart summary only), the week's outcomes; people with their limits and where each comes from, suspend and reinstate, invitations, sign-ins turned away. Every change asks why. |
+| `AdminPage.tsx`, `admin.ts`, `ReasonDialog.tsx` | `/admin`, for admins. Fleet: the switches and the breaker, capacity and budget from ferry-control's last pass, holds now (cart summary only) with release and recycle, the attention list, the week's outcomes. People: limits and where each comes from, sessions, devices, today's usage, sign out everywhere, make or remove admin, suspend (releasing a held cart or letting it finish), reinstate, delete, invitations, sign-ins turned away. Every change asks why. |
 
 ### vnc-edge (`vnc-edge/`)
 
@@ -144,9 +144,7 @@ Each is a two-way door.
 
 ## Still to do
 
-- **Frontend** (§10): the session list. The admin pages cover what the admin API does today; §9.4's
-  revoke sessions, release a cart, recycle a pod, close the breaker, make admin and delete user need API
-  first.
+- **Frontend** (§10): each person's own session list.
 - **Chart and CI follow-ups** (§7, §11): the chart is pushed to `oci://ghcr.io/mchestr/charts` on each `v*`
   tag, but GHCR makes a new package private: make `charts/ferry-watch` public once, so flux-local can render
   it anonymously. Then: the PrometheusRule and PodMonitors once there are metrics; kind-lite (the positive pod-lock cases that need a

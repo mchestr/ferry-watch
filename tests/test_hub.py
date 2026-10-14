@@ -321,6 +321,30 @@ async def test_commands_and_configuration_changes_reach_the_pod(rig: Rig, agent:
     assert (await rig.fetch("SELECT consumed_at FROM agent_commands"))[0]["consumed_at"] is not None
 
 
+async def test_an_admins_recycle_drains_the_pod(rig: Rig, agent: Agent) -> None:
+    owner = await rig.db.connect()
+    try:
+        await owner.execute(  # asked for before this pod existed: meant for an earlier generation
+            "INSERT INTO agent_commands (trip_id, op, requested_by, created_at)"
+            " VALUES ($1, 'recycle', 'admin:x', now() - interval '1 day')",
+            TRIP.id,
+        )
+        recycle = await owner.fetchval(
+            "INSERT INTO agent_commands (trip_id, op, requested_by) VALUES ($1, 'recycle', 'admin:x') RETURNING id",
+            TRIP.id,
+        )
+    finally:
+        await owner.close()
+    await rig.hub.refresh()
+    await until(lambda: any(isinstance(m, Command) and m.op == "drain" for m in agent.received))
+    drains = [m for m in agent.received if isinstance(m, Command) and m.op == "drain"]
+    assert [(m.id, m.reason) for m in drains] == [(recycle, "recycle")]
+    assert [r["consumed_at"] is not None for r in await rig.fetch("SELECT consumed_at FROM agent_commands")] == [
+        True,
+        True,
+    ]
+
+
 async def test_the_fleet_loop_can_drain_a_pod(rig: Rig, agent: Agent) -> None:
     assert await rig.hub.command(POD, "drain", "superseded")
     await until(lambda: any(isinstance(m, Command) and m.op == "drain" for m in agent.received))

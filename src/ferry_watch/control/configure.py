@@ -94,10 +94,14 @@ def curve_interval(trip: Trip, now: datetime, policy: PollPolicy) -> int:
     return int((interval or policy.tiers[-1].interval).total_seconds())
 
 
+def demand(curve_intervals: Iterable[int]) -> float:
+    """Checks a minute the warm browsers would make on the curve alone."""
+    return sum(60 / interval for interval in curve_intervals)
+
+
 def stretch(curve_intervals: Iterable[int], checks_per_minute: int) -> float:
     """How much to slow every warm browser so the fleet stays within the budget (1: not at all)."""
-    demand = sum(60 / interval for interval in curve_intervals)
-    return max(1.0, demand / checks_per_minute)
+    return max(1.0, demand(curve_intervals) / checks_per_minute)
 
 
 def interval_s(curve: int, stretch_by: float, brake: Brake) -> int:

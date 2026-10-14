@@ -30,6 +30,8 @@ EGRESS_ALLOWLIST = "allowlist"
 EGRESS_HOLD = "hold"
 
 _TRIP_ID = re.compile(r"[a-f0-9]{16}")
+_QUANTITY = re.compile(r"(\d+(?:\.\d+)?)(Ki|Mi|Gi|Ti|k|M|G|T)?")
+_QUANTITY_BYTES = {"Ki": 2**10, "Mi": 2**20, "Gi": 2**30, "Ti": 2**40, "k": 10**3, "M": 10**6, "G": 10**9, "T": 10**12}
 _OWNER = re.compile(r"[a-z0-9]{1,63}")
 _IMAGE = re.compile(r"[a-z0-9./-]+@sha256:[a-f0-9]{64}")
 
@@ -55,6 +57,14 @@ class PodParams:
 
 def pod_name(trip_id: str, gen: int) -> str:
     return f"fw-{trip_id}-g{gen}"
+
+
+def memory_mib(quantity: str) -> int | None:
+    """A Kubernetes memory quantity ("1536Mi", "1.5Gi", "2G") in MiB; None for a form this doesn't read."""
+    match = _QUANTITY.fullmatch(quantity.strip())
+    if match is None:
+        return None
+    return round(float(match.group(1)) * _QUANTITY_BYTES.get(match.group(2) or "", 1) / 2**20)
 
 
 def browser_pod(trip_id: str, gen: int, owner: str, params: PodParams, *, now: float) -> dict[str, Any]:

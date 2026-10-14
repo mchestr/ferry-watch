@@ -4,7 +4,7 @@
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Loader2, RotateCcw, UserPlus } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -14,12 +14,15 @@ import { Switch } from "@/components/ui/switch";
 import { errorMessage } from "@/lib/api";
 import { useNow } from "@/lib/hooks";
 import { ago, timeLabel } from "@/lib/time";
-import { plural } from "@/lib/utils";
+import { cn, plural } from "@/lib/utils";
 import {
   ADMIN_KEYS,
   adminApi,
   LIMIT_LABELS,
+  quantityGiB,
+  USAGE_LABELS,
   type AdminUser,
+  type FleetReport,
   type FleetSwitch,
   type Invite,
   type Overview,
@@ -53,22 +56,46 @@ const SWITCHES: readonly { name: FleetSwitch; label: string; on: string; off: st
   },
 ];
 
+/** ferry-control reports every pass; past this, the Fleet page says it may not be running. */
+const CONTROL_LATE_MS = 2 * 60_000;
+
+/** The attention list, in plain words. `who` is a username, or "someone". */
+const ATTENTION: Readonly<Record<string, (who: string) => string>> = {
+  needs_attention: (who) => `${who}'s trip needs attention`,
+  delivery_failing: (who) => `Alerts to ${who} keep failing`,
+  release_unverified: (who) => `Couldn't confirm ${who}'s cart was released`,
+  checkout_blocked: (who) => `${who}'s checkout hit a blocked page`,
+};
+
+/** One attention entry as a sentence; a kind this page doesn't know yet shows by its name. */
+function attentionText(kind: string, who: string): string {
+  const text = ATTENTION[kind]?.(who) ?? `${who}: ${kind.replace(/_/g, " ")}`;
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
 /** What a change needs from the reason dialog. */
 interface Ask {
   title: string;
   description?: ReactNode;
   confirmLabel: string;
   danger?: boolean;
+  /** They must type this too, such as the username before a delete. */
+  confirmText?: string;
+  /** One more thing to decide, as radio buttons; `run` gets the value picked. */
+  choice?: { legend: string; options: readonly { value: string; label: string }[]; initial: string };
   done: string;
-  run: (reason: string) => Promise<unknown>;
+  run: (reason: string, choice: string | undefined) => Promise<unknown>;
 }
 
 /** One reason dialog for a section: `ask` opens it, and a confirmed change refreshes the admin data. */
 function useReasoned() {
   const qc = useQueryClient();
+  const choiceName = useId();
   const [ask, setAsk] = useState<Ask | null>(null);
+  const [picked, setPicked] = useState<string | undefined>();
   const change = useMutation({
-    mutationFn: ({ run, reason }: { run: Ask["run"]; reason: string }) => run(reason),
+    mutationFn: ({ run, reason, choice }: { run: Ask["run"]; reason: string; choice: string | undefined }) =>
+      run(reason, choice),
     onSuccess: async () => {
       if (ask) toast.success(ask.done);
       setAsk(null);
@@ -85,16 +112,39 @@ function useReasoned() {
       description={ask?.description}
       confirmLabel={ask?.confirmLabel ?? "Save"}
       danger={ask?.danger}
+      confirmText={ask?.confirmText}
       pending={change.isPending}
       error={change.error ? errorMessage(change.error) : null}
       onConfirm={(reason) => {
-        if (ask) change.mutate({ run: ask.run, reason });
+        if (ask) change.mutate({ run: ask.run, reason, choice: picked });
       }}
-    />
+    >
+      {ask?.choice && (
+        <fieldset disabled={change.isPending}>
+          <legend className="mb-2 text-[13px] font-medium text-foreground/80">{ask.choice.legend}</legend>
+          <div className="space-y-2">
+            {ask.choice.options.map((o) => (
+              <label key={o.value} className="flex items-center gap-2 text-sm">
+                <input
+                  type="radio"
+                  name={choiceName}
+                  value={o.value}
+                  checked={picked === o.value}
+                  onChange={() => setPicked(o.value)}
+                  className="size-4 accent-primary"
+                />
+                {o.label}
+              </label>
+            ))}
+          </div>
+        </fieldset>
+      )}
+    </ReasonDialog>
   );
   return {
     ask: (next: Ask) => {
       change.reset();
+      setPicked(next.choice?.initial);
       setAsk(next);
     },
     dialog,
@@ -160,9 +210,79 @@ function Fleet({ users }: { users: readonly AdminUser[] | undefined }) {
   const data = overview.data;
   if (!data) return <Loading error={overview.error} />;
   const name = (id: string) => users?.find((u) => u.id === id)?.username ?? id;
+  const fleet = data.fleet ?? null;
+  const attention = data.attention ?? [];
+  const breaker = breakerOpen(data);
 
   return (
     <div className="grid gap-6 lg:grid-cols-2">
+      <ControlSeen seen={data.control_seen ?? fleet?.at ?? null} now={now} />
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Capacity</CardTitle>
+        </CardHeader>
+        <Facts rows={capacity(fleet, data.queued)} />
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Budget</CardTitle>
+        </CardHeader>
+        <Facts rows={budget(fleet)} />
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t px-5 py-4">
+          <div className="min-w-0 text-sm">
+            <p className="font-medium">
+              Breaker: {breaker ? <span className="text-danger">Open</span> : <span>Closed</span>}
+            </p>
+            <p className="text-muted-foreground">
+              {breaker
+                ? "BC Ferries' pages changed on most trips, so checks are paused. Holds continue."
+                : "Checks run as the budget allows."}
+            </p>
+          </div>
+          {breaker && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() =>
+                ask({
+                  title: "Close the breaker?",
+                  description:
+                    "Checks start again. Close it once the browsers can read BC Ferries' pages, usually after a new image.",
+                  confirmLabel: "Close the breaker",
+                  done: "The breaker is closed",
+                  run: (reason) => adminApi.closeBreaker(reason),
+                })
+              }
+            >
+              Close the breaker
+            </Button>
+          )}
+        </div>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Attention</CardTitle>
+        </CardHeader>
+        {attention.length ? (
+          <ul className="divide-y border-t">
+            {attention.map((a, i) => (
+              <li key={`${a.kind}-${i}`} className="px-5 py-3 text-sm">
+                <span className="font-medium">{attentionText(a.kind, a.user ? name(a.user) : "someone")}</span>
+                <span className="block break-words text-muted-foreground">
+                  {a.detail ? `${a.detail} · ` : ""}
+                  {ago(a.at * 1000, now)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="px-5 pb-5 text-sm text-muted-foreground">Nothing needs you.</p>
+        )}
+      </Card>
+
       <Card>
         <CardHeader>
           <CardTitle>Switches</CardTitle>
@@ -214,16 +334,62 @@ function Fleet({ users }: { users: readonly AdminUser[] | undefined }) {
           <ul className="divide-y border-t">
             {data.holds.map((hold) => {
               const left = minutesLeft(hold.cart?.hard_deadline ?? null, now);
+              const who = name(hold.user);
+              const adding = hold.cart?.status === "adding";
+              const paying = hold.cart?.payment_in_progress === true;
+              // The server releases only a cart that's in and not being paid for: one still being added gets a
+              // new id once it's in, and pulling one mid-payment could charge them for nothing.
+              const releasable = hold.cart?.status === "ready" && !paying;
               return (
-                <li key={hold.trip} className="flex items-center justify-between gap-3 px-5 py-3 text-sm">
+                <li key={hold.trip} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 text-sm">
                   <span className="min-w-0">
-                    <span className="font-medium">{name(hold.user)}</span>
+                    <span className="font-medium">{who}</span>
                     <span className="text-muted-foreground">
                       {hold.cart?.depart ? ` · ${timeLabel(hold.cart.depart)}` : ""} · held{" "}
                       {ago(hold.since * 1000, now)}
                     </span>
                   </span>
-                  {left !== null && <Badge variant={left < 10 ? "warning" : "muted"}>{left} min left</Badge>}
+                  <span className="flex items-center gap-1">
+                    {adding && <Badge variant="muted">Being added</Badge>}
+                    {paying && <Badge variant="warning">Paying now</Badge>}
+                    {left !== null && <Badge variant={left < 10 ? "warning" : "muted"}>{left} min left</Badge>}
+                    {releasable && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        aria-label={`Release ${who}'s cart`}
+                        onClick={() =>
+                          ask({
+                            title: `Release ${who}'s cart?`,
+                            description: `Empties the cart on BC Ferries and tells ${who} it was released.`,
+                            confirmLabel: "Release",
+                            danger: true,
+                            done: `Releasing ${who}'s cart`,
+                            run: (reason) => adminApi.releaseCart(hold.trip, reason),
+                          })
+                        }
+                      >
+                        Release
+                      </Button>
+                    )}
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      aria-label={`Recycle ${who}'s browser`}
+                      onClick={() =>
+                        ask({
+                          title: `Recycle ${who}'s browser?`,
+                          description: `Restarts their browser${hold.pod ? ` (${hold.pod})` : ""}. The cart it holds is emptied first, unless they're already paying.`,
+                          confirmLabel: "Recycle",
+                          danger: true,
+                          done: `Recycling ${who}'s browser`,
+                          run: (reason) => adminApi.recyclePod(hold.trip, reason),
+                        })
+                      }
+                    >
+                      Recycle
+                    </Button>
+                  </span>
                 </li>
               );
             })}
@@ -237,18 +403,108 @@ function Fleet({ users }: { users: readonly AdminUser[] | undefined }) {
         <CardHeader>
           <CardTitle>Holds this week</CardTitle>
         </CardHeader>
-        <dl className="grid grid-cols-2 gap-x-4 gap-y-2 px-5 pb-5 text-sm">
-          {OUTCOMES.map(([key, label]) => (
-            <div key={key} className="contents">
-              <dt className="text-muted-foreground">{label}</dt>
-              <dd className="tabular text-right font-medium">{data.outcomes_7d[key] ?? 0}</dd>
-            </div>
-          ))}
-        </dl>
+        <Facts rows={OUTCOMES.map(([key, label]) => [label, data.outcomes_7d[key] ?? 0] as const)} />
       </Card>
       {dialog}
     </div>
   );
+}
+
+/** Whether ferry-control is alive. It turns into a warning past two minutes, or when it never reported. */
+function ControlSeen({ seen, now }: { seen: number | null; now: number }) {
+  const late = seen === null || now - seen * 1000 > CONTROL_LATE_MS;
+  return (
+    <p
+      className={cn(
+        "flex items-center gap-2 text-sm lg:col-span-2",
+        late ? "font-medium text-warning" : "text-muted-foreground",
+      )}
+    >
+      {late && <AlertTriangle className="size-4 shrink-0" aria-hidden />}
+      {seen === null
+        ? "ferry-control hasn't reported. Is it running?"
+        : `ferry-control last reported ${ago(seen * 1000, now)}${late ? ". Is it running?" : ""}`}
+    </p>
+  );
+}
+
+type Fact = readonly [label: string, value: ReactNode];
+
+/** Labels and values, two columns. */
+function Facts({ rows }: { rows: readonly Fact[] }) {
+  return (
+    <dl className="grid grid-cols-2 gap-x-4 gap-y-2 px-5 pb-5 text-sm">
+      {rows.map(([label, value]) => (
+        <div key={label} className="contents">
+          <dt className="text-muted-foreground">{label}</dt>
+          <dd className="tabular text-right font-medium">{value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+/** 1.25 -> "1.3", 3 -> "3". */
+const decimal = (n: number) => String(Number(n.toFixed(1)));
+const gib = (n: number) => `${decimal(n)} GiB`;
+
+/** Only what ferry-control reported; queued falls back to ferry-web's own count. */
+function capacity(fleet: FleetReport | null, queued: number): Fact[] {
+  const rows: Fact[] = [];
+  const max = fleet?.browsers?.max ?? null;
+  const live = fleet?.browsers?.live ?? null;
+  if (live !== null) rows.push(["Browsers running", max !== null ? `${live} of ${max}` : String(live)]);
+  const requested = fleet?.memory?.requested_mb ?? null;
+  const pod = fleet?.memory?.pod ? quantityGiB(fleet.memory.pod) : null;
+  const total = fleet?.memory?.budget_mb ?? (pod !== null && max !== null ? pod * max * 1024 : null);
+  if (requested !== null) {
+    rows.push(["Memory requested", `${gib(requested / 1024)}${total !== null ? ` of ${gib(total / 1024)}` : ""}`]);
+  }
+  rows.push(["Queued", fleet?.queued ?? queued]);
+  const due = fleet?.short_checks?.due ?? null;
+  const overdue = fleet?.short_checks?.overdue ?? null;
+  if (due !== null || overdue !== null) {
+    rows.push([
+      "Short checks",
+      <>
+        {due ?? 0} due · <span className={overdue ? "text-warning" : undefined}>{overdue ?? 0} overdue</span>
+      </>,
+    ]);
+  }
+  return rows;
+}
+
+function budget(fleet: FleetReport | null): Fact[] {
+  if (!fleet) return [["Last report", "None yet"]];
+  const rows: Fact[] = [];
+  const allowed = fleet.budget?.checks_per_minute ?? null;
+  const demand = fleet.budget?.demand_per_minute ?? null;
+  const stretch = fleet.budget?.stretch ?? null;
+  if (allowed !== null) rows.push(["Allowed", `${decimal(allowed)} checks a minute`]);
+  if (demand !== null) rows.push(["Asked for", `${decimal(demand)} checks a minute`]);
+  if (stretch !== null) {
+    rows.push(["Stretch", stretch > 1 ? <span className="text-warning">×{decimal(stretch)} slower</span> : "None"]);
+  }
+  if (fleet.brake) {
+    const { multiplier, paused } = fleet.brake;
+    rows.push([
+      "Brake",
+      paused ? (
+        <span className="text-danger">Checks stopped</span>
+      ) : multiplier && multiplier > 1 ? (
+        <span className="text-warning">×{decimal(multiplier)} slower</span>
+      ) : (
+        "Off"
+      ),
+    ]);
+  }
+  return rows;
+}
+
+/** The breaker as stored (an admin's close shows at once), else as ferry-control last reported it. */
+function breakerOpen(data: Overview): boolean {
+  const stored = data.switches.breaker;
+  return (stored === "open" || stored === "closed" ? stored : data.fleet?.breaker) === "open";
 }
 
 function BrowserTable({ pods }: { pods: Overview["pods"] }) {
@@ -465,6 +721,16 @@ function PersonCard({
 }) {
   const [showLimits, setShowLimits] = useState(false);
   const suspended = user.state === "suspended";
+  const counts = [
+    user.sessions !== undefined ? plural(user.sessions, "session") : null,
+    user.devices !== undefined ? `alerts on ${plural(user.devices, "device")}` : null,
+  ].filter((part) => part !== null);
+  const usage = Object.entries(user.usage_today ?? {})
+    .filter(([, amount]) => amount > 0)
+    .map(([kind, amount]) => USAGE_LABELS[kind]?.(amount) ?? `${amount} ${kind}`);
+  const otherEmails = user.emails_seen ?? [];
+  // Bootstrap admins come from the config; the server refuses to demote them.
+  const adminChange = !isMe && !(user.is_admin && user.bootstrap);
   return (
     <Card className="p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -472,6 +738,7 @@ function PersonCard({
           <h2 className="flex flex-wrap items-center gap-2 font-semibold">
             {user.username}
             {user.is_admin && <Badge variant="outline">Admin</Badge>}
+            {user.bootstrap && <Badge variant="outline">Bootstrap</Badge>}
             {suspended && <Badge variant="danger">Suspended</Badge>}
             {user.paused && <Badge variant="muted">Paused</Badge>}
           </h2>
@@ -480,8 +747,21 @@ function PersonCard({
             {plural(user.trips, "trip")} ·{" "}
             {user.last_seen_at ? `seen ${ago(user.last_seen_at * 1000, now)}` : "never signed in"}
           </p>
+          {counts.length > 0 && <p className="text-sm text-muted-foreground">{counts.join(" · ")}</p>}
+          {usage.length > 0 && <p className="text-sm text-muted-foreground">Today: {usage.join(" · ")}</p>}
+          {otherEmails.length > 0 && (
+            <p className="mt-1 flex items-start gap-1.5 break-words text-sm font-medium text-warning">
+              <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
+              <span className="min-w-0">Signed in with another email: {otherEmails.join(", ")}</span>
+            </p>
+          )}
+          {user.bootstrap && user.is_admin && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              A bootstrap admin: set in the config, so their admin can't be removed here.
+            </p>
+          )}
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button
             size="sm"
             variant="outline"
@@ -491,6 +771,55 @@ function PersonCard({
           >
             Limits
           </Button>
+          {!isMe && (
+            <Button
+              size="sm"
+              variant="ghost"
+              aria-label={`Sign out everywhere for ${user.username}`}
+              onClick={() =>
+                ask({
+                  title: `Sign ${user.username} out everywhere?`,
+                  description: "Every device they're signed in on has to sign in again.",
+                  confirmLabel: "Sign out",
+                  danger: true,
+                  done: `${user.username} is signed out everywhere`,
+                  run: (reason) => adminApi.revokeSessions(user.id, reason),
+                })
+              }
+            >
+              Sign out everywhere
+            </Button>
+          )}
+          {adminChange && (
+            <Button
+              size="sm"
+              variant="ghost"
+              aria-label={`${user.is_admin ? "Remove admin" : "Make admin"} for ${user.username}`}
+              onClick={() =>
+                ask(
+                  user.is_admin
+                    ? {
+                        title: `Remove ${user.username}'s admin?`,
+                        description: "They keep their account and trips.",
+                        confirmLabel: "Remove admin",
+                        danger: true,
+                        done: `${user.username} is no longer an admin`,
+                        run: (reason) => adminApi.setAdmin(user.id, false, reason),
+                      }
+                    : {
+                        title: `Make ${user.username} an admin?`,
+                        description:
+                          "They'll see the fleet and everyone's limits, and can change them. Never anyone's screen or sailings.",
+                        confirmLabel: "Make admin",
+                        done: `${user.username} is an admin`,
+                        run: (reason) => adminApi.setAdmin(user.id, true, reason),
+                      },
+                )
+              }
+            >
+              {user.is_admin ? "Remove admin" : "Make admin"}
+            </Button>
+          )}
           {!isMe && (
             <Button
               size="sm"
@@ -508,16 +837,56 @@ function PersonCard({
                       }
                     : {
                         title: `Suspend ${user.username}?`,
-                        description: "Signs them out everywhere and stops their browsers.",
+                        description:
+                          "Signs them out everywhere and stops their browsers. A cart they're paying for is left to finish.",
                         confirmLabel: "Suspend",
                         danger: true,
+                        choice: {
+                          legend: "If they're holding a cart",
+                          options: [
+                            { value: "release", label: "Release their held cart now" },
+                            { value: "finish", label: "Let it finish" },
+                          ],
+                          initial: "finish",
+                        },
                         done: `${user.username} is suspended`,
-                        run: (reason) => adminApi.setState(user.id, "suspended", reason),
+                        run: (reason, holds) =>
+                          adminApi.setState(user.id, "suspended", reason, holds === "release" ? "release" : "finish"),
                       },
                 )
               }
             >
               {suspended ? "Reinstate" : "Suspend"}
+            </Button>
+          )}
+          {suspended && !isMe && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="text-danger"
+              aria-label={`Delete ${user.username}`}
+              onClick={() =>
+                ask({
+                  title: `Delete ${user.username}?`,
+                  description: (
+                    <>
+                      <p>Deletes their account, trips, sessions and alerts for good.</p>
+                      <p>The audit log and hold history stay.</p>
+                      <p>
+                        It doesn't keep them out: if an invitation or group still lets them in, they can sign in again
+                        as someone new. Remove them from the sign-in group first.
+                      </p>
+                    </>
+                  ),
+                  confirmLabel: "Delete",
+                  danger: true,
+                  confirmText: user.username,
+                  done: `${user.username} is deleted`,
+                  run: (reason) => adminApi.deleteUser(user.id, reason),
+                })
+              }
+            >
+              Delete
             </Button>
           )}
         </div>

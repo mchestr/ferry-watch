@@ -131,10 +131,15 @@ class ControlStore:
             breaker_open=values.get("breaker") == "open",
         )
 
-    async def pending_commands(self, trip_id: str) -> list[asyncpg.Record]:
+    async def pending_commands(self, trip_id: str, pod: str) -> list[asyncpg.Record]:
+        """What's queued for the trip's pod. `stale`: a recycle asked for before this pod existed (it was
+        meant for an earlier generation, which has gone anyway)."""
         return await self._pool.fetch(
-            "SELECT id, op, cart_id FROM agent_commands WHERE trip_id = $1 AND consumed_at IS NULL ORDER BY id",
+            "SELECT c.id, c.op, c.cart_id, c.op = 'recycle' AND c.created_at < p.created_at AS stale"
+            " FROM agent_commands c LEFT JOIN browser_pods p ON p.name = $2"
+            " WHERE c.trip_id = $1 AND c.consumed_at IS NULL ORDER BY c.id",
             trip_id,
+            pod,
         )
 
     async def consume_command(self, command_id: int) -> None:

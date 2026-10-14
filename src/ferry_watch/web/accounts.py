@@ -80,6 +80,10 @@ class Accounts:
         self._policy = policy
         self._clock = clock
 
+    @property
+    def policy(self) -> IdentityPolicy:
+        return self._policy
+
     # ---- admission
 
     async def admit(self, principal: Principal) -> str:
@@ -231,17 +235,25 @@ class Accounts:
         )
         return owner
 
-    async def revoke(self, *, token: str | None = None, uid: str | None = None, reason: str) -> int:
-        """Revoke one session or all of a user's. Returns how many."""
+    async def revoke(
+        self,
+        *,
+        token: str | None = None,
+        uid: str | None = None,
+        reason: str,
+        conn: asyncpg.pool.PoolConnectionProxy | None = None,
+    ) -> int:
+        """Revoke one session or all of a user's (in the caller's transaction, given `conn`). Returns how many."""
+        db = conn if conn is not None else self._pool
         if token is not None:
-            result = await self._pool.execute(
+            result = await db.execute(
                 "UPDATE sessions SET revoked_at = $2, revoked_reason = $3 WHERE token_hash = $1 AND revoked_at IS NULL",
                 token_hash(token),
                 _ts(self._clock()),
                 reason,
             )
         else:
-            result = await self._pool.execute(
+            result = await db.execute(
                 "UPDATE sessions SET revoked_at = $2, revoked_reason = $3 WHERE user_id = $1 AND revoked_at IS NULL",
                 uid,
                 _ts(self._clock()),

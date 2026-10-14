@@ -128,15 +128,52 @@ async def test_web_cannot_write_what_agents_report(db: Database) -> None:
 async def test_web_flips_only_the_maintenance_switches(db: Database) -> None:
     control = await db.connect(ROLES.control)
     try:
-        await control.execute("INSERT INTO fleet_state (key, value) VALUES ('brake', '{}')")
+        await control.execute("INSERT INTO fleet_state (key, value) VALUES ('brake', '{}'), ('breaker', '\"open\"')")
     finally:
         await control.close()
     web = await db.connect(ROLES.web)
     try:
         assert await web.execute("UPDATE fleet_state SET value = 'true' WHERE key = 'maintenance'") == "UPDATE 1"
         assert await web.execute("UPDATE fleet_state SET value = '{}' WHERE key = 'brake'") == "UPDATE 0"
+        assert await web.execute("UPDATE fleet_state SET value = '\"closed\"' WHERE key = 'breaker'") == "UPDATE 1"
+        with pytest.raises(asyncpg.InsufficientPrivilegeError):  # only ferry-control opens it
+            await web.execute("UPDATE fleet_state SET value = '\"open\"' WHERE key = 'breaker'")
     finally:
         await web.close()
+
+
+async def test_web_deletes_a_user_and_everything_theirs(db: Database) -> None:
+    await seed(db)
+    control = await db.connect(ROLES.control)
+    try:
+        await control.execute("INSERT INTO trip_state (trip_id) VALUES ($1)", TRIP)
+        await control.execute("INSERT INTO hold_claims (user_id, trip_id, pod) VALUES ($1, $2, 'x')", USER, TRIP)
+        await control.execute("INSERT INTO notifications (user_id, kind) VALUES ($1, 'cart_held')", USER)
+        await control.execute(
+            "INSERT INTO hold_outcomes (user_id, trip_id, day, outcome) VALUES ($1, $2, now(), 'booked')", USER, TRIP
+        )
+    finally:
+        await control.close()
+    web = await db.connect(ROLES.web)
+    try:
+        await web.execute("INSERT INTO events (user_id, kind, code) VALUES ($1, 'agent', 'cart_added')", USER)
+        await web.execute(
+            "INSERT INTO sessions (token_hash, user_id, iss, sub, idle_expires_at, expires_at)"
+            " VALUES ($1, $2, 'i', 's', now(), now())",
+            bytes(32),
+            USER,
+        )
+        await web.execute("DELETE FROM events WHERE user_id = $1", USER)
+        await web.execute("DELETE FROM users WHERE id = $1", USER)  # the rest follows, whatever web may touch
+    finally:
+        await web.close()
+    owner = await db.connect()
+    try:
+        for table in ("trips", "trip_state", "hold_claims", "notifications", "sessions", "events"):
+            assert await owner.fetchval(f"SELECT count(*) FROM {table}") == 0, table  # noqa: S608 - fixed names
+        assert await owner.fetchval("SELECT count(*) FROM hold_outcomes") == 1  # the record stays
+    finally:
+        await owner.close()
 
 
 async def test_control_cannot_touch_people_or_sessions(db: Database) -> None:

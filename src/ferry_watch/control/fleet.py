@@ -1,8 +1,9 @@
 """ferry-control's fleet loop: make the browser pods match what the rows want (design-reference §6.6, §8).
 
 Level-triggered and idempotent: each pass reads the rows and the pods, reconciles one against the other,
-reaps pods whose timers ran out, keeps the hold-egress label in step with held carts, and applies the
-planner's starts and drains. A pass that dies half-way is simply run again.
+reaps pods whose timers ran out, keeps the hold-egress label in step with held carts, applies the
+planner's starts and drains, and leaves what it knew in `fleet_state` for the admin's Fleet page. A pass
+that dies half-way is simply run again.
 
 Pods are never touched just because ferry-control restarted. A holding pod is never reaped for silence,
 only by the operator's own backstop clock or by Kubernetes.
@@ -18,18 +19,27 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import Any, Protocol
 
 import asyncpg
 
 from ferry_watch.models import PACIFIC, Trip, ValidationError
 from ferry_watch.protocol import CommandOp, CommandReason
 
-from .configure import HubSettings, curve_interval, stretch
+from .configure import HubSettings, curve_interval, demand, stretch
 from .kube import Cluster, KubeError, ObservedPod
 from .limits import Limits
 from .planner import FleetView, PodView, Start, TripView, UserView, plan
-from .pods import DEADLINE_SECONDS, EGRESS_ALLOWLIST, EGRESS_HOLD, LABEL_EGRESS, PodParams, browser_pod, pod_name
+from .pods import (
+    DEADLINE_SECONDS,
+    EGRESS_ALLOWLIST,
+    EGRESS_HOLD,
+    LABEL_EGRESS,
+    PodParams,
+    browser_pod,
+    memory_mib,
+    pod_name,
+)
 from .store import USER_CHANNEL
 
 log = logging.getLogger(__name__)
@@ -43,7 +53,7 @@ HOLD_BACKSTOP_S = 5 * 60  # past the hard cap
 ORPHAN_GRACE_S = 2 * 60
 FAILED_RETENTION_S = 30 * 60  # kept for `kubectl logs`, if it never held a cart or had a viewer
 EGRESS_GIVE_UP_S = 60  # a pod whose egress can't be set back to the allowlist by then is deleted
-BACKOFF_AFTER = 3  # pod failures in a row
+BACKOFF_AFTER = 3  # pod failures over the trip's life: nothing resets the count yet
 BACKOFF_MINUTES = (5, 10, 20, 40, 60)
 NEEDS_ATTENTION_AFTER = 5
 SHORT_CHECK_JITTER = 0.15
@@ -79,6 +89,7 @@ class PassReport:
     drained: list[str] = field(default_factory=list)
     deleted: list[str] = field(default_factory=list)
     egress: list[tuple[str, str]] = field(default_factory=list)
+    summary: dict[str, Any] = field(default_factory=dict)  # fleet_state 'fleet_report'
 
 
 def _epoch(value: datetime | None) -> float | None:
@@ -136,6 +147,7 @@ class Fleet:
         rows = await self._live_rows()
         await self._egress(rows, observed, now, report)
         await self._apply_plan(rows, now, report)
+        await self._publish(now, report)
         return report
 
     # ---- rows and pods
@@ -289,7 +301,7 @@ class Fleet:
     # ---- the plan
 
     async def _apply_plan(self, rows: dict[str, _Row], now: float, report: PassReport) -> None:
-        users, trips, fleet = await self._inputs(now)
+        users, trips, fleet, switches = await self._inputs(now)
         pods = [
             PodView(r.name, r.trip_id, r.user_id, r.mode, r.phase, r.created_at)  # type: ignore[arg-type]
             for r in rows.values()
@@ -298,16 +310,48 @@ class Fleet:
         at = datetime.fromtimestamp(now, PACIFIC)
         by_trip = {t.id: t for t in trips}
         warm = [by_trip[p.trip_id].trip for p in pods if p.mode == "warm" and p.trip_id in by_trip]
-        self.stretch = stretch(
-            (curve_interval(t, at, self._settings.policy) for t in warm), self._settings.checks_per_minute
-        )
+        intervals = [curve_interval(t, at, self._settings.policy) for t in warm]
+        self.stretch = stretch(intervals, self._settings.checks_per_minute)
         for drain in result.drain:
             await self._drain(rows[drain.pod], drain.reason, report)
         for start in result.start:
             await self._start(start, by_trip[start.trip_id].trip, now, report)
         await self._record_queue(result.queued, now)
+        brake = switches.get("brake") or {}
+        report.summary = {
+            "queued": len(result.queued),
+            "short_checks": {
+                "due": sum(1 for s in result.start if s.mode == "short_check") + len(result.overdue),
+                "overdue": len(result.overdue),  # due, but no room to start them this pass
+            },
+            "budget": {
+                "checks_per_minute": self._settings.checks_per_minute,
+                "demand_per_minute": round(demand(intervals), 2),
+                "stretch": round(self.stretch, 2),
+            },
+            "brake": {"multiplier": float(brake.get("multiplier", 1.0)), "paused": bool(brake.get("paused", False))},
+            "breaker": "open" if switches.get("breaker") == "open" else "closed",
+        }
 
-    async def _inputs(self, now: float) -> tuple[list[UserView], list[TripView], FleetView]:
+    async def _publish(self, now: float, report: PassReport) -> None:
+        """What this pass knew, for the admin's Fleet page; its `at` doubles as ferry-control's heartbeat."""
+        live = await self._pool.fetchval("SELECT count(*) FROM browser_pods WHERE ended_at IS NULL")
+        memory: dict[str, Any] = {"pod": self._params.pod_memory}  # sizes in MiB
+        pod_mib = memory_mib(self._params.pod_memory)
+        if pod_mib is not None:
+            memory |= {"pod_mb": pod_mib, "requested_mb": live * pod_mib, "budget_mb": self._max_total * pod_mib}
+        report.summary = {
+            "at": now,
+            "browsers": {"max": self._max_total, "live": live},
+            "memory": memory,
+        } | report.summary
+        await self._pool.execute(
+            "INSERT INTO fleet_state (key, value) VALUES ('fleet_report', $1)"
+            " ON CONFLICT (key) DO UPDATE SET value = $1",
+            json.dumps(report.summary),
+        )
+
+    async def _inputs(self, now: float) -> tuple[list[UserView], list[TripView], FleetView, dict[str, Any]]:
         user_records = await self._pool.fetch("SELECT id, state, paused FROM users")
         overrides: dict[str, dict[str, int]] = {}
         for r in await self._pool.fetch("SELECT user_id, key, value FROM user_limits"):
@@ -359,7 +403,7 @@ class Fleet:
             ),
             last_start_by_user={r["user_id"]: r["last"].timestamp() for r in starts},
         )
-        return users, trips, fleet
+        return users, trips, fleet, switches
 
     async def _drain(self, row: _Row, reason: CommandReason, report: PassReport) -> None:
         if not await self._hub.command(row.name, "drain", reason):

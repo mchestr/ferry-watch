@@ -2,8 +2,8 @@
 
 `db-migrate` runs `migrate()` then `grant()` as the database owner. ferry-web and ferry-control log in as
 their own roles, own nothing, and get exactly the grants below: the audit log is insert-only for both;
-ferry-web may queue only its own kinds of notification and flip only the maintenance switches; only
-ferry-control writes what the agents report.
+ferry-web may queue only its own kinds of notification, flip only the maintenance switches and close (never
+open) the breaker; only ferry-control writes what the agents report.
 """
 
 from __future__ import annotations
@@ -76,6 +76,7 @@ def _grants(web: str, control: str) -> list[str]:
         f"GRANT INSERT (trip_id), UPDATE (next_check_at) ON trip_runtime TO {web}",
         f"GRANT DELETE ON alert_memory TO {web}",  # an edited search forgets what the old one alerted
         f"GRANT SELECT, INSERT ON agent_commands, events, vnc_mints, notifications TO {web}",
+        f"GRANT DELETE ON events TO {web}",  # deleting a user takes their history with them
         f"GRANT UPDATE (sent_at, attempts, last_error, next_attempt_at) ON notifications TO {web}",
         f"GRANT SELECT ON hold_outcomes TO {web}",
         f"GRANT UPDATE (answer_reason) ON hold_outcomes TO {web}",
@@ -110,9 +111,10 @@ def _grants(web: str, control: str) -> list[str]:
         "ALTER TABLE fleet_state ENABLE ROW LEVEL SECURITY",
         "DROP POLICY IF EXISTS web_reads ON fleet_state",
         f"CREATE POLICY web_reads ON fleet_state FOR SELECT TO {web} USING (true)",
+        # ferry-web flips the maintenance switches, and may close the breaker (only ferry-control opens it).
         "DROP POLICY IF EXISTS web_switches ON fleet_state",
-        f"CREATE POLICY web_switches ON fleet_state FOR UPDATE TO {web} USING (key IN ({keys}))"
-        f" WITH CHECK (key IN ({keys}))",
+        f"CREATE POLICY web_switches ON fleet_state FOR UPDATE TO {web} USING (key IN ({keys}, 'breaker'))"
+        f" WITH CHECK (key IN ({keys}) OR (key = 'breaker' AND value = '\"closed\"'::jsonb))",
         "DROP POLICY IF EXISTS control_runs_the_fleet ON fleet_state",
         f"CREATE POLICY control_runs_the_fleet ON fleet_state FOR ALL TO {control} USING (true) WITH CHECK (true)",
     ]

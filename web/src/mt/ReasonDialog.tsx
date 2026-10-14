@@ -5,8 +5,9 @@ import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/controls";
 
 /**
- * Asks an admin why, before a change that lands in the audit log. Nothing happens without a reason, and it
- * can't be dismissed while `pending`.
+ * Asks an admin why, before a change that lands in the audit log. Nothing happens without a reason (and,
+ * with `confirmText`, without typing that exactly), and it can't be dismissed while `pending`. `children`
+ * go above the reason, for anything else the change needs decided.
  */
 export function ReasonDialog({
   open,
@@ -18,6 +19,8 @@ export function ReasonDialog({
   pending = false,
   error = null,
   danger = false,
+  confirmText,
+  children,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -28,12 +31,20 @@ export function ReasonDialog({
   pending?: boolean;
   error?: string | null;
   danger?: boolean;
+  /** What they must type to confirm, such as the username before a delete. */
+  confirmText?: string;
+  children?: ReactNode;
 }) {
   const [reason, setReason] = useState("");
+  const [typed, setTyped] = useState("");
   useEffect(() => {
-    if (open) setReason("");
+    if (open) {
+      setReason("");
+      setTyped("");
+    }
   }, [open]);
   const trimmed = reason.trim();
+  const ready = trimmed !== "" && (confirmText === undefined || typed === confirmText);
   return (
     <Dialog.Root
       open={open}
@@ -54,17 +65,35 @@ export function ReasonDialog({
             className="mt-4 space-y-4"
             onSubmit={(event) => {
               event.preventDefault();
-              if (trimmed && !pending) onConfirm(trimmed);
+              if (ready && !pending) onConfirm(trimmed);
             }}
           >
+            {children}
+            {confirmText !== undefined && (
+              <Field label={`Type ${confirmText} to confirm`}>
+                <Input
+                  value={typed}
+                  autoFocus
+                  autoComplete="off"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  onChange={(e) => setTyped(e.target.value)}
+                />
+              </Field>
+            )}
             <Field label="Reason" error={error}>
-              <Input value={reason} maxLength={500} autoFocus onChange={(e) => setReason(e.target.value)} />
+              <Input
+                value={reason}
+                maxLength={500}
+                autoFocus={confirmText === undefined}
+                onChange={(e) => setReason(e.target.value)}
+              />
             </Field>
             <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
               <Button type="button" variant="outline" disabled={pending} onClick={() => onOpenChange(false)}>
                 Cancel
               </Button>
-              <Button type="submit" variant={danger ? "danger" : "default"} disabled={pending || !trimmed}>
+              <Button type="submit" variant={danger ? "danger" : "default"} disabled={pending || !ready}>
                 {pending && <Loader2 className="motion-safe:animate-spin" aria-hidden />}
                 {confirmLabel}
               </Button>

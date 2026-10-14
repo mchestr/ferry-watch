@@ -12,7 +12,7 @@ from typing import Any
 import asyncpg
 import pytest
 
-from ferry_watch.control.configure import HubSettings
+from ferry_watch.control.configure import HubSettings, curve_interval
 from ferry_watch.control.fleet import (
     EGRESS_GIVE_UP_S,
     FAILED_RETENTION_S,
@@ -24,6 +24,7 @@ from ferry_watch.control.fleet import (
 from ferry_watch.control.kube import KubeError, ObservedPod
 from ferry_watch.control.pods import LABEL_EGRESS, PodParams
 from ferry_watch.models import PACIFIC, Trip
+from ferry_watch.polling import PollPolicy
 from ferry_watch.protocol import CommandOp, CommandReason
 from tests.postgres import ROLES, Database
 
@@ -308,3 +309,44 @@ async def test_a_nearer_trip_takes_the_warm_browser(rig: Rig) -> None:
     assert rig.hub.commands == [(old, "drain", "superseded")]
     (runtime,) = await rig.run("SELECT mode FROM trip_runtime WHERE trip_id = $1", later.id)
     assert runtime["mode"] == "short_check"
+
+
+# ---- what the admin sees
+
+
+async def test_each_pass_reports_what_it_knew(rig: Rig) -> None:
+    await rig.add_trip(NEAR)
+    await rig.add_trip(FAR, user="b" * 20)
+    await rig.fleet.reconcile()
+    report = await rig.fleet.reconcile()  # the warm browser started last pass now counts towards demand
+    (row,) = await rig.run("SELECT value FROM fleet_state WHERE key = 'fleet_report'")
+    assert json.loads(row["value"]) == report.summary
+    interval = curve_interval(NEAR, datetime.fromtimestamp(NOW, PACIFIC), PollPolicy())
+    assert report.summary == {
+        "at": NOW,
+        "browsers": {"max": 7, "live": 2},
+        "memory": {"pod": "1536Mi", "pod_mb": 1536, "requested_mb": 3072, "budget_mb": 7 * 1536},
+        "queued": 0,
+        "short_checks": {"due": 0, "overdue": 0},
+        "budget": {"checks_per_minute": 20, "demand_per_minute": round(60 / interval, 2), "stretch": 1.0},
+        "brake": {"multiplier": 1.0, "paused": False},
+        "breaker": "closed",
+    }
+    await rig.run(
+        "INSERT INTO fleet_state (key, value) VALUES ('breaker', '\"open\"'), ('brake', $1)",
+        json.dumps({"multiplier": 2, "paused": True}),
+    )
+    rig.advance(60)
+    report = await rig.fleet.reconcile()
+    assert report.summary["at"] == NOW + 60
+    assert (report.summary["breaker"], report.summary["brake"]) == ("open", {"multiplier": 2.0, "paused": True})
+    assert report.summary["browsers"]["live"] == 0  # an open breaker stops every browser
+
+
+async def test_short_checks_waiting_for_room_are_overdue(rig: Rig) -> None:
+    for n, user in ((4, "c" * 20), (5, "d" * 20), (6, "e" * 20)):
+        far = Trip(id=str(n) * 16, origin="SWB", destination="TSA", date=date(2026, 10, 30))
+        await rig.add_trip(far, user=user)
+    report = await rig.fleet.reconcile()
+    assert len(report.started) == 2  # at most two starting at once
+    assert report.summary["short_checks"] == {"due": 3, "overdue": 1}

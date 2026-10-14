@@ -2454,6 +2454,25 @@ The draft's Trips, Settings and Audit pages, the DB `policy` table and the reque
 to M4 (§12.2). Until then audit is read with `psql` or from VictoriaLogs, and defaults change through a values
 PR.
 
+*As built* (`src/ferry_watch/web/admin.py`, `web/src/mt/AdminPage.tsx`, migration `0002_admin.sql`):
+- **Release** applies only to a READY cart that isn't being paid for (409 otherwise): the agent ignores a release
+  while a cart is still being added, and emptying a cart mid-payment would cost the person their booking.
+  Suspending with "release their held cart now" skips a cart being paid for (recorded in the audit entry) and
+  recycles a pod that is still adding, so the cart is emptied once it lands.
+- **Recycle** queues an `agent_commands` row with op `recycle`, which the hub sends as `drain{reason: recycle}`.
+  A recycle queued before the current pod existed was for an earlier generation and is dropped.
+- **Close the breaker**: ferry-web may write only `"closed"` to `breaker` (row-level security); only
+  ferry-control opens it.
+- **Delete** needs the person suspended and their browsers stopped (a running agent's next report would
+  otherwise hit a missing trip). It erases their account, trips, sessions, devices, notifications and events;
+  the audit log, hold outcomes and usage ledger stay. It isn't a ban: if an invitation, auto-approve group or
+  bootstrap entry still matches them, they can sign in again as a new person, so remove them from the sign-in
+  group first (§12.5).
+- **Make admin** can't change your own admin, nor demote a bootstrap admin (the config makes them admin).
+- The Fleet page reads `fleet_report`, which the fleet loop writes after every pass (browsers live of max,
+  memory, queue, short checks due and overdue, checks per minute against demand, stretch, brake, breaker), and
+  an attention list (trips needing attention, undelivered alerts, `release_unverified`, `checkout_blocked`).
+
 ### 9.5 Audit and ops signals
 
 - **Audited:** every admin mutation; user trip create, edit and delete; every VNC mint; and system actions as

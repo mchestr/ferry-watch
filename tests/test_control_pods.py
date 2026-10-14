@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from ferry_watch.control.pods import DEADLINE_SECONDS, PodParams, browser_pod, pod_name
+from ferry_watch.control.pods import DEADLINE_SECONDS, PodParams, browser_pod, memory_mib, pod_name
 
 PARAMS = PodParams(
     image="ghcr.io/mchestr/ferry-watch-browser@sha256:" + "b" * 64,
@@ -113,3 +113,10 @@ def test_the_image_is_pinned_by_digest() -> None:
 
 def test_the_spec_is_stable() -> None:
     assert json.dumps(pod(), sort_keys=True) == json.dumps(pod(), sort_keys=True)
+
+
+@pytest.mark.parametrize(
+    ("quantity", "mib"), [("1536Mi", 1536), ("1.5Gi", 1536), ("2G", 1907), ("1073741824", 1024), ("lots", None)]
+)
+def test_pod_memory_in_mib(quantity: str, mib: int | None) -> None:
+    assert memory_mib(quantity) == mib
