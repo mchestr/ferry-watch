@@ -201,3 +201,25 @@ async def test_the_viewer_sees_the_checkout_and_can_use_it(pod: Pod, landing: st
     await page.keyboard.type("4502")
     keys: list[str] = await _until(lambda: pod.tab.evaluate("window.keys"), lambda k: len(k) >= 4)
     assert keys == ["4", "5", "0", "2"], f"typing 4502 on the viewer reached the checkout as {keys}"
+
+
+async def test_the_viewer_cant_close_or_leave_the_checkout(pod: Pod, landing: str, page: Page) -> None:
+    """matchbox's own key bindings are off: Alt+C would close the window, Alt+Tab and Alt+N would switch to
+    another, Alt+D would show the desktop and Ctrl+Alt+X would start a terminal. (Chromium's own Ctrl+W and
+    Alt+F4 are taken by the viewer's own browser or desktop before the page sees them.)"""
+    await page.goto(landing)
+    await page.click("#open")
+    await page.wait_for_selector("html.noVNC_connected")
+    shown = await _until(lambda: page.evaluate(CANVAS, list(COLOUR)), lambda c: c is not None and c["shown"] > 0.99)
+    assert shown is not None
+    x, y, width, height = shown["box"]
+    await page.mouse.click(x + width / 2, y + height / 2)  # the viewer takes keys once it's been tapped
+    for keys in ("Alt+c", "Alt+n", "Alt+p", "Alt+Tab", "Alt+Shift+Tab", "Alt+d", "Control+Alt+x", "Alt+Escape"):
+        await page.keyboard.press(keys)
+    await page.keyboard.type("1")  # after them: once this reaches the tab, they all have too
+    typed: list[str] = await _until(lambda: pod.tab.evaluate("window.keys"), lambda k: "1" in k)
+    assert "1" in typed, "the checkout tab stopped getting keys"
+    await asyncio.sleep(1)  # anything a binding started has had time to show
+    assert not pod.tab.is_closed(), "a key closed the checkout"
+    shown = await page.evaluate(CANVAS, list(COLOUR))
+    assert shown is not None and shown["shown"] > 0.99, "the viewer no longer shows only the checkout"

@@ -62,7 +62,9 @@ def xvnc_argv(display: str, screen: tuple[int, int], rfb_socket: Path) -> list[s
     ]
 
 
-MATCHBOX_ARGV = ["matchbox-window-manager", "-use_titlebar", "no"]
+# No title bar, and none of matchbox's key bindings (its default /etc/matchbox/kbdconfig): over the checkout
+# viewer, Alt+C would close the checkout window, Alt+N/Alt+Tab switch windows and Ctrl+Alt+X start a terminal.
+MATCHBOX_ARGV = ["matchbox-window-manager", "-use_titlebar", "no", "-kbdconfig", "/dev/null"]
 
 
 @dataclass(frozen=True, slots=True)

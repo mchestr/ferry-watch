@@ -761,7 +761,9 @@ replaces `entrypoint.sh` and its `wait -n; exit 1` (`entrypoint.sh:38-39`):
 
 1. It creates `HOME=/tmp/home` (as `entrypoint.sh:14-17` does) and `/tmp/kasm` (mode 0700).
 2. It starts Xvnc with RFB on the unix socket `/tmp/kasm/rfb.sock` only (§5.6), then matchbox, each in its
-   own session (`setsid`) so a TERM from tini reaches only the agent.
+   own session (`setsid`) so a TERM from tini reaches only the agent. matchbox runs with no title bar and
+   no key bindings (`-kbdconfig /dev/null`): its defaults would let the viewer close the checkout window
+   (Alt+C), switch windows (Alt+N, Alt+Tab) or start a terminal (Ctrl+Alt+X).
 3. It launches Chromium through Playwright with `handle_sigterm/handle_sigint/handle_sighup=False`.
 4. It runs the self-tests (§5.6), then the hub client, the gate (:6080), the probe server (:8080) and the
    one-trip Watcher.
