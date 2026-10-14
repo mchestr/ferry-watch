@@ -16,6 +16,8 @@ from ferry_watch.protocol import (
     Alert,
     AlertParams,
     Bye,
+    CartClaim,
+    CartClaimResult,
     CartInfo,
     Command,
     Configure,
@@ -74,6 +76,8 @@ def test_agent_messages_round_trip() -> None:
         Event(**ENVELOPE, code="cart_added"),
         Alert(**ENVELOPE, kind="cart_held", params=AlertParams(departures=["07:00"], fare="Saver")),
         Bye(**ENVELOPE, reason="hold_ended", outcome="booked", cart_emptied=True, release_check="cart_empty"),
+        Bye(**ENVELOPE, reason="short_check_done"),
+        CartClaim(**ENVELOPE, depart="07:00", fare="saver"),
         Hello(
             **ENVELOPE,
             proto=[1],
@@ -94,6 +98,8 @@ def test_control_messages_round_trip() -> None:
     messages: list[protocol.ControlMessage] = [
         HelloAck(**ENVELOPE, server_time=1.0, accepted_proto=1, resend_from=0),
         configure(),
+        configure(mode="short_check"),
+        CartClaimResult(**ENVELOPE, claim=4, granted=False, reason="holding_elsewhere"),
         Command(**ENVELOPE, id=1, op="release", cart_id="ab12cd34ef56"),
         Command(**ENVELOPE, id=2, op="drain", reason="deleted"),
         Command(**ENVELOPE, id=3, op="check_now"),
@@ -108,6 +114,7 @@ def test_the_wire_names_match_the_documented_shape() -> None:
     assert wire["type"] == "configure"
     assert wire["v"] == 1
     assert wire["trip_spec"]["from"] == "SWB"
+    assert wire["mode"] == "warm"
     assert wire["checkout_mode"] == "guest"
     error = json.loads(encode(state(error=protocol.ErrorInfo(kind="queue_timeout", text="Still queued"))))
     assert error["error"] == {"class": "queue_timeout", "text": "Still queued"}

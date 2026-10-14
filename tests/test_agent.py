@@ -23,6 +23,8 @@ from ferry_watch.protocol import (
     Alert,
     AlertKind,
     AlertParams,
+    CartClaim,
+    CartClaimResult,
     Configure,
     ControlMessage,
     Event,
@@ -62,6 +64,7 @@ def configure(rev: int = 1, *, trip: Trip = TRIP, **kw: Any) -> Configure:
 class FakeOperator:
     token: str = "token-1"
     ack: bool = True
+    grant: bool | None = True  # None: never answer a cart claim
     hellos: list[Hello] = field(default_factory=list)
     received: list[Any] = field(default_factory=list)
     connections: int = 0
@@ -101,6 +104,10 @@ class FakeOperator:
                 self.got.notify_all()
             if self.ack and isinstance(message, Event | Alert):
                 await ws.send_bytes(encode(Ack(**_envelope(), acked=message.seq)))
+            if isinstance(message, CartClaim) and self.grant is not None:
+                reason = "ok" if self.grant else "holding_elsewhere"
+                answer = CartClaimResult(**_envelope(), claim=message.seq, granted=self.grant, reason=reason)
+                await ws.send_bytes(encode(answer))
 
     async def wait_for(self, check: Callable[[], bool]) -> None:
         async with asyncio.timeout(5):
@@ -145,7 +152,14 @@ async def agent(operator: tuple[FakeOperator, TestServer], tmp_path: Path) -> As
 
     async with aiohttp.ClientSession() as http:
         client = HubClient(
-            http, str(server.make_url("/agent/v1")), token, IDENTITY, handle, rev=lambda: store.rev, backoff=(0.01,)
+            http,
+            str(server.make_url("/agent/v1")),
+            token,
+            IDENTITY,
+            handle,
+            rev=lambda: store.rev,
+            backoff=(0.01,),
+            claim_timeout=0.2,
         )
 
         def send(kind: AlertKind, params: AlertParams) -> None:
@@ -239,6 +253,43 @@ async def test_a_bad_operator_message_drops_the_connection(
     fake.after_hello = [b'{"type": "command", "op": "navigate", "url": "https://evil.example/"}']
     await until(lambda: fake.connections >= 2)  # it reconnected rather than act on it
     assert not [m for m in agent.handled if not isinstance(m, HelloAck)]
+
+
+async def test_cart_claims(operator: tuple[FakeOperator, TestServer], agent: Agent) -> None:
+    fake, _ = operator
+    await asyncio.wait_for(agent.client.connected.wait(), 5)
+    assert await agent.client.claim("09:00", "saver") is True
+    fake.grant = False
+    assert await agent.client.claim("09:00", "saver") is False
+    fake.grant = None
+    assert await agent.client.claim("09:00", "saver") is False  # no answer in time is a no
+    claims = [m for m in fake.received if isinstance(m, CartClaim)]
+    assert [(c.depart, c.fare) for c in claims] == [("09:00", "saver")] * 3
+    assert not agent.client.unacked  # claims are never buffered for a later connection
+
+
+async def test_no_connection_means_no_cart(tmp_path: Path) -> None:
+    async def handle(message: ControlMessage) -> None:
+        pass
+
+    async with aiohttp.ClientSession() as http:
+        client = HubClient(http, "http://127.0.0.1:9/agent/v1", tmp_path / "token", IDENTITY, handle)
+        assert await client.claim("09:00", "saver") is False
+
+
+async def test_acks_are_visible(operator: tuple[FakeOperator, TestServer], agent: Agent) -> None:
+    fake, _ = operator
+    fake.ack = False
+    await asyncio.wait_for(agent.client.connected.wait(), 5)
+    alert = Alert(**agent.client.envelope(), kind="cart_held")
+    agent.client.send(alert)
+    await fake.wait_for(lambda: any(isinstance(m, Alert) for m in fake.received))
+    assert not agent.client.acked(alert.seq)
+    fake.ack = True
+    agent.client.send(Event(**agent.client.envelope(), code="cart_added"))
+    await fake.wait_for(lambda: any(isinstance(m, Event) for m in fake.received))
+    await until(lambda: len(agent.client.unacked) == 1)
+    assert not agent.client.acked(alert.seq)
 
 
 async def test_silence_is_measured(operator: tuple[FakeOperator, TestServer], agent: Agent) -> None:

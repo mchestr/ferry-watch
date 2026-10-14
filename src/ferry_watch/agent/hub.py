@@ -4,7 +4,8 @@ The agent always dials, so nothing needs to reach into a browser pod. It authent
 projected ServiceAccount token (re-read on every connect, since the kubelet rotates it), sends a hello
 carrying a state snapshot and everything not yet acknowledged, and then exchanges protocol messages.
 Events, alerts and the final bye are kept until the operator acks them, and ride along in the next
-hello after a reconnect. State is not buffered: only the latest matters.
+hello after a reconnect. State is not buffered: only the latest matters. A cart claim is a question
+that needs an answer now, so it isn't buffered either: without a connection the answer is no.
 """
 
 from __future__ import annotations
@@ -29,8 +30,11 @@ from ferry_watch.protocol import (
     Ack,
     Alert,
     Bye,
+    CartClaim,
+    CartClaimResult,
     ControlMessage,
     Event,
+    FarePreference,
     Hello,
     HelloAck,
     ProtocolError,
@@ -43,6 +47,7 @@ log = logging.getLogger(__name__)
 
 RECONNECT_BACKOFF_SECONDS = (1.0, 2.0, 5.0, 10.0, 30.0)
 HEARTBEAT_SECONDS = 20.0
+CLAIM_TIMEOUT_SECONDS = 10.0
 
 Buffered = Event | Alert | Bye
 
@@ -69,6 +74,7 @@ class HubClient:
         *,
         rev: Callable[[], int] = lambda: 0,
         backoff: Sequence[float] = RECONNECT_BACKOFF_SECONDS,
+        claim_timeout: float = CLAIM_TIMEOUT_SECONDS,
     ) -> None:
         self._http = http
         self._url = url
@@ -77,10 +83,13 @@ class HubClient:
         self._handle = handle
         self._rev = rev
         self._backoff = tuple(backoff)
+        self._claim_timeout = claim_timeout
         self.boot = secrets.token_hex(8)
         self._seq = itertools.count(1)
         self._outbox: dict[int, Buffered] = {}  # unacknowledged, oldest first
         self._unsent: list[int] = []
+        self._claims: dict[int, asyncio.Future[bool]] = {}  # waiting for an answer, by the claim's seq
+        self._unsent_claims: list[CartClaim] = []
         self._state: State | None = None
         self._state_dirty = False
         self._wake = asyncio.Event()
@@ -110,6 +119,28 @@ class HubClient:
         self._state_dirty = True
         self._wake.set()
 
+    def acked(self, seq: int) -> bool:
+        """Whether the operator has acknowledged this message (or it was dropped as too old)."""
+        return seq not in self._outbox
+
+    async def claim(self, depart: str, fare: FarePreference) -> bool:
+        """Ask the operator whether this pod may cart now. No connection or no answer means no."""
+        if not self.connected.is_set():
+            return False
+        request = CartClaim(**self.envelope(), depart=depart, fare=fare)
+        answer: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
+        self._claims[request.seq] = answer
+        self._unsent_claims.append(request)
+        self._wake.set()
+        try:
+            async with asyncio.timeout(self._claim_timeout):
+                return await answer
+        except TimeoutError:
+            log.warning("No answer to cart claim %d in %.0fs", request.seq, self._claim_timeout)
+            return False
+        finally:
+            self._claims.pop(request.seq, None)
+
     @property
     def unacked(self) -> list[Buffered]:
         return list(self._outbox.values())
@@ -131,6 +162,10 @@ class HubClient:
                 log.info("Operator connection lost: %s", e)
             finally:
                 self.connected.clear()
+                self._unsent_claims.clear()
+                for answer in self._claims.values():
+                    if not answer.done():
+                        answer.set_result(False)  # the question went down with the connection
             await asyncio.sleep(self._backoff[min(failures, len(self._backoff) - 1)])
             failures += 1
 
@@ -171,6 +206,13 @@ class HubClient:
         self._last_contact = time.monotonic()
         if isinstance(message, Ack):
             self._outbox.pop(message.acked, None)
+        elif isinstance(message, CartClaimResult):
+            answer = self._claims.get(message.claim)
+            if answer is not None and not answer.done():
+                answer.set_result(message.granted)
+            log.info(
+                "Cart claim %d: %s (%s)", message.claim, "granted" if message.granted else "refused", message.reason
+            )
         elif isinstance(message, HelloAck):
             self.connected.set()
         else:
@@ -180,6 +222,8 @@ class HubClient:
         while True:
             await self._wake.wait()
             self._wake.clear()
+            while self._unsent_claims:
+                await ws.send_bytes(encode(self._unsent_claims.pop(0)))
             while self._unsent:
                 message = self._outbox.get(self._unsent.pop(0))
                 if message is not None:  # not dropped or acked meanwhile

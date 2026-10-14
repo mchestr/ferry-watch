@@ -72,6 +72,7 @@ ErrorClass = Literal[
 SailingStatus = Literal["available", "sold_out", "unavailable"]
 CartStatus = Literal["adding", "ready", "failed"]
 Phase = Literal["starting", "watching", "holding", "draining"]
+Mode = Literal["warm", "short_check"]  # a warm browser re-checks; a short check checks once and exits
 CheckoutMode = Literal["guest"]  # reserved so an account mode is an addition, not a change of meaning
 Vehicle = Literal["standard", "tall", "none"]
 FarePreference = Literal["cheapest", "saver", "prepaid", "reservation"]
@@ -212,8 +213,8 @@ class State(_Message, tag="state", frozen=True, kw_only=True):
     consecutive_errors: Count = 0
     cart: CartInfo | None = None
     viewer: ViewerInfo = msgspec.field(default_factory=ViewerInfo)
-    alerted: Departures = []  # departures already alerted
-    offered: Departures = []  # departures already put in a cart (never re-carted)
+    alerted: Departures = []  # alerted and carted, or viewed: never carted again
+    offered: Departures = []  # alerted as bookable while carting was held back: may be carted once later
     navs: Navigations = msgspec.field(default_factory=Navigations)
     queue_detours: Count = 0
     working_set_mb: Count = 0
@@ -285,7 +286,15 @@ class Alert(_Message, tag="alert", frozen=True, kw_only=True):
 
 
 ByeReason = Literal[
-    "hold_ended", "drained", "deadline", "recycle", "startup_failed", "lockdown_failed", "fatal", "smoke_done"
+    "hold_ended",
+    "drained",
+    "deadline",
+    "recycle",
+    "startup_failed",
+    "lockdown_failed",
+    "fatal",
+    "smoke_done",
+    "short_check_done",
 ]
 Outcome = Literal["booked", "released", "expired", "expired_by_site", "payment_left_to_site", "none"]
 ReleaseCheck = Literal["cart_empty", "landing_url", "none"]
@@ -301,6 +310,13 @@ class Bye(_Message, tag="bye", frozen=True, kw_only=True):
     viewer_was_connected: bool = False
 
 
+class CartClaim(_Message, tag="cart_claim", frozen=True, kw_only=True):
+    """May this pod cart now? Asked before every add_to_cart, so a user holds one cart at a time."""
+
+    depart: HHMM
+    fare: FarePreference
+
+
 class Hello(_Message, tag="hello", frozen=True, kw_only=True):
     """The first message on every connection: who this is, and what hasn't been acknowledged yet."""
 
@@ -314,7 +330,7 @@ class Hello(_Message, tag="hello", frozen=True, kw_only=True):
     unacked: Annotated[list[Event | Alert | Bye], msgspec.Meta(max_length=MAX_UNACKED)] = []
 
 
-AgentMessage = Hello | State | Event | Alert | Bye
+AgentMessage = Hello | State | Event | Alert | Bye | CartClaim
 
 # ---- operator -> agent
 
@@ -330,6 +346,7 @@ class Configure(_Message, tag="configure", frozen=True, kw_only=True):
 
     trip_spec: TripSpec
     active: bool
+    mode: Mode = "warm"
     interval_s: Annotated[int, msgspec.Meta(ge=MIN_INTERVAL_S, le=MAX_INTERVAL_S)]
     auto_cart: bool
     checkout_mode: CheckoutMode = "guest"
@@ -360,11 +377,20 @@ class Command(_Message, tag="command", frozen=True, kw_only=True):
             raise ValueError(f"{self.op} {'needs' if needs_reason else 'takes no'} reason")
 
 
+ClaimReason = Literal["ok", "holding_elsewhere", "no_holds_left", "quiet_hours", "carting_paused", "limit"]
+
+
+class CartClaimResult(_Message, tag="cart_claim_result", frozen=True, kw_only=True):
+    claim: Seq  # the cart_claim being answered
+    granted: bool
+    reason: ClaimReason
+
+
 class Ack(_Message, tag="ack", frozen=True, kw_only=True):
     acked: Seq  # the agent message being acknowledged
 
 
-ControlMessage = HelloAck | Configure | Command | Ack
+ControlMessage = HelloAck | Configure | Command | CartClaimResult | Ack
 
 # ---- wire
 

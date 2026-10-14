@@ -822,10 +822,10 @@ dedupes on `(pod_uid, boot, seq)`.
 | A→C | `state` | `phase` (starting/watching/holding/draining), `checking`, `checked_at`, `next_due`, `retry_at`, `effective_interval`, `sailings[≤60]{depart, arrive, vessel≤64, status enum, fares[≤6]{name≤32, price, selectable}}`, `error{class enum, text≤300 masked by describe()}`, `consecutive_errors`, `cart{id, status, depart, fare, price, ready_at, unclaimed_deadline, session_deadline, hard_deadline, payment_in_progress}\|null`, `viewer{connected, first_at, seconds}`, `alerted[HH:MM ≤100]`, `offered[HH:MM ≤100]`, `navs{refresh, search, cart, empty, route_info}` since the last message, `queue_detours`, `working_set_mb`, `lockdown_ok`, `bucket`. Sent on change (coalesced over 250 ms) and at least every 15 s. |
 | A→C | `event` | `code` enum (session_opened, sold_out_again, check_failed, cart_added, cart_released, viewer_connected, viewer_disconnected, booking_confirmed, checkout_host_blocked, checkout_login_seen, cart_expired_by_site, opening_seen, opening_gone, …), `params{depart?, fare?, minutes?, class?, seconds?, forced?}` (`forced` only on `checkout_login_seen`, §5.7). No free text, no hostnames. |
 | A→C | `alert` | `kind` enum (bookable, cart_held, cart_failed, cart_lost, cart_expired, failing, hold_reminder, hold_ending, release_unverified, checkout_blocked), `params{departures[≤10], fare?, price?, minutes?, error_class?, by_site?}` |
-| A→C | `cart_claim` | `depart`, `fare≤32` (round 3: asked before every `add_to_cart`) |
+| A→C | `cart_claim` | `depart`, `fare` (the trip's fare preference: the fare itself isn't known until it's selected). Round 3: asked before every `add_to_cart`. Not buffered: with no connection, or no answer within 10 s, the answer is no. |
 | A→C | `bye` | `reason` enum (hold_ended, drained, deadline, recycle, startup_failed, lockdown_failed, fatal, smoke_done, short_check_done), `outcome` enum (booked, released, expired, expired_by_site, payment_left_to_site, none), `cart_emptied`, `release_check` enum (cart_empty, landing_url, none), `viewer_was_connected` |
 | C→A | `hello_ack` | `server_time`, `accepted_proto`, `resend_from` |
-| C→A | `cart_claim_result` | `granted`, `reason` enum (ok, holding_elsewhere, no_holds_left, quiet_hours, carting_paused, limit). A granted claim lapses after 2 min without `cart_held` or `cart_failed` (the agent must start carting within 30 s of the grant, and `add_to_cart` takes at most 40 s). |
+| C→A | `cart_claim_result` | `claim` (the claim's `seq`), `granted`, `reason` enum (ok, holding_elsewhere, no_holds_left, quiet_hours, carting_paused, limit). A granted claim lapses after 2 min without `cart_held` or `cart_failed` (the agent must start carting within 30 s of the grant, and `add_to_cart` takes at most 40 s). |
 | C→A | `configure` | `rev`, `trip` (`Trip.to_json`; the agent re-validates with `Trip.from_json` and requires `id == FW_TRIP_ID`), `active`, `mode` enum (warm, short_check; round 3), `interval_s`, `auto_cart`, `checkout_mode` enum (v1 defines only `guest`; reserved so an account mode is a protocol addition, not a change of meaning), `hold{unclaimed_s, session_s, viewer_gone_s, hard_s}`, `alerted[]`, `offered[]`, `vnc_allowed`, `brake{multiplier, paused}`, `breaker` (closed/open) |
 | C→A | `command` | `id`, `op`: `check_now` \| `release{cart_id}` \| `dismiss{cart_id}` \| `drain{reason}` \| `vnc_revoke{reason}` |
 | C→A | `ack` | `seq` |
@@ -837,8 +837,8 @@ itself (`terminals.py`), so labels from the control plane never feed navigation.
 message and 5-minute re-review are dropped: the token is checked at connect, and in one process the fleet
 loop closes a pod's socket itself when it deletes the pod.
 
-`src/ferry_watch/protocol.py` implemented v1 as first planned; `mode`, `short_check_done` and the
-`cart_claim` pair were added to the plan in round 3, after it was written. Two field names differ from the
+`src/ferry_watch/protocol.py` implements this table, including the round-3 additions (`mode`,
+`short_check_done` and the `cart_claim` pair). Two field names differ from the
 table because the envelope already uses the planned ones: `configure.trip` is `trip_spec` in code (the
 envelope's `trip` is the trip id), and `ack.seq` is `acked` (the envelope's `seq` is the ack's own). The agent never learns or sets its egress
 label; ferry-control changes it from the cart state it already receives.
