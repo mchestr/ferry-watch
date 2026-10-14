@@ -7,7 +7,7 @@ import { Card } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { reportError } from "@/lib/hooks";
 import { MY_STATE_KEY, myApi } from "./api";
-import { markSignedOut } from "./auth";
+import { signOut } from "./auth";
 import { pushSupported, subscribe } from "./push";
 import type { MyState } from "./schema";
 
@@ -31,14 +31,6 @@ export function AccountCard({ state }: { state: MyState }) {
   const pause = useMutation({
     mutationFn: myApi.pauseAll,
     onSuccess: (next) => qc.setQueryData(MY_STATE_KEY, next),
-    onError,
-  });
-  const everywhere = useMutation({
-    mutationFn: myApi.logoutEverywhere,
-    onSuccess: () => {
-      markSignedOut();
-      location.assign("/");
-    },
     onError,
   });
 
@@ -72,8 +64,8 @@ export function AccountCard({ state }: { state: MyState }) {
         {state.quiet_hours.end} we only alert, without holding a cart.
       </p>
       <div className="flex flex-wrap gap-2">
-        <Button size="sm" variant="ghost" disabled={everywhere.isPending} onClick={() => everywhere.mutate()}>
-          <LogOut aria-hidden /> Sign out everywhere
+        <Button size="sm" variant="ghost" onClick={() => void signOut()}>
+          <LogOut aria-hidden /> Sign out
         </Button>
         {state.links.kofi && (
           <LinkButton size="sm" variant="ghost" href={state.links.kofi} target="_blank" rel="noopener noreferrer">

@@ -42,5 +42,4 @@ export const myApi = {
     request("/api/me/push-subscriptions", { method: "DELETE", body: { endpoint }, schema: OkSchema }),
   testAlert: () => request("/api/alerts/test", { method: "POST", body: {}, schema: OkSchema }),
   logout: () => request("/auth/logout", { method: "POST", body: {}, schema: OkSchema }),
-  logoutEverywhere: () => request("/auth/logout-everywhere", { method: "POST", body: {}, schema: OkSchema }),
 };

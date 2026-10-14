@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeSettings } from "@/test/fixtures";
 import { FakeWebSocket } from "@/test/fake-websocket";
@@ -171,6 +171,53 @@ describe("signed in", () => {
     renderWithProviders(<MtApp />);
     expect(await screen.findByRole("button", { name: "Sign in" })).toBeInTheDocument();
     expect(localStorage.getItem("fw.token")).toBeNull();
+  });
+});
+
+describe("settings", () => {
+  beforeEach(() => {
+    localStorage.setItem("fw.token", "t-1");
+  });
+
+  const api = () =>
+    mockFetch((r) => {
+      if (r.url === "/api/state") return jsonResponse(myState());
+      if (r.url.startsWith("/auth/")) return jsonResponse({});
+      return jsonResponse({ terminals: [] });
+    });
+
+  /** The card under a heading. */
+  const card = (heading: HTMLElement): HTMLElement => {
+    const element = heading.closest("div");
+    if (!element) throw new Error("not in a card");
+    return element;
+  };
+
+  it("has its own page, opened from the header, not beside the trips", async () => {
+    api();
+    const { user } = renderWithProviders(<MtApp />);
+    expect(await screen.findByRole("heading", { name: "Your trips" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Your account" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+    expect(await screen.findByRole("heading", { name: "Your account" })).toBeInTheDocument();
+    expect(location.pathname).toBe("/settings");
+    expect(screen.queryByRole("heading", { name: "Your trips" })).toBeNull();
+  });
+
+  it.each([
+    ["the settings page", (account: HTMLElement) => within(account).getByRole("button", { name: "Sign out" })],
+    ["the header", () => within(screen.getByRole("banner")).getByRole("button", { name: "Sign out" })],
+  ])("signs out this device only, from %s", async (_where, button) => {
+    const assign = vi.fn();
+    vi.stubGlobal("location", { ...window.location, assign, pathname: "/settings", search: "" });
+    const { requests } = api();
+    const { user } = renderWithProviders(<MtApp />);
+    const account = card(await screen.findByRole("heading", { name: "Your account" }));
+    await user.click(button(account));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/"));
+    expect(requests.filter((r) => r.url.startsWith("/auth/")).map((r) => r.url)).toEqual(["/auth/logout"]);
+    expect(localStorage.getItem("fw.token")).toBeNull();
+    expect(localStorage.getItem("fw.signedOut")).toBe("1");
   });
 });
 
