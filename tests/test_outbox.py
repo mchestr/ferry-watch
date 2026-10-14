@@ -16,6 +16,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestServer
 from cryptography.hazmat.primitives.asymmetric import ec
 
+from ferry_watch.bcferries.terminals import Terminals
 from ferry_watch.models import Trip
 from ferry_watch.web.messages import Messages
 from ferry_watch.web.outbox import RETRY_SECONDS, Outbox, allowed_endpoint, subscription_row
@@ -146,10 +147,33 @@ async def test_a_bookable_alert_is_pushed_only(rig: Rig) -> None:
 
 async def test_email_stands_in_when_no_device_works(rig: Rig) -> None:
     rig.push.status = 410  # the browser unsubscribed
-    await rig.queue("bookable", {"departures": ["09:00"]})
+    await rig.queue("bookable", {"departures": ["09:00"], "held_back": "quiet_hours"})
     await rig.outbox.deliver_due()
     assert [to for to, _, _ in rig.mailer.sent] == ["ann@example.com"]
+    (_, _, text) = rig.mailer.sent[0]
+    assert text.startswith("We don't hold carts overnight. Open Ferry Watch to hold it now.\n\n")
+    assert f"https://ferry.chestr.dev/c/{TRIP.id}\n" in text  # the trip's page
+    assert "bcferries.com" not in text  # no terminal list here: no second link, rather than a wrong one
     assert await rig.sql("SELECT * FROM push_subscriptions") == []  # forgotten
+
+
+def test_unheld_alerts_say_why_and_link_to_the_trip(terminals: Terminals) -> None:
+    messages = Messages("https://ferry.chestr.dev", lambda: terminals)
+    trip = Trip(id=TRIP.id, origin="NAN", destination="HSB", date=date(2026, 10, 16))
+    page = f"https://ferry.chestr.dev/c/{TRIP.id}"
+    quiet = messages.render("bookable", {"departures": ["09:00"], "held_back": "quiet_hours"}, trip)
+    assert quiet is not None
+    assert (quiet.url, quiet.body) == (page, "We don't hold carts overnight. Open Ferry Watch to hold it now.")
+    assert quiet.also is not None
+    assert quiet.also[1].startswith("https://www.bcferries.com/?sailing=true&departureLocation=NAN")
+    older = messages.render("bookable", {"departures": ["09:00"]}, trip)  # queued before held_back existed
+    assert older is not None
+    assert older.body == "We couldn't hold it this time. Open Ferry Watch to try again."
+    failed = messages.render("cart_failed", {"departures": ["09:00"], "error_class": "not_bookable"}, trip)
+    assert failed is not None
+    assert failed.url == page
+    assert failed.body == "BC Ferries didn't let us hold it (it may have just sold out). Open Ferry Watch to try again."
+    assert failed.push() == {"title": failed.title, "body": failed.body, "url": page}  # a push opens one link
 
 
 async def test_failures_are_retried_later(rig: Rig) -> None:

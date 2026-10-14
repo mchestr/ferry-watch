@@ -19,7 +19,7 @@ from ferry_watch.agent.watch import (
     Finish,
     TripWatcher,
 )
-from ferry_watch.bcferries.errors import MarkupChanged
+from ferry_watch.bcferries.errors import MarkupChanged, NotBookable
 from ferry_watch.bcferries.urls import CheckoutView
 from ferry_watch.models import PACIFIC, Fare, Sailing, SailingStatus, Trip
 from ferry_watch.protocol import (
@@ -290,7 +290,7 @@ async def test_a_failed_cart_alerts_and_can_be_dismissed(rig: Rig) -> None:
     rig.site.cart_error = MarkupChanged("no fare buttons")
     open_up(rig, 9)
     await rig.check()
-    assert rig.link.kinds == ["cart_failed"]
+    assert rig.link.alerts == [("cart_failed", AlertParams(departures=["09:00"], error_class="markup_changed"))]
     cart = rig.watcher.cart
     assert cart is not None
     assert cart.status is CartStatus.FAILED
@@ -298,10 +298,69 @@ async def test_a_failed_cart_alerts_and_can_be_dismissed(rig: Rig) -> None:
     assert rig.watcher.cart is None
 
 
+async def test_a_failed_cart_is_left_alone_until_the_user_asks(rig: Rig) -> None:
+    """Each try spends one of the user's daily cart attempts, so a failure isn't retried on every check."""
+    rig.site.cart_error = MarkupChanged("no fare buttons")
+    open_up(rig, 9, 11)
+    for _ in range(4):
+        await rig.check()
+    assert rig.link.claims == [("09:00", "cheapest"), ("11:00", "cheapest")]  # each tried once
+    assert rig.link.alerts == [
+        ("cart_failed", AlertParams(departures=["09:00", "11:00"], error_class="markup_changed")),
+        ("cart_failed", AlertParams(departures=["11:00"], error_class="markup_changed")),  # each frees its claim
+    ]
+    rig.watcher.check_now()  # "Check now" or "Hold it for me"
+    await rig.check()
+    assert rig.link.claims[-1] == ("09:00", "cheapest")
+    rig.site.cart_error = None
+    rig.watcher.check_now()
+    await rig.check()
+    assert rig.watcher.holding
+    assert rig.link.kinds == ["cart_failed", "cart_failed", "cart_failed", "cart_held"]
+
+
+async def test_a_hold_asked_for_after_a_bookable_alert_says_when_it_fails(rig: Rig) -> None:
+    """ "Hold it for me" asks for a sailing already alerted as bookable: its failure still alerts, which is
+    what frees the user's cart claim and ends the request."""
+    rig.store.apply(configure(rev=2, auto_cart=False))  # quiet hours
+    open_up(rig, 9)
+    await rig.check()
+    assert rig.link.kinds == ["bookable"]
+    rig.store.apply(configure(rev=2, auto_cart=True))  # the request lifts them
+    rig.site.cart_error = NotBookable("sold out while adding")
+    rig.watcher.check_now()
+    await rig.check()
+    assert rig.link.alerts[-1] == ("cart_failed", AlertParams(departures=["09:00"], error_class="not_bookable"))
+
+
+async def test_failures_are_forgotten_when_the_trip_changes(rig: Rig) -> None:
+    rig.site.cart_error = MarkupChanged("no fare buttons")
+    open_up(rig, 9)
+    await rig.check()
+    rig.site.cart_error = None
+    edited = Trip.from_json(TRIP.to_json() | {"fare": "saver"})  # same search, another fare
+    rig.store.apply(configure(rev=2, trip=edited))
+    await rig.check()
+    assert rig.link.claims == [("09:00", "cheapest"), ("09:00", "saver")]
+    assert rig.watcher.holding
+
+
+async def test_a_failed_sailing_is_tried_again_after_it_sells_out_and_reopens(rig: Rig) -> None:
+    rig.site.cart_error = MarkupChanged("no fare buttons")
+    open_up(rig, 9)
+    await rig.check()
+    open_up(rig)
+    await rig.check()
+    open_up(rig, 9)
+    await rig.check()
+    assert rig.link.claims == [("09:00", "cheapest"), ("09:00", "cheapest")]
+
+
 async def test_cart_attempts_are_capped(rig: Rig) -> None:
     rig.site.cart_error = MarkupChanged("no fare buttons")
     open_up(rig, 9)
     for _ in range(MAX_CART_ATTEMPTS + 2):
+        rig.watcher.check_now()
         await rig.check()
     assert len(rig.link.claims) == MAX_CART_ATTEMPTS
 

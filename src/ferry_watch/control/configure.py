@@ -7,7 +7,7 @@ the hub endpoint (on connect, on a trip change, and on each cart claim) and its 
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 
 import msgspec
@@ -70,12 +70,22 @@ class Allowance:
 
 
 def cart_gate(
-    trip: Trip, allowance: Allowance, switches: Switches, settings: HubSettings, now: datetime
+    trip: Trip,
+    allowance: Allowance,
+    switches: Switches,
+    settings: HubSettings,
+    now: datetime,
+    *,
+    requested: bool = False,
 ) -> ClaimReason:
-    """Whether a new cart may be put in now ("ok"), or why not. Holding elsewhere is the claim's own check."""
+    """Whether a new cart may be put in now ("ok"), or why not. Holding elsewhere is the claim's own check.
+
+    `requested`: the user asked for a hold ("Hold it for me"). Quiet hours keep carts from being held while
+    nobody is awake to check out, so they don't apply to someone who is there asking; everything else does.
+    """
     if switches.maintenance or switches.pause_carting or not settings.auto_cart:
         return "carting_paused"
-    if settings.policy.quiet(now):
+    if settings.policy.quiet(now) and not requested:
         return "quiet_hours"
     if allowance.holds_today >= allowance.holds_per_day:
         return "no_holds_left"
@@ -121,6 +131,10 @@ class TripRow:
     paused_reason: str | None
     alerted: tuple[str, ...] = ()
     offered: tuple[str, ...] = ()
+    hold_requested_until: float | None = None  # "Hold it for me", until then
+
+    def hold_requested(self, now: float) -> bool:
+        return self.hold_requested_until is not None and now < self.hold_requested_until
 
 
 def build_configure(
@@ -137,6 +151,9 @@ def build_configure(
 ) -> Configure:
     at = datetime.fromtimestamp(now, PACIFIC)
     trip = row.trip
+    requested = row.hold_requested(now)
+    if requested:
+        trip = replace(trip, auto_cart=True)  # the user asked for this hold, whatever the trip's own setting
     active = user_active and row.enabled and row.paused_reason is None
     active = active and not switches.maintenance and not switches.brake.paused
     interval = interval_s(curve_interval(trip, at, settings.policy), stretch_by, switches.brake)
@@ -146,7 +163,7 @@ def build_configure(
         active=active,
         mode=mode,
         interval_s=interval,
-        auto_cart=cart_gate(trip, allowance, switches, settings, at) == "ok",
+        auto_cart=cart_gate(trip, allowance, switches, settings, at, requested=requested) == "ok",
         hold=settings.hold,
         alerted=list(row.alerted)[:100],
         offered=list(row.offered)[:100],

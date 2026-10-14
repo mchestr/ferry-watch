@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -57,7 +58,8 @@ def build(
     app.router.add_routes(api.routes())
     admin.install(app, pool, limits, accounts.policy)
     app.router.add_get("/livez", livez, allow_head=False)
-    hub = LiveHub(pool, accounts, store.snapshot)
+    # The same state as GET /api/state: the push key, the links and the trips' booking links included.
+    hub = LiveHub(pool, accounts, functools.partial(api.user_state, app))
     app[LIVE] = hub
     app.router.add_get("/api/ws", hub.serve, allow_head=False)
 

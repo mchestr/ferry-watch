@@ -26,7 +26,13 @@ from .limits import Limits
 log = logging.getLogger(__name__)
 
 USER_CHANNEL = "fw_user"  # NOTIFY payload: a user id whose dashboard changed
+# Why a bookable sailing wasn't held, as far as ferry-control can tell ("unknown": the pod's own limits, or
+# a claim it couldn't make while disconnected).
+HeldBack = Literal[
+    "auto_cart_off", "quiet_hours", "no_holds_left", "limit", "carting_paused", "holding_elsewhere", "unknown"
+]
 CLAIM_LAPSE_SECONDS = 120  # a claim without cart_held or cart_failed by then is dropped
+VNC_BEFORE_0003 = "pre-0003"  # browser_pods.vnc_boot of pods that were live when migration 0003 ran
 AFTER_CHECKOUT = "after_checkout"  # trips.paused_reason until "Did you book it?" is answered
 _PHASES = {"starting": "starting", "watching": "watching", "holding": "holding", "draining": "draining"}
 
@@ -77,8 +83,10 @@ class ControlStore:
     async def trip_row(self, trip_id: str) -> tuple[TripRow, bool] | None:
         """The trip as configured, and whether its owner is active."""
         row = await self._pool.fetchrow(
-            "SELECT t.spec, t.rev, t.enabled, t.paused_reason, t.archived_at, u.state, m.alerted, m.offered"
+            "SELECT t.spec, t.rev, t.enabled, t.paused_reason, t.archived_at, u.state, m.alerted, m.offered,"
+            " r.hold_requested_until"
             " FROM trips t JOIN users u ON u.id = t.user_id LEFT JOIN alert_memory m ON m.trip_id = t.id"
+            " LEFT JOIN trip_runtime r ON r.trip_id = t.id"
             " WHERE t.id = $1",
             trip_id,
         )
@@ -96,8 +104,20 @@ class ControlStore:
             paused_reason=row["paused_reason"],
             alerted=tuple(row["alerted"] or ()),
             offered=tuple(row["offered"] or ()),
+            hold_requested_until=row["hold_requested_until"].timestamp() if row["hold_requested_until"] else None,
         )
         return trip_row, row["state"] == "active"
+
+    async def holding_elsewhere(self, binding: Binding) -> bool:
+        """Whether the user's one hold is claimed by another pod (a claim that lapsed doesn't count)."""
+        found = await self._pool.fetchval(
+            "SELECT 1 FROM hold_claims WHERE user_id = $1 AND pod <> $2"
+            " AND (cart_id IS NOT NULL OR claimed_at > now() - make_interval(secs => $3))",
+            binding.user_id,
+            binding.pod,
+            CLAIM_LAPSE_SECONDS,
+        )
+        return found is not None
 
     async def allowance(self, user_id: str, now: float) -> Allowance:
         overrides = {
@@ -142,8 +162,13 @@ class ControlStore:
             pod,
         )
 
-    async def consume_command(self, command_id: int) -> None:
-        await self._pool.execute("UPDATE agent_commands SET consumed_at = now() WHERE id = $1", command_id)
+    async def consume_command(self, command_id: int) -> bool:
+        """Mark a command consumed. False if something else already had (each is sent at most once)."""
+        consumed = await self._pool.fetchval(
+            "UPDATE agent_commands SET consumed_at = now() WHERE id = $1 AND consumed_at IS NULL RETURNING id",
+            command_id,
+        )
+        return consumed is not None
 
     # ---- what a pod reports
 
@@ -198,6 +223,15 @@ class ControlStore:
                     binding.pod,
                     cart.id,
                 )
+            else:
+                # The hold this claim was for has ended without an alert that frees it (released on the
+                # dashboard, or the trip edited, on a pod nobody viewed). The pod watches on; the user may hold
+                # again. A claim still waiting for its cart (cart_id NULL) is left alone.
+                await conn.execute(
+                    "DELETE FROM hold_claims WHERE user_id = $1 AND pod = $2 AND cart_id IS NOT NULL",
+                    binding.user_id,
+                    binding.pod,
+                )
             await conn.execute(
                 "INSERT INTO alert_memory (trip_id, key_hash, alerted, offered) VALUES ($1, '', $2, $3)"
                 " ON CONFLICT (trip_id) DO UPDATE SET alerted = $2, offered = $3",
@@ -217,8 +251,16 @@ class ControlStore:
             binding.key(boot, event.seq),
         )
 
-    async def record_alert(self, binding: Binding, boot: str, alert: Alert, now: float) -> bool:
-        """Queue the alert for the user. False if it was already queued (a replay)."""
+    async def record_alert(
+        self, binding: Binding, boot: str, alert: Alert, now: float, held_back: HeldBack | None = None
+    ) -> bool:
+        """Queue the alert for the user. False if it was already queued (a replay).
+
+        `held_back`: for a bookable alert, why no cart was held, so the message can say so.
+        """
+        params = msgspec.to_builtins(alert.params)
+        if held_back is not None:
+            params["held_back"] = held_back
         async with self._pool.acquire() as conn, conn.transaction():
             queued = await conn.fetchval(
                 "INSERT INTO notifications (user_id, trip_id, kind, params, dedup_key) VALUES ($1, $2, $3, $4, $5)"
@@ -226,11 +268,16 @@ class ControlStore:
                 binding.user_id,
                 binding.trip_id,
                 alert.kind,
-                _json(alert.params),
+                _json(params),
                 binding.key(boot, alert.seq),
             )
             if queued is None:
                 return False
+            if alert.kind in ("cart_held", "cart_failed"):
+                # A hold the user asked for has been tried: back to the trip's own settings and quiet hours.
+                await conn.execute(
+                    "UPDATE trip_runtime SET hold_requested_until = NULL WHERE trip_id = $1", binding.trip_id
+                )
             if alert.kind == "cart_held":
                 await _count(conn, binding.user_id, now, "holds")
             elif alert.kind in ("cart_failed", "cart_lost", "cart_expired"):
@@ -312,10 +359,25 @@ class ControlStore:
         """Tell ferry-web this user's dashboard has something new (LISTEN fw_user)."""
         await self._pool.execute("SELECT pg_notify($1, $2)", USER_CHANNEL, user_id)
 
-    async def add_vnc_seconds(self, user_id: str, seconds: int, now: float) -> None:
-        if seconds > 0:
-            async with self._pool.acquire() as conn:
-                await _count(conn, user_id, now, "vnc_seconds", seconds)
+    async def count_vnc_seconds(self, binding: Binding, boot: str, total: int, now: float) -> None:
+        """Add to the user's day the checkout seconds of this boot's `total` not counted yet."""
+        async with self._pool.acquire() as conn, conn.transaction():
+            row = await conn.fetchrow(
+                "SELECT vnc_boot, vnc_seconds FROM browser_pods WHERE name = $1 FOR UPDATE", binding.pod
+            )
+            if row is None:
+                return
+            if row["vnc_boot"] == VNC_BEFORE_0003:
+                counted = total  # the ferry-control before 0003 counted this boot's seconds as they came
+            else:
+                counted = row["vnc_seconds"] if row["vnc_boot"] == boot else 0
+            if total < counted or (total == counted and row["vnc_boot"] == boot):
+                return
+            await conn.execute(
+                "UPDATE browser_pods SET vnc_boot = $2, vnc_seconds = $3 WHERE name = $1", binding.pod, boot, total
+            )
+            if total > counted:
+                await _count(conn, binding.user_id, now, "vnc_seconds", total - counted)
 
 
 async def _count(

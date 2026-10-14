@@ -72,8 +72,9 @@ def _grants(web: str, control: str) -> list[str]:
         f"GRANT SELECT, INSERT, UPDATE, DELETE ON users, identities, unmatched_identities, invites, sessions,"
         f" user_limits, push_subscriptions, trips TO {web}",
         f"GRANT SELECT ON trip_runtime, browser_pods, hold_claims, trip_state, alert_memory TO {web}",
-        # ... and may make a short check due now (a new trip, a re-enable, a manual check), nothing more.
-        f"GRANT INSERT (trip_id), UPDATE (next_check_at) ON trip_runtime TO {web}",
+        # ... and may make a short check due now (a new trip, a re-enable, a manual check) and ask for a
+        # hold ("Hold it for me"), nothing more.
+        f"GRANT INSERT (trip_id), UPDATE (next_check_at, hold_requested_until) ON trip_runtime TO {web}",
         f"GRANT DELETE ON alert_memory TO {web}",  # an edited search forgets what the old one alerted
         f"GRANT SELECT, INSERT ON agent_commands, events, vnc_mints, notifications TO {web}",
         f"GRANT DELETE ON events TO {web}",  # deleting a user takes their history with them

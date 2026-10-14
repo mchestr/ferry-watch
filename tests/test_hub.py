@@ -253,6 +253,41 @@ async def test_state_is_recorded(rig: Rig, agent: Agent) -> None:
     assert usage[0]["amount"] == 90
 
 
+async def test_checkout_seconds_are_counted_once_across_reconnects(rig: Rig, agent: Agent) -> None:
+    def watched(seconds: int) -> State:
+        return State(**agent.client.envelope(), phase="holding", viewer=ViewerInfo(connected=True, seconds=seconds))
+
+    async def counted() -> int:
+        rows = await rig.fetch("SELECT amount FROM usage_ledger WHERE kind = 'vnc_seconds'")
+        return rows[0]["amount"] if rows else 0
+
+    agent.client.publish(watched(90))
+    await eventually(rig, "SELECT 1 FROM usage_ledger WHERE kind = 'vnc_seconds' AND amount = 90")
+    await rig.hub._peers[POD].ws.close()  # a dropped socket, or a restarted ferry-control: the agent says hello again
+    await until(lambda: rig.hub.connected(POD) and rig.hub._peers[POD].vnc_seconds == 90)
+    assert await counted() == 90  # the hello's snapshot repeats the running total; it isn't counted again
+    agent.client.publish(watched(150))
+    await eventually(rig, "SELECT 1 FROM usage_ledger WHERE kind = 'vnc_seconds' AND amount = 150")
+
+
+async def test_checkout_seconds_already_counted_before_0003_are_not_counted_again(rig: Rig, agent: Agent) -> None:
+    """A pod live when 0003 ran: the old ferry-control counted its seconds, so its next total is the baseline."""
+    owner = await rig.db.connect()
+    try:
+        await owner.execute("UPDATE browser_pods SET vnc_boot = 'pre-0003'")
+    finally:
+        await owner.close()
+
+    def watched(seconds: int) -> State:
+        return State(**agent.client.envelope(), phase="holding", viewer=ViewerInfo(connected=True, seconds=seconds))
+
+    agent.client.publish(watched(900))
+    await eventually(rig, "SELECT 1 FROM browser_pods WHERE vnc_seconds = 900")  # the baseline, counted by nobody
+    assert await rig.fetch("SELECT 1 FROM usage_ledger WHERE kind = 'vnc_seconds'") == []
+    agent.client.publish(watched(960))
+    await eventually(rig, "SELECT 1 FROM usage_ledger WHERE kind = 'vnc_seconds' AND amount = 60")
+
+
 async def test_alerts_are_queued_once_even_when_replayed(rig: Rig, agent: Agent) -> None:
     alert = Alert(**agent.client.envelope(), kind="cart_held", params=AlertParams(departures=["09:00"], fare="Saver"))
     agent.client.send(alert)
@@ -274,10 +309,96 @@ async def test_one_hold_per_user(rig: Rig, agent: Agent) -> None:
     assert (await rig.fetch("SELECT amount FROM usage_ledger WHERE kind = 'cart_attempts'"))[0]["amount"] == 1
 
 
+async def test_a_hold_that_ends_without_an_alert_frees_the_claim(rig: Rig, agent: Agent) -> None:
+    """Released on the dashboard, nobody viewing: the pod watches on, and the user may hold again."""
+    assert await agent.client.claim("09:00", "saver") is True
+    ready = CartInfo(id="abc123", status="ready", depart="09:00", ready_at=NOON)
+    agent.client.publish(State(**agent.client.envelope(), phase="holding", cart=ready))
+    await eventually(rig, "SELECT 1 FROM hold_claims WHERE cart_id = 'abc123'")
+    agent.client.publish(State(**agent.client.envelope(), phase="watching"))
+    async with asyncio.timeout(5):
+        while await rig.fetch("SELECT 1 FROM hold_claims"):  # noqa: ASYNC110 - polls the database
+            await asyncio.sleep(0.02)
+    assert await agent.client.claim("11:00", "saver") is True
+
+
+async def test_a_claim_waiting_for_its_cart_is_kept(rig: Rig, agent: Agent) -> None:
+    assert await agent.client.claim("09:00", "saver") is True
+    agent.client.publish(State(**agent.client.envelope(), phase="watching", checked_at=NOON))
+    await eventually(rig, "SELECT 1 FROM trip_state WHERE checked_at IS NOT NULL")
+    assert len(await rig.fetch("SELECT 1 FROM hold_claims")) == 1
+
+
 async def test_no_carts_in_quiet_hours(rig: Rig, agent: Agent) -> None:
     rig.clock[0] = datetime(2026, 10, 15, 23, 30, tzinfo=PACIFIC).timestamp()
     assert await agent.client.claim("09:00", "saver") is False
     assert await rig.fetch("SELECT * FROM hold_claims") == []
+
+
+async def request_hold(rig: Rig, minutes: int = 10) -> None:
+    owner = await rig.db.connect()
+    try:
+        await owner.execute(
+            "UPDATE trip_runtime SET hold_requested_until = to_timestamp($1)", rig.clock[0] + minutes * 60
+        )
+    finally:
+        await owner.close()
+
+
+async def test_a_hold_the_user_asks_for_is_claimed_in_quiet_hours(rig: Rig, agent: Agent) -> None:
+    rig.clock[0] = datetime(2026, 10, 15, 23, 30, tzinfo=PACIFIC).timestamp()
+    await request_hold(rig)
+    assert await agent.client.claim("09:00", "saver") is True
+    held = Alert(**agent.client.envelope(), kind="cart_held", params=AlertParams(departures=["09:00"]))
+    agent.client.send(held)
+    await until(lambda: agent.client.acked(held.seq))
+    rows = await rig.fetch("SELECT hold_requested_until FROM trip_runtime")
+    assert rows[0]["hold_requested_until"] is None  # tried: quiet hours apply again
+
+
+async def test_a_lapsed_request_is_quiet_hours_again(rig: Rig, agent: Agent) -> None:
+    rig.clock[0] = datetime(2026, 10, 15, 23, 30, tzinfo=PACIFIC).timestamp()
+    await request_hold(rig, minutes=-1)
+    assert await agent.client.claim("09:00", "saver") is False
+
+
+@pytest.mark.parametrize(
+    ("setup", "held_back"),
+    [
+        ("quiet", "quiet_hours"),
+        ("manual", "auto_cart_off"),
+        ("elsewhere", "holding_elsewhere"),
+        ("nothing", "unknown"),
+    ],
+)
+async def test_a_bookable_alert_says_why_nothing_was_held(rig: Rig, agent: Agent, setup: str, held_back: str) -> None:
+    owner = await rig.db.connect()
+    try:
+        if setup == "quiet":
+            rig.clock[0] = datetime(2026, 10, 15, 23, 30, tzinfo=PACIFIC).timestamp()
+        elif setup == "manual":
+            spec = TRIP.to_json() | {"auto_cart": False}
+            await owner.execute("UPDATE trips SET spec = $1", json.dumps(spec))
+        elif setup == "elsewhere":
+            await owner.execute(
+                "INSERT INTO hold_claims (user_id, trip_id, pod, cart_id) VALUES ($1, 'ffffffffffffffff', 'x', 'c1')",
+                USER,
+            )
+    finally:
+        await owner.close()
+    alert = Alert(**agent.client.envelope(), kind="bookable", params=AlertParams(departures=["09:00"]))
+    agent.client.send(alert)
+    await until(lambda: agent.client.acked(alert.seq))
+    rows = await rig.fetch("SELECT params FROM notifications")
+    assert json.loads(rows[0]["params"]) == {
+        "departures": ["09:00"],
+        "fare": None,
+        "price": None,
+        "minutes": None,
+        "error_class": None,
+        "by_site": None,
+        "held_back": held_back,
+    }
 
 
 async def test_a_viewed_hold_without_a_booking_pauses_the_trip(rig: Rig, agent: Agent) -> None:

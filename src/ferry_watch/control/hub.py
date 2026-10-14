@@ -49,7 +49,7 @@ from ferry_watch.protocol import (
 from .configure import HubSettings, build_configure, cart_gate, worth_pushing
 from .kube import Cluster
 from .pods import HUB_TOKEN_AUDIENCE
-from .store import Binding, ControlStore
+from .store import Binding, ControlStore, HeldBack
 
 log = logging.getLogger(__name__)
 
@@ -70,7 +70,7 @@ class Peer:
     rev: int = 0
     last_heard: float = field(default_factory=time.time)
     sent_configure: Configure | None = None
-    vnc_seconds: int = 0  # as last reported, to count only what's new
+    vnc_seconds: int = 0  # as last reported on this socket, to skip the store when nothing is new
     seq: itertools.count[int] = field(default_factory=lambda: itertools.count(1))
 
     def envelope(self) -> dict[str, Any]:
@@ -217,9 +217,8 @@ class HubEndpoint:
         peer.last_heard = now
         if isinstance(message, State):
             await self._store.record_state(binding, peer.boot, message)
-            new_seconds = message.viewer.seconds - peer.vnc_seconds
-            if new_seconds > 0:
-                await self._store.add_vnc_seconds(binding.user_id, new_seconds, now)
+            if message.viewer.seconds > peer.vnc_seconds:  # the store counts each second once, across reconnects
+                await self._store.count_vnc_seconds(binding, peer.boot, message.viewer.seconds, now)
                 peer.vnc_seconds = message.viewer.seconds
         elif isinstance(message, CartClaim):
             await self._answer_claim(peer, message)
@@ -227,7 +226,8 @@ class HubEndpoint:
             if isinstance(message, Event):
                 await self._store.record_event(binding, peer.boot, message)
             elif isinstance(message, Alert):
-                await self._store.record_alert(binding, peer.boot, message, now)
+                held_back = await self._held_back(binding, now) if message.kind == "bookable" else None
+                await self._store.record_alert(binding, peer.boot, message, now, held_back)
             else:
                 await self._store.record_bye(binding, peer.boot, message, now)
             await self._send(peer, Ack(**peer.envelope(), acked=message.seq))
@@ -243,12 +243,30 @@ class HubEndpoint:
             row, _ = found
             allowance = await self._store.allowance(binding.user_id, now)
             switches = await self._store.switches()
-            gate = cart_gate(row.trip, allowance, switches, self._settings, datetime.fromtimestamp(now, PACIFIC))
+            at = datetime.fromtimestamp(now, PACIFIC)
+            gate = cart_gate(row.trip, allowance, switches, self._settings, at, requested=row.hold_requested(now))
             reason = await self._store.claim(binding, gate, now)
         log.info("%s: cart claim for %s: %s", binding.pod, claim.depart, reason)
         await self._send(
             peer, CartClaimResult(**peer.envelope(), claim=claim.seq, granted=reason == "ok", reason=reason)
         )
+
+    async def _held_back(self, binding: Binding, now: float) -> HeldBack:
+        """Why a pod alerted a bookable sailing instead of holding it, as far as the records say."""
+        found = await self._store.trip_row(binding.trip_id)
+        if found is None or not found[1]:
+            return "carting_paused"
+        row, _ = found
+        requested = row.hold_requested(now)
+        if not row.trip.auto_cart and not requested:
+            return "auto_cart_off"
+        allowance = await self._store.allowance(binding.user_id, now)
+        switches = await self._store.switches()
+        at = datetime.fromtimestamp(now, PACIFIC)
+        gate = cart_gate(row.trip, allowance, switches, self._settings, at, requested=requested)
+        if gate != "ok":
+            return gate
+        return "holding_elsewhere" if await self._store.holding_elsewhere(binding) else "unknown"
 
     # ---- what the endpoint sends
 
@@ -280,12 +298,14 @@ class HubEndpoint:
 
     async def _push_commands(self, peer: Peer) -> None:
         for row in await self._store.pending_commands(peer.binding.trip_id, peer.binding.pod):
+            # Consumed first: a reconnect's greeting and the refresh tick can both find the same row.
+            if not await self._store.consume_command(row["id"]):
+                continue
             if row["op"] != "recycle":
                 await self._send(peer, Command(**peer.envelope(), id=row["id"], op=row["op"], cart_id=row["cart_id"]))
             elif not row["stale"]:
                 # An admin's recycle: the pod drains (handing back any cart) and the fleet starts the next one.
                 await self._send(peer, Command(**peer.envelope(), id=row["id"], op="drain", reason="recycle"))
-            await self._store.consume_command(row["id"])
 
     async def _send(self, peer: Peer, message: ControlMessage) -> None:
         with contextlib.suppress(ConnectionResetError):

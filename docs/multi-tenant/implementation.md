@@ -57,8 +57,9 @@ running until cutover.
 | Module | What |
 |---|---|
 | `MtApp.tsx`, `auth.ts`, `router.ts` | Sign-in (one button; the code leaves the address bar at once), quiet re-verification on a 401, the signed-out screen, `/`, `/c/<trip>` and `/auth/callback`. |
-| `MyTripCard.tsx`, `trips.ts` | Each trip in plain words (watching closely, checked every 6 h, waiting for a free browser, holding a cart, "Did you book it?"), the held cart, release and dismiss, check now, the shared trip editor. |
-| `CheckoutPage.tsx` | `/c/<trip>`: never opens the checkout by itself; "Check out on this device" mints the one-minute link. |
+| `MyTripCard.tsx`, `trips.ts` | Each trip in plain words (every 2 minutes, checked every 6 h, waiting for a free browser, bookable now, holding a cart, "Did you book it?"), the held cart, release and dismiss, check now, the shared trip editor. |
+| `NotHeld.tsx` | A bookable sailing nothing holds, on the card and on `/c/<trip>`: why (`hold.reason`), "Hold it for me" (`POST /api/trips/{id}/hold`) and "Book on bcferries.com" (`booking_url`). |
+| `CheckoutPage.tsx` | `/c/<trip>`: never opens the checkout by itself; "Check out on this device" mints the one-minute link. With nothing held it shows `NotHeld`, so a "Bookable" alert lands somewhere useful. |
 | `AccountCard.tsx`, `push.ts`, `public/sw.js` | Web Push for the device, a test alert, pause everything, sign out everywhere, the Ko-fi link. |
 | `live.ts`, `api.ts`, `schema.ts` | The per-user socket (first-message auth) and the bearer API. |
 | `AdminPage.tsx`, `admin.ts`, `ReasonDialog.tsx` | `/admin`, for admins. Fleet: the switches and the breaker, capacity and budget from ferry-control's last pass, holds now (cart summary only) with release and recycle, the attention list, the week's outcomes. People: limits and where each comes from, sessions, devices, today's usage, sign out everywhere, make or remove admin, suspend (releasing a held cart or letting it finish), reinstate, delete, invitations, sign-ins turned away. Every change asks why. |

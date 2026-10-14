@@ -9,15 +9,17 @@ from __future__ import annotations
 
 import json
 import secrets
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
+from datetime import time as clock_time
 from typing import Any
 
 import asyncpg
 
+from ferry_watch.control.configure import Allowance, HubSettings, Switches, cart_gate
 from ferry_watch.control.limits import LimitKey, Limits
-from ferry_watch.control.store import USER_CHANNEL
+from ferry_watch.control.store import CLAIM_LAPSE_SECONDS, USER_CHANNEL
 from ferry_watch.models import PACIFIC, Trip, ValidationError
 from ferry_watch.polling import PollPolicy
 
@@ -30,6 +32,16 @@ BOOKED_REASONS = frozenset(
 )
 MANUAL_CHECK_WINDOW_S = 3600
 MINT_WINDOW_S = 60
+HOLD_REQUEST_S = 600  # how long "Hold it for me" lets the trip's pod cart through quiet hours
+# Why a hold the user asks for can't happen now, in their words.
+HOLD_REFUSED = {
+    "carting_paused": "Holding carts is paused right now",
+    "holding_elsewhere": "You're already holding a cart on another trip",
+    "no_holds_left": "You've used today's holds",
+    "limit": "You've reached today's limit for holding carts",
+    "already_held": "It was held for you once already; book it yourself on bcferries.com",
+    "paused": "This trip is paused",
+}
 
 
 def _ts(epoch: float) -> datetime:
@@ -42,6 +54,75 @@ def _epoch(value: datetime | None) -> float | None:
 
 def _today(now: float) -> date:
     return datetime.fromtimestamp(now, PACIFIC).date()
+
+
+@dataclass(frozen=True, slots=True)
+class HoldContext:
+    """What decides whether this user's trips may hold a cart now (ferry-control's gate decides for real).
+
+    ferry-web doesn't see ferry-control's own settings (fleet-wide auto-cart, alert-only fares, the session
+    length), so it takes the defaults; at worst a hold it offers is refused and the alert says why.
+    """
+
+    allowance: Allowance
+    switches: Switches
+    claimed_trip: str | None  # the trip holding the user's one cart claim, if any
+    settings: HubSettings
+    at: datetime
+
+    def hold(
+        self,
+        trip: Trip,
+        *,
+        paused: bool,
+        sailings: list[dict[str, Any]],
+        alerted: Iterable[str],
+        requested_until: float | None,
+        now: float,
+    ) -> dict[str, Any]:
+        """Why auto-hold won't hold this trip's sailings now (None: it would), whether asking would help, and
+        which bookable departures a hold could still be for (`holdable`)."""
+        if paused:  # nothing is watching it: what the last check saw is history
+            return {
+                "reason": "paused",
+                "can_request": False,
+                "holdable": [],
+                "requested_at": None,
+                "requested_until": None,
+            }
+        bookable = bookable_in_window(trip, sailings)
+        # A departure held once (then released, expired or viewed) is never carted again by the pod.
+        holdable = [d for d in bookable if d not in set(alerted)]
+        blocked: str = cart_gate(trip, self.allowance, self.switches, self.settings, self.at, requested=True)
+        if blocked == "ok" and self.claimed_trip not in (None, trip.id):
+            blocked = "holding_elsewhere"
+        if blocked == "ok" and bookable and not holdable:
+            blocked = "already_held"
+        reason: str | None = blocked
+        if blocked == "ok":
+            reason = "quiet_hours" if self.settings.policy.quiet(self.at) else None
+            if reason is None and not trip.auto_cart:
+                reason = "auto_cart_off"
+        active = requested_until is not None and requested_until > now
+        return {
+            "reason": reason,
+            "can_request": blocked == "ok",
+            "holdable": holdable,
+            "requested_at": requested_until - HOLD_REQUEST_S if active and requested_until else None,
+            "requested_until": requested_until if active else None,
+        }
+
+
+def bookable_in_window(trip: Trip, sailings: list[dict[str, Any]]) -> list[str]:
+    """The departures the trip's latest check found open, inside its window ("HH:MM")."""
+    found = []
+    for s in sailings:
+        try:
+            if s.get("status") == "available" and trip.in_window(clock_time.fromisoformat(s["depart"])):
+                found.append(s["depart"])
+        except (KeyError, TypeError, ValueError):
+            continue  # not a sailing as the protocol sends them; never worth failing the whole state for
+    return found
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,6 +226,8 @@ class WebStore:
             )
             if trip.search_key() != current.search_key():
                 await conn.execute("DELETE FROM alert_memory WHERE trip_id = $1", trip_id)  # a new search
+            # A hold asked for was for the trip as it was; asked again if still wanted.
+            await conn.execute("UPDATE trip_runtime SET hold_requested_until = NULL WHERE trip_id = $1", trip_id)
             if trip.enabled and not current.enabled:
                 await conn.execute("UPDATE trip_runtime SET next_check_at = NULL WHERE trip_id = $1", trip_id)
         return trip
@@ -159,6 +242,7 @@ class WebStore:
         )
         if result.endswith(" 0"):
             raise ApiError(404, "No such trip")
+        await self._pool.execute("UPDATE trip_runtime SET hold_requested_until = NULL WHERE trip_id = $1", trip_id)
 
     # ---- what users ask of their browser
 
@@ -177,27 +261,104 @@ class WebStore:
         await self.trip(uid, trip_id)
         now = self._clock()
         async with self._pool.acquire() as conn, conn.transaction():
-            await conn.execute("SELECT 1 FROM users WHERE id = $1 FOR UPDATE", uid)
-            limit = await self.limit(conn, uid, "manualChecksPerHour")
-            recent = await conn.fetchval(
-                "SELECT count(*) FROM agent_commands"
-                " WHERE requested_by = $1 AND op = 'check_now' AND created_at > $2",
-                uid,
-                _ts(now - MANUAL_CHECK_WINDOW_S),
-            )
-            if recent >= limit:
-                raise ApiError(429, f"Up to {limit} checks an hour", limit=limit, usage=recent)
-            warm = await conn.fetchval(
-                "SELECT 1 FROM browser_pods WHERE trip_id = $1 AND mode = 'warm' AND ended_at IS NULL", trip_id
-            )
+            await self._check_now(conn, uid, trip_id, now)
+
+    async def request_hold(self, uid: str, trip_id: str) -> None:
+        """ "Hold it for me": the trip's pod may cart through quiet hours (and with the trip's auto-cart off)
+        for the next few minutes, and checks now. ferry-control's gate still decides; every other limit stays.
+        """
+        trip, _ = await self.trip(uid, trip_id)
+        now = self._clock()
+        row = await self._pool.fetchrow(
+            "SELECT t.paused_reason, u.paused, s.sailings, s.cart, m.alerted FROM trips t"
+            " JOIN users u ON u.id = t.user_id LEFT JOIN trip_state s ON s.trip_id = t.id"
+            " LEFT JOIN alert_memory m ON m.trip_id = t.id WHERE t.id = $1 AND t.user_id = $2",
+            trip_id,
+            uid,
+        )
+        if row is None:
+            raise ApiError(404, "No such trip")
+        paused = not trip.enabled or row["paused_reason"] is not None or row["paused"]
+        if paused:
+            raise ApiError(409, HOLD_REFUSED["paused"])
+        cart = json.loads(row["cart"]) if row["cart"] else None
+        if cart is not None and cart.get("status") in ("adding", "ready"):
+            raise ApiError(409, "A cart is already being held for this trip")
+        sailings = json.loads(row["sailings"]) if row["sailings"] else []
+        if not bookable_in_window(trip, sailings):
+            raise ApiError(409, "Nothing in your times is bookable right now")
+        hold = (await self.hold_context(uid, now)).hold(
+            trip, paused=False, sailings=sailings, alerted=row["alerted"] or (), requested_until=None, now=now
+        )
+        if not hold["can_request"]:
+            raise ApiError(409, HOLD_REFUSED.get(hold["reason"], "A cart can't be held right now"))
+        async with self._pool.acquire() as conn, conn.transaction():
+            await self._check_now(conn, uid, trip_id, now)
             await conn.execute(
-                "INSERT INTO agent_commands (trip_id, op, requested_by, consumed_at) VALUES ($1, 'check_now', $2, $3)",
+                "UPDATE trip_runtime SET hold_requested_until = $2 WHERE trip_id = $1",
                 trip_id,
-                uid,
-                None if warm else _ts(now),  # no warm pod: recorded for the limit; the short check is the action
+                _ts(now + HOLD_REQUEST_S),
             )
-            if not warm:
-                await conn.execute("UPDATE trip_runtime SET next_check_at = $2 WHERE trip_id = $1", trip_id, _ts(now))
+
+    async def hold_context(self, uid: str, now: float) -> HoldContext:
+        overrides = await self.overrides(self._pool, uid)
+        usage = {
+            r["kind"]: r["amount"]
+            for r in await self._pool.fetch(
+                "SELECT kind, amount FROM usage_ledger WHERE user_id = $1 AND day = $2", uid, _today(now)
+            )
+        }
+        switches = {
+            r["key"]: json.loads(r["value"])
+            for r in await self._pool.fetch(
+                "SELECT key, value FROM fleet_state WHERE key IN ('maintenance', 'pause_carting')"
+            )
+        }
+        return HoldContext(
+            allowance=Allowance(
+                holds_per_day=self._limits.value("maxHoldsPerDay", overrides),
+                cart_attempts_per_day=self._limits.value("maxCartAttemptsPerDay", overrides),
+                vnc_minutes_per_day=self._limits.value("vncMinutesPerDay", overrides),
+                holds_today=usage.get("holds", 0),
+                cart_attempts_today=usage.get("cart_attempts", 0),
+                vnc_seconds_today=usage.get("vnc_seconds", 0),
+            ),
+            switches=Switches(
+                maintenance=bool(switches.get("maintenance", False)),
+                pause_carting=bool(switches.get("pause_carting", False)),
+            ),
+            claimed_trip=await self._pool.fetchval(  # a claim that lapsed doesn't count, as in ferry-control
+                "SELECT trip_id FROM hold_claims WHERE user_id = $1"
+                " AND (cart_id IS NOT NULL OR claimed_at > now() - make_interval(secs => $2))",
+                uid,
+                CLAIM_LAPSE_SECONDS,
+            ),
+            settings=HubSettings(policy=self._policy),
+            at=datetime.fromtimestamp(now, PACIFIC),
+        )
+
+    async def _check_now(self, conn: asyncpg.pool.PoolConnectionProxy, uid: str, trip_id: str, now: float) -> None:
+        """The manual check itself, in the caller's transaction (limited per hour)."""
+        await conn.execute("SELECT 1 FROM users WHERE id = $1 FOR UPDATE", uid)
+        limit = await self.limit(conn, uid, "manualChecksPerHour")
+        recent = await conn.fetchval(
+            "SELECT count(*) FROM agent_commands" " WHERE requested_by = $1 AND op = 'check_now' AND created_at > $2",
+            uid,
+            _ts(now - MANUAL_CHECK_WINDOW_S),
+        )
+        if recent >= limit:
+            raise ApiError(429, f"Up to {limit} checks an hour", limit=limit, usage=recent)
+        warm = await conn.fetchval(
+            "SELECT 1 FROM browser_pods WHERE trip_id = $1 AND mode = 'warm' AND ended_at IS NULL", trip_id
+        )
+        await conn.execute(
+            "INSERT INTO agent_commands (trip_id, op, requested_by, consumed_at) VALUES ($1, 'check_now', $2, $3)",
+            trip_id,
+            uid,
+            None if warm else _ts(now),  # no warm pod: recorded for the limit; the short check is the action
+        )
+        if not warm:
+            await conn.execute("UPDATE trip_runtime SET next_check_at = $2 WHERE trip_id = $1", trip_id, _ts(now))
 
     async def answer_booked(self, uid: str, trip_id: str, booked: bool, reason: str | None) -> None:
         """ "Did you book it?": yes archives the trip, no resumes it."""
@@ -340,20 +501,33 @@ class WebStore:
         }
         rows = await self._pool.fetch(
             "SELECT t.id, t.spec, t.enabled, t.paused_reason, t.rev, rt.phase, rt.mode, rt.queue_position,"
-            " rt.next_check_at, rt.last_check_at, s.agent_phase, s.checked_at, s.next_due, s.effective_interval,"
-            " s.sailings, s.error_class, s.consecutive_errors, s.cart, s.viewer_connected, s.heartbeat_at"
+            " rt.next_check_at, rt.last_check_at, rt.hold_requested_until,"
+            " s.agent_phase, s.checked_at, s.next_due, s.effective_interval,"
+            " s.sailings, s.error_class, s.consecutive_errors, s.cart, s.viewer_connected, s.heartbeat_at, m.alerted"
             " FROM trips t LEFT JOIN trip_runtime rt ON rt.trip_id = t.id LEFT JOIN trip_state s ON s.trip_id = t.id"
+            " LEFT JOIN alert_memory m ON m.trip_id = t.id"
             " WHERE t.user_id = $1 AND t.archived_at IS NULL ORDER BY t.created_at",
             uid,
         )
+        context = await self.hold_context(uid, now)
         trips = []
         for r in rows:
             spec = json.loads(r["spec"]) | {"enabled": r["enabled"]}
+            sailings = json.loads(r["sailings"]) if r["sailings"] else []
+            hold = context.hold(
+                Trip.from_json(spec),
+                paused=user["paused"] or not r["enabled"] or r["paused_reason"] is not None,
+                sailings=sailings,
+                alerted=r["alerted"] or (),
+                requested_until=_epoch(r["hold_requested_until"]),
+                now=now,
+            )
             trips.append(
                 {
                     "trip": spec,
                     "rev": r["rev"],
                     "paused_reason": r["paused_reason"],
+                    "hold": hold,
                     "browser": {
                         "phase": r["agent_phase"] or r["phase"] or "off",
                         "mode": r["mode"] or "off",
@@ -364,7 +538,7 @@ class WebStore:
                         "next_due": _epoch(r["next_due"]),
                         "effective_interval": r["effective_interval"],
                         "heartbeat_at": _epoch(r["heartbeat_at"]),
-                        "sailings": json.loads(r["sailings"]) if r["sailings"] else [],
+                        "sailings": sailings,
                         "error_class": r["error_class"],
                         "consecutive_errors": r["consecutive_errors"] or 0,
                         "cart": json.loads(r["cart"]) if r["cart"] else None,

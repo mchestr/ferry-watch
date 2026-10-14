@@ -213,13 +213,14 @@ Detail: design-reference.md §3.5-3.6 (data flows), §6.2 (sign-in) and §8.1 (s
 2. **Sign in.** Authelia issues a code only to groups `ferry-watch` and `admin`; ferry-web verifies the
    `id_token`, binds the invitation and hands the app its session token.
 3. **Add a trip** (at most 30 days ahead; `maxTrips` 3). Its first short check runs within minutes. If it is
-   the user's nearest trip within 7 days it gets the warm browser ("Watching closely · every 2 min");
+   the user's nearest trip within 7 days it gets the warm browser ("Every 2 minutes");
    otherwise "Checked every 6 h · next 2:05 pm". Nothing asks the user to pause another trip.
 4. **Pod starts.** The operator creates `fw-<trip>-g1` (or queues it). The pod runs its lockdown self-tests,
    dials the operator, walks the booking form (maybe through Queue-it) and checks: on the curve if warm, once
    if a short check.
 5. **Sailing opens.** The agent carts it as a guest if the user has holds left, holds no other cart (the cart
-   claim), it isn't quiet hours and carting isn't paused; otherwise a "bookable" alert links to bcferries.com.
+   claim), it isn't quiet hours and carting isn't paused; otherwise a "bookable" alert links to the trip's
+   page, which says why nothing was held, offers "Hold it for me" and links to bcferries.com.
    ferry-control flips the pod's egress label to `hold`.
 6. **Alert.** Web Push plus email: "Held for you: 7:00 am Tsawwassen -> Swartz Bay, Fri Aug 1. Check out as a
    guest by 3:42 pm." Reminder at 15 min; released at 30 min if nobody opens it (a warm pod keeps watching).

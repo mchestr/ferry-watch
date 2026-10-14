@@ -212,6 +212,11 @@ class TripWatcher:
         self.consecutive_errors = 0
         self.alerted: set[clock_time] = set()  # alerted and carted, or viewed: never carted again
         self.offered: set[clock_time] = set()  # alerted while carting was held back: may be carted once
+        # Carting failed here: not tried again on its own (each try spends a daily attempt), only after the
+        # user asks (check now, hold it for me) or once it sells out and reopens.
+        self._cart_failures: set[clock_time] = set()
+        self._failures_for: tuple[object, ...] | None = None  # the search and fare they failed under
+        self._cart_error: ErrorClass | None = None
         self._seeded_key: tuple[object, ...] | None = None
 
         self.cart: Cart | None = None
@@ -324,6 +329,7 @@ class TripWatcher:
     # ---- what the operator asks for
 
     def check_now(self) -> None:
+        self._cart_failures.clear()  # the user asked: a sailing that couldn't be held may be tried again
         started = self._check_started_at
         if self.holding or self.checking or (started is not None and self._clock() - started < CHECK_NOW_MIN_GAP_S):
             return
@@ -525,6 +531,10 @@ class TripWatcher:
         # Sold out again: forget them, so they alert again if they reopen.
         self.alerted &= now_open
         self.offered &= now_open
+        self._cart_failures &= now_open
+        if self._failures_for != (trip.search_key(), trip.fare):  # another date, route or fare: worth a try
+            self._cart_failures.clear()
+            self._failures_for = (trip.search_key(), trip.fare)
         for depart in sorted(before - now_open):
             self._link.event("sold_out_again", EventParams(depart=_hhmm(depart)))
 
@@ -535,13 +545,16 @@ class TripWatcher:
         if not candidates:
             return
 
-        target = candidates[0]
+        cartable = [s for s in candidates if s.depart not in self._cart_failures]
+        target = cartable[0] if cartable else candidates[0]
         fare: Fare | None = None
         tried = False
-        if self._may_cart(trip):
+        if cartable and self._may_cart(trip):
             if await self._link.claim(_hhmm(target.depart), cast(WireFarePreference, trip.fare.value)):
                 tried = True
                 fare = await self._add_to_cart(trip, page, target)
+                if fare is None:
+                    self._cart_failures.add(target.depart)
             else:
                 log.info("The operator refused a cart claim for %s", format_time(target.depart))
 
@@ -554,10 +567,16 @@ class TripWatcher:
             params = AlertParams(departures=departures, fare=fare.name[:32], price=_price(fare.price))
             self._held_alert = self._link.alert("cart_held", params)
             self._link.event("cart_added", EventParams(depart=departures[0], fare=fare.name[:32]))
+        elif tried:
+            # Always said, even for a sailing already alerted as bookable ("Hold it for me" asks for exactly
+            # that): the alert frees the user's claim and ends the hold request.
+            others = [s for s in fresh if s.depart != target.depart]
+            self.offered |= {target.depart, *(s.depart for s in others)}
+            departures = [_hhmm(s.depart) for s in [target, *others]][:10]
+            self._link.alert("cart_failed", AlertParams(departures=departures, error_class=self._cart_error))
         elif fresh:
             self.offered |= {s.depart for s in fresh}
-            kind: AlertKind = "cart_failed" if tried else "bookable"
-            self._link.alert(kind, AlertParams(departures=[_hhmm(s.depart) for s in fresh][:10]))
+            self._link.alert("bookable", AlertParams(departures=[_hhmm(s.depart) for s in fresh][:10]))
 
     def _may_cart(self, trip: Trip) -> bool:
         return (
@@ -573,15 +592,18 @@ class TripWatcher:
         self._attempts += 1
         self.cart = Cart(CartStatus.ADDING, sailing.depart)
         self._release_requested = False
+        self._cart_error = None
         try:
             async with asyncio.timeout(CART_BUDGET_SECONDS):
                 self._navs.cart += 1
                 fare = await page.add_to_cart(sailing.depart, trip.fare)
         except Exception as e:
+            self._cart_error = "timeout" if isinstance(e, TimeoutError) else error_class(e)
             if isinstance(e, TimeoutError):
                 e = BookingError(f"Timed out after {CART_BUDGET_SECONDS}s selecting a fare")
             elif not isinstance(e, BookingError):
                 log.exception("Unexpected error adding to the cart")
+            log.warning("Couldn't hold %s (%s): %s", format_time(sailing.depart), self._cart_error, describe(e))
             await page.save_debug_snapshot("cart failed")
             await self._close_session()  # the page is in an unknown state; search again next time
             self.cart = Cart(CartStatus.FAILED, sailing.depart, error=describe(e))
