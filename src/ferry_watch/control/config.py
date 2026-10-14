@@ -121,16 +121,7 @@ class ControlConfig(_Config, kw_only=True):
         )
 
     def policy(self) -> PollPolicy:
-        p = self.polling
-        policy = PollPolicy(
-            short_check_interval=duration(p.short_check_interval),
-            horizon=timedelta(days=p.horizon_days),
-            quiet_start=time.fromisoformat(p.quiet_start),
-            quiet_end=time.fromisoformat(p.quiet_end),
-        )
-        if p.tiers:
-            policy = replace(policy, tiers=tuple(Tier(duration(t.within), duration(t.interval)) for t in p.tiers))
-        return policy
+        return poll_policy(self.polling)
 
     def hold_limits(self) -> HoldLimits:
         h = self.hold
@@ -156,12 +147,7 @@ class ControlConfig(_Config, kw_only=True):
         )
 
     def user_limits(self) -> Limits:
-        unknown = (set(self.limits.defaults) | set(self.limits.ceilings)) - set(DEFAULTS)
-        if unknown:
-            raise ConfigError(f"Unknown limits: {sorted(unknown)}")
-        defaults: dict[LimitKey, int] = {**DEFAULTS, **self.limits.defaults}  # type: ignore[dict-item]
-        ceilings: dict[LimitKey, int] = {**CEILINGS, **self.limits.ceilings}  # type: ignore[dict-item]
-        return Limits(defaults=defaults, ceilings=ceilings)
+        return user_limits(self.limits)
 
     def db_roles(self) -> Roles:
         return Roles(web=self.roles.web, control=self.roles.control)
@@ -176,6 +162,27 @@ class ControlConfig(_Config, kw_only=True):
         except ValueError as e:
             raise ConfigError(str(e)) from None
         return self
+
+
+def poll_policy(p: PollingConfig) -> PollPolicy:
+    policy = PollPolicy(
+        short_check_interval=duration(p.short_check_interval),
+        horizon=timedelta(days=p.horizon_days),
+        quiet_start=time.fromisoformat(p.quiet_start),
+        quiet_end=time.fromisoformat(p.quiet_end),
+    )
+    if p.tiers:
+        policy = replace(policy, tiers=tuple(Tier(duration(t.within), duration(t.interval)) for t in p.tiers))
+    return policy
+
+
+def user_limits(c: LimitsConfig) -> Limits:
+    unknown = (set(c.defaults) | set(c.ceilings)) - set(DEFAULTS)
+    if unknown:
+        raise ConfigError(f"Unknown limits: {sorted(unknown)}")
+    defaults: dict[LimitKey, int] = {**DEFAULTS, **c.defaults}  # type: ignore[dict-item]
+    ceilings: dict[LimitKey, int] = {**CEILINGS, **c.ceilings}  # type: ignore[dict-item]
+    return Limits(defaults=defaults, ceilings=ceilings)
 
 
 def load(path: Path) -> ControlConfig:

@@ -192,10 +192,7 @@ async def invite(request: web.Request) -> web.Response:
     if (
         not isinstance(limits, dict)
         or set(limits) - set(CEILINGS)
-        or not all(
-            isinstance(v, int) and 0 <= v <= CEILINGS[k]
-            for k, v in limits.items()
-        )
+        or not all(isinstance(v, int) and 0 <= v <= CEILINGS[k] for k, v in limits.items())
     ):
         raise ApiError(400, "Limits must be known keys within their ceilings", "limits")
     invite_id = secrets.token_hex(8)
