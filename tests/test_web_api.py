@@ -163,8 +163,11 @@ async def test_editing_and_removing(rig: Rig) -> None:
     assert row["rev"] == 2
     assert json.loads(row["spec"])["adults"] == 2
     assert await rig.sql("SELECT * FROM alert_memory") == []  # a new search forgets what was alerted
+    await rig.sql("UPDATE trips SET paused_reason = 'after_checkout'")
     assert (await rig.call("DELETE", f"/api/trips/{trip_id}")).status == 200
-    assert (await rig.sql("SELECT archived_at FROM trips"))[0]["archived_at"] is not None
+    archived = await rig.sql("SELECT archived_at IS NOT NULL AS archived, enabled, paused_reason, rev FROM trips")
+    assert [tuple(r) for r in archived] == [(True, False, None, 3)]
+    assert (await rig.call("DELETE", f"/api/trips/{trip_id}")).status == 404
 
 
 # ---- what users ask of their browser
@@ -343,18 +346,58 @@ async def test_the_state_says_why_a_trip_wouldnt_be_held(rig: Rig) -> None:
     assert trip_id
 
 
+async def after_checkout(rig: Rig, trip_id: str) -> None:
+    """A viewed hold ended without a booking seen: its outcome is recorded, and the trip asks "Did you book it?"."""
+    await rig.sql(
+        "INSERT INTO hold_outcomes (user_id, trip_id, day, outcome) VALUES ($1, $2, now(), 'expired')", ANN, trip_id
+    )
+    await rig.sql("UPDATE trips SET paused_reason = 'after_checkout' WHERE id = $1", trip_id)
+
+
+async def archived(rig: Rig, trip_id: str) -> tuple[Any, ...]:
+    (trip,) = await rig.sql(
+        "SELECT t.archived_at IS NOT NULL AS archived, t.enabled, t.paused_reason, t.rev,"
+        " t.updated_at > t.created_at AS updated, rt.hold_requested_until FROM trips t"
+        " JOIN trip_runtime rt ON rt.trip_id = t.id WHERE t.id = $1",
+        trip_id,
+    )
+    return tuple(trip)
+
+
+async def answers(rig: Rig) -> list[str | None]:
+    return [r["answer_reason"] for r in await rig.sql("SELECT answer_reason FROM hold_outcomes ORDER BY id")]
+
+
 async def test_did_you_book_it(rig: Rig) -> None:
     trip_id = await rig.add()
-    assert (await rig.call("POST", f"/api/trips/{trip_id}/booked", json={"booked": False})).status == 409
-    await rig.sql("UPDATE trips SET paused_reason = 'after_checkout'")
-    response = await rig.call(
-        "POST", f"/api/trips/{trip_id}/booked", json={"booked": False, "reason": "needed_account"}
-    )
+    path = f"/api/trips/{trip_id}/booked"
+    assert (await rig.call("POST", path, json={"booked": False})).status == 409
+    await after_checkout(rig, trip_id)
+    response = await rig.call("POST", path, json={"booked": False, "reason": "needed_account"})
     assert response.status == 200
     assert (await rig.sql("SELECT paused_reason FROM trips"))[0]["paused_reason"] is None
-    await rig.sql("UPDATE trips SET paused_reason = 'after_checkout'")
-    await rig.call("POST", f"/api/trips/{trip_id}/booked", json={"booked": True})
-    assert (await rig.sql("SELECT archived_at FROM trips"))[0]["archived_at"] is not None
+    await after_checkout(rig, trip_id)
+    await rig.sql("UPDATE trip_runtime SET hold_requested_until = now() + interval '5 minutes'")
+    assert (await rig.call("POST", path, json={"booked": True})).status == 200
+    assert await archived(rig, trip_id) == (True, False, None, 3, True, None)  # as a removed trip is
+    assert await answers(rig) == ["needed_account", "booked"]
+
+
+async def test_no_cancel_stops_watching_the_trip(rig: Rig) -> None:
+    """ "Did you book it?" "No, cancel": not booked, and not wanted any more."""
+    trip_id, other = await rig.add(), await rig.add()
+    await after_checkout(rig, trip_id)
+    await rig.sql("UPDATE trip_runtime SET hold_requested_until = now() + interval '5 minutes'")
+    path = f"/api/trips/{trip_id}/booked"
+    for body in ({"booked": True, "stop": True}, {"booked": False, "stop": "yes"}):
+        response = await rig.call("POST", path, json=body)
+        assert (response.status, (await response.json())["field"]) == (400, "stop")
+    response = await rig.call("POST", path, json={"booked": False, "stop": True})
+    assert response.status == 200
+    assert [t["trip"]["id"] for t in (await response.json())["trips"]] == [other]  # its slot is free again
+    assert await archived(rig, trip_id) == (True, False, None, 2, True, None)
+    assert await answers(rig) == ["cancelled"]
+    assert (await rig.call("POST", path, json={"booked": False, "stop": True})).status == 409  # answered
 
 
 async def test_pausing_and_resuming_one_trip(rig: Rig) -> None:

@@ -140,13 +140,18 @@ async def dismiss_cart(request: web.Request) -> web.Response:
 
 
 async def answer_booked(request: web.Request) -> web.Response:
+    """ "Did you book it?": {booked, reason?, stop?}. {booked: false, stop: true} is "No, cancel"."""
     body = await json_body(request)
-    booked, reason = body.get("booked"), body.get("reason")
+    booked, reason, stop = body.get("booked"), body.get("reason"), body.get("stop", False)
     if not isinstance(booked, bool):
         raise ApiError(400, "Did you book it: yes or no?", "booked")
     if reason is not None and not isinstance(reason, str):
         raise ApiError(400, "Not a reason", "reason")
-    await request.app[STORE].answer_booked(signed_in(request).uid, _trip_id(request), booked, reason)
+    if not isinstance(stop, bool):
+        raise ApiError(400, "Stop watching it: yes or no?", "stop")
+    if booked and stop:
+        raise ApiError(400, "A booked trip stops being watched anyway", "stop")
+    await request.app[STORE].answer_booked(signed_in(request).uid, _trip_id(request), booked, reason, stop=stop)
     await request.app[STORE].notify(signed_in(request).uid)
     return await get_state(request)
 

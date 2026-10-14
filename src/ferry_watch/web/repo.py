@@ -57,6 +57,21 @@ def _today(now: float) -> date:
     return datetime.fromtimestamp(now, PACIFIC).date()
 
 
+async def _archive(conn: asyncpg.pool.PoolConnectionProxy, uid: str, trip_id: str) -> bool:
+    """Stop watching a trip (removed, booked, or "No, cancel"), in the caller's transaction. A new rev, so its pod
+    hears at once; ferry-control drains it, which hands back any cart first. False: no such live trip."""
+    result = await conn.execute(
+        "UPDATE trips SET archived_at = now(), enabled = false, paused_reason = NULL, rev = rev + 1, updated_at = now()"
+        " WHERE id = $1 AND user_id = $2 AND archived_at IS NULL",
+        trip_id,
+        uid,
+    )
+    if result.endswith(" 0"):
+        return False
+    await conn.execute("UPDATE trip_runtime SET hold_requested_until = NULL WHERE trip_id = $1", trip_id)
+    return True
+
+
 def _quiet_json(quiet: QuietHours | None) -> dict[str, Any] | None:
     """Quiet hours as the API has them: {"start": "HH:MM", "end": "HH:MM"}, or None for none."""
     if quiet is None:
@@ -249,15 +264,9 @@ class WebStore:
 
     async def archive_trip(self, uid: str, trip_id: str) -> None:
         """Stop watching. ferry-control drains its pod, which hands back any cart first."""
-        result = await self._pool.execute(
-            "UPDATE trips SET archived_at = now(), enabled = false, rev = rev + 1"
-            " WHERE id = $1 AND user_id = $2 AND archived_at IS NULL",
-            trip_id,
-            uid,
-        )
-        if result.endswith(" 0"):
-            raise ApiError(404, "No such trip")
-        await self._pool.execute("UPDATE trip_runtime SET hold_requested_until = NULL WHERE trip_id = $1", trip_id)
+        async with self._pool.acquire() as conn, conn.transaction():
+            if not await _archive(conn, uid, trip_id):
+                raise ApiError(404, "No such trip")
 
     # ---- what users ask of their browser
 
@@ -385,8 +394,10 @@ class WebStore:
         if not warm:
             await conn.execute("UPDATE trip_runtime SET next_check_at = $2 WHERE trip_id = $1", trip_id, _ts(now))
 
-    async def answer_booked(self, uid: str, trip_id: str, booked: bool, reason: str | None) -> None:
-        """ "Did you book it?": yes archives the trip, no resumes it."""
+    async def answer_booked(
+        self, uid: str, trip_id: str, booked: bool, reason: str | None, *, stop: bool = False
+    ) -> None:
+        """ "Did you book it?": yes archives the trip, no resumes it, and "No, cancel" (`stop`) archives it too."""
         if reason is not None and reason not in BOOKED_REASONS:
             raise ValidationError("reason", "Not a reason we know")
         async with self._pool.acquire() as conn, conn.transaction():
@@ -397,10 +408,8 @@ class WebStore:
             )
             if paused != AFTER_CHECKOUT:
                 raise ApiError(409, "There's no checkout to answer for")
-            if booked:
-                await conn.execute(
-                    "UPDATE trips SET archived_at = now(), paused_reason = NULL, rev = rev + 1 WHERE id = $1", trip_id
-                )
+            if booked or stop:
+                await _archive(conn, uid, trip_id)
             else:
                 await conn.execute(
                     "UPDATE trips SET paused_reason = NULL, rev = rev + 1, updated_at = now() WHERE id = $1", trip_id
@@ -408,10 +417,10 @@ class WebStore:
                 await conn.execute("UPDATE trip_runtime SET next_check_at = NULL WHERE trip_id = $1", trip_id)
             await conn.execute(
                 "UPDATE hold_outcomes SET answer_reason = $3 WHERE id = (SELECT id FROM hold_outcomes"
-                " WHERE trip_id = $1 AND user_id = $2 ORDER BY created_at DESC LIMIT 1)",
+                " WHERE trip_id = $1 AND user_id = $2 ORDER BY created_at DESC, id DESC LIMIT 1)",
                 trip_id,
                 uid,
-                "booked" if booked else (reason or "not_booked"),
+                "booked" if booked else "cancelled" if stop else (reason or "not_booked"),
             )
 
     # ---- settings
