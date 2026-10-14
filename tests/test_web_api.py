@@ -649,7 +649,7 @@ async def test_limit_overrides_stop_at_the_ceiling(rig: Rig) -> None:
 
 async def test_the_fleet_switches(rig: Rig) -> None:
     await make_admin(rig)
-    body = {"switch": "pause_carting", "on": True, "reason": "Talos upgrade"}
+    body = {"switch": "pause_carting", "on": True, "reason": "Node upgrade"}
     assert (await rig.call("POST", "/api/admin/switches", json=body)).status == 200
     overview = await (await rig.call("GET", "/api/admin/overview")).json()
     assert overview["switches"]["pause_carting"] is True

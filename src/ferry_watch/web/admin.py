@@ -529,8 +529,8 @@ async def set_limit(request: web.Request) -> web.Response:
 
 
 async def set_switch(request: web.Request) -> web.Response:
-    """Maintenance (no browsers) and pause carting (alert only, e.g. for a Talos upgrade) on or off; and closing
-    the breaker, which only ferry-control opens."""
+    """Maintenance (no browsers) and pause carting (alerts only, no carts) on or off; and closing the breaker,
+    which only ferry-control opens."""
     actor = admin(request)
     body = await json_body(request)
     reason = _reason(body)
