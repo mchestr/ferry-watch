@@ -301,8 +301,11 @@ class ControlStore:
                 )
             return True
 
-    async def claim(self, binding: Binding, gate: ClaimReason, now: float) -> ClaimReason:
-        """One hold per user: grant only if the gate allows it and the user holds nothing anywhere."""
+    async def claim(self, binding: Binding, gate: ClaimReason, now: float, *, lifted: bool = False) -> ClaimReason:
+        """One hold per user: grant only if the gate allows it and the user holds nothing anywhere.
+
+        A claim granted under a lifted quiet hours (`lifted`) keeps the lift until the claim lapses, so the
+        pod isn't drained for quiet hours halfway through adding the cart."""
         if gate != "ok":
             return gate
         async with self._pool.acquire() as conn, conn.transaction():
@@ -322,6 +325,13 @@ class ControlStore:
             if granted is None:
                 return "holding_elsewhere"
             await _count(conn, binding.user_id, now, "cart_attempts")
+            if lifted:
+                await conn.execute(
+                    "UPDATE trip_runtime SET quiet_lifted_until = greatest(quiet_lifted_until, $2)"
+                    " WHERE trip_id = $1",
+                    binding.trip_id,
+                    _ts(now + CLAIM_LAPSE_SECONDS),
+                )
         return "ok"
 
     async def record_bye(self, binding: Binding, boot: str, bye: Bye, now: float) -> None:

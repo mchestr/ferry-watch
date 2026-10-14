@@ -245,8 +245,9 @@ class HubEndpoint:
             allowance = await self._store.allowance(binding.user_id, now)
             switches = await self._store.switches()
             at = datetime.fromtimestamp(now, PACIFIC)
-            gate = cart_gate(row.trip, allowance, switches, self._settings, at, lifted=row.quiet_lifted(now))
-            reason = await self._store.claim(binding, gate, now)
+            lifted = row.quiet_lifted(now)
+            gate = cart_gate(row.trip, allowance, switches, self._settings, at, lifted=lifted)
+            reason = await self._store.claim(binding, gate, now, lifted=lifted)
         log.info("%s: cart claim for %s: %s", binding.pod, claim.depart, reason)
         await self._send(
             peer, CartClaimResult(**peer.envelope(), claim=claim.seq, granted=reason == "ok", reason=reason)

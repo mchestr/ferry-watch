@@ -20,7 +20,7 @@ from ferry_watch.agent.store import OneTripStore
 from ferry_watch.control.configure import HubSettings
 from ferry_watch.control.hub import CLOSE_NOT_YET_RECORDED, CLOSE_VIOLATION, PATH, HubEndpoint
 from ferry_watch.control.kube import ObservedPod, PodIdentity
-from ferry_watch.control.store import ControlStore
+from ferry_watch.control.store import CLAIM_LAPSE_SECONDS, ControlStore
 from ferry_watch.models import PACIFIC, Trip
 from ferry_watch.protocol import (
     Alert,
@@ -380,6 +380,18 @@ async def test_a_manual_check_lifts_quiet_hours_too(rig: Rig, agent: Agent) -> N
     rig.clock[0] = NIGHT
     await lift(rig, "quiet_lifted_until")
     assert await agent.client.claim("09:00", "saver") is True
+
+
+@pytest.mark.parametrize("column", ["hold_requested_until", "quiet_lifted_until"])
+async def test_a_claim_keeps_the_lift_while_the_cart_is_added(rig: Rig, agent: Agent, column: str) -> None:
+    """A lift that would lapse while the pod adds the cart is kept until the claim lapses, so the fleet loop
+    doesn't drain the pod for quiet hours halfway through."""
+    await quiet_hours(rig)
+    rig.clock[0] = NIGHT
+    await lift(rig, column, minutes=1)
+    assert await agent.client.claim("09:00", "saver") is True
+    rows = await rig.fetch("SELECT extract(epoch FROM quiet_lifted_until) AS until FROM trip_runtime")
+    assert float(rows[0]["until"]) == NIGHT + CLAIM_LAPSE_SECONDS
 
 
 @pytest.mark.parametrize("column", ["hold_requested_until", "quiet_lifted_until"])
