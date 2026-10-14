@@ -16,6 +16,9 @@ concurrency:
 
 env:
   IMAGE: ghcr.io/${{ github.repository }}
+  # Images are pushed for main and for v* tags: on a push, or when the Release workflow starts CI on the tag it
+  # made (a tag pushed with a workflow's own token doesn't start CI by itself). Pull requests never push.
+  PUBLISH: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/tags/v')) }}
 
 jobs:
   python:
@@ -188,7 +191,7 @@ jobs:
           tags: ferry-watch-${{ matrix.target }}:ci
           cache-from: type=gha,scope=${{ matrix.target }}
           # Only trusted pushes write the shared build cache; pull requests just read it.
-          cache-to: ${{ github.event_name == 'push' && format('type=gha,mode=max,scope={0}', matrix.target) || '' }}
+          cache-to: ${{ env.PUBLISH == 'true' && format('type=gha,mode=max,scope={0}', matrix.target) || '' }}
       - name: Smoke test
         if: matrix.target == 'app'
         run: |
@@ -203,14 +206,14 @@ jobs:
       - name: Smoke test logs
         if: always() && matrix.target == 'app'
         run: docker logs smoke || true
-      - if: github.event_name == 'push'
+      - if: env.PUBLISH == 'true'
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Push
-        if: github.event_name == 'push'
+        if: env.PUBLISH == 'true'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
@@ -249,7 +252,7 @@ jobs:
           load: true
           tags: ferry-watch-vnc-edge:ci
           cache-from: type=gha,scope=vnc-edge
-          cache-to: ${{ github.event_name == 'push' && 'type=gha,mode=max,scope=vnc-edge' || '' }}
+          cache-to: ${{ env.PUBLISH == 'true' && 'type=gha,mode=max,scope=vnc-edge' || '' }}
       - name: Smoke test
         run: |
           # As it runs in the cluster: read-only, unprivileged, no capabilities. nginx resolves its
@@ -262,14 +265,14 @@ jobs:
       - name: Smoke test logs
         if: always()
         run: docker logs smoke || true
-      - if: github.event_name == 'push'
+      - if: env.PUBLISH == 'true'
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Push
-        if: github.event_name == 'push'
+        if: env.PUBLISH == 'true'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: vnc-edge

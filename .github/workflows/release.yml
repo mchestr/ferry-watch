@@ -1,0 +1,58 @@
+name: Release
+
+# Releases what main says it is: tags v<version> (pyproject.toml) on main's head, creates the GitHub release,
+# and starts CI on the tag, which tests it and pushes the version's images. Run it from the Actions tab (or
+# `gh workflow run release.yml`) after merging a "chore: release x.y.z" change.
+#
+# A tag pushed with this workflow's own token doesn't start CI by itself, so the run is dispatched explicitly;
+# CI publishes for a dispatched run only on a v* tag (its PUBLISH variable).
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write # the tag and the release
+  actions: write # starting CI on the tag
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Tag, release and build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: version
+        name: Version
+        run: |
+          version="$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::pyproject.toml's version '$version' isn't x.y.z"
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null; then
+            echo "::error::v$version already exists: bump the version in pyproject.toml (and uv.lock) first"
+            exit 1
+          fi
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+      - name: Tag
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          git tag "$TAG" "$GITHUB_SHA"
+          git push origin "refs/tags/$TAG"
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes
+      - name: Build and push the images
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          gh workflow run ci.yml --ref "$TAG"
+          echo "CI on $TAG: ${{ github.server_url }}/${{ github.repository }}/actions/workflows/ci.yml?query=branch%3A$TAG" >> "$GITHUB_STEP_SUMMARY"
