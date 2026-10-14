@@ -1,3 +1,5 @@
 dist
 coverage
 package-lock.json
+# written by scripts/build_route_map.py
+src/lib/route-map-data.json

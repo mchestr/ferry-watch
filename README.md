@@ -51,6 +51,8 @@ Code layout (`src/ferry_watch/`):
 | `settings.py`, `__main__.py` | Environment configuration and the entry point |
 
 The frontend (`web/`) is React, TypeScript, Vite, Tailwind, Radix UI and TanStack Query.
+The trip form's route map is drawn from data bundled with the app (no map service sees where
+anyone is going): see [the route map](#the-route-map).
 
 ## Configuration
 
@@ -116,6 +118,19 @@ Tests never touch bcferries.com:
 CI runs all of it, builds the image, smoke-tests the container, and only pushes from `main` and
 version tags. The Playwright package in `uv.lock` must match the version of the
 `mcr.microsoft.com/playwright/python` image (CI checks this). Bump them together.
+
+### The route map
+
+The trip form shows a small map of the route. It's an SVG drawn from
+`web/src/lib/route-map-data.json`: Natural Earth's public-domain coastline, each terminal's
+berth, and a path through the water for every route BC Ferries books. The app loads it (about
+35 KB gzipped) the first time it shows a map. `scripts/build_route_map.py` writes it, and its
+docstring says where to download the coastline and how to run it. When BC Ferries adds a
+terminal or a route, add it to the script's `TERMINALS` table and rebuild. Until then there's no
+map for a trip to or from a new terminal, and a new route between known ones gets its two ends
+but no line. The script checks each berth against the coast and each path against the land. The
+coastline leaves out most small bays, so a berth that falls inside the land is drawn just off the
+nearest shore.
 
 ## Things to know about BC Ferries
 
