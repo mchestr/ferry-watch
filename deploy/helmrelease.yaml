@@ -33,16 +33,14 @@ spec:
   values:
     ferry:
       hosts:
-        # ferry-next until the cutover from the single-tenant app (kubernetes/apps/default/ferry-watch), which
-        # still holds ferry.chestr.dev.
-        dashboard: ferry-next.chestr.dev
+        dashboard: ferry.chestr.dev
         checkout: ferry-checkout.chestr.dev
 
       # The browser pods' image. The tag is for people and Renovate; the digest is what ferry-control starts and
       # what the admission policy admits. Like the other two images, it must carry its digest.
       browserImage:
         repository: ghcr.io/mchestr/ferry-watch-browser
-        tag: 0.6.0
+        tag: 0.6.2@sha256:0bb27daeff98f9e9a7f901ac3ac8611872bc80848603329eedb15dd7df0fddaf
 
       # ferry-control's config.json (src/ferry_watch/control/config.py). pod.image and pod.vncOrigin are added
       # from browserImage and hosts.checkout.
@@ -124,7 +122,7 @@ spec:
           app:
             image: &image
               repository: ghcr.io/mchestr/ferry-watch-control
-              tag: 0.6.0
+              tag: 0.6.2@sha256:ae1d9566a22196df4fc8b7db1bcedef62584fc164f69594c66e52b50a8a5492e
             args: [ferry-web, run]
             env:
               FW_WEB_CONFIG: /etc/ferry-web/config.json
@@ -256,7 +254,7 @@ spec:
           app:
             image:
               repository: ghcr.io/mchestr/ferry-watch-vnc-edge
-              tag: 0.6.0
+              tag: 0.6.2@sha256:477969cc57a778f6331d98ddd317f6fbb105a44db2a61f520533d924ec8d1f34
             ports:
               - name: http
                 containerPort: &edgePort 8080
