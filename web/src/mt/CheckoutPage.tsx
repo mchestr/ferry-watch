@@ -2,20 +2,23 @@
  * /c/<trip>: where a cart alert lands. It never opens the checkout by itself: the first device to open
  * it is the only one that can, so the user chooses (docs/multi-tenant/design-reference.md §10).
  */
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 import { ArrowLeft, Laptop, Loader2, Smartphone } from "lucide-react";
 import { useState } from "react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { errorMessage } from "@/lib/api";
-import { reportError, useNow } from "@/lib/hooks";
+import { useNow } from "@/lib/hooks";
 import type { Terminal } from "@/lib/schema";
 import { clock, timeLabel } from "@/lib/time";
-import { MY_STATE_KEY, myApi } from "./api";
+import { endsTrip, myApi } from "./api";
+import { BookedQuestion } from "./BookedQuestion";
+import { useRelease } from "./release";
 import { navigate } from "./router";
 import type { MyState } from "./schema";
 import { NotHeld } from "./NotHeld";
-import { holdPending, minutesLeft, tripTitle, unheld } from "./trips";
+import { holdPending, minutesLeft, tripBadge, tripTitle, unheld } from "./trips";
 
 export function CheckoutPage({
   state,
@@ -27,7 +30,6 @@ export function CheckoutPage({
   terminals: readonly Terminal[] | undefined;
 }) {
   useNow(15_000);
-  const qc = useQueryClient();
   const [elsewhere, setElsewhere] = useState(false);
   const trip = state.trips.find((t) => t.trip.id === tripId);
   const cart = trip?.browser.cart;
@@ -35,14 +37,8 @@ export function CheckoutPage({
     mutationFn: () => myApi.checkout(tripId),
     onSuccess: ({ url }) => location.assign(url),
   });
-  const release = useMutation({
-    mutationFn: () => myApi.release(tripId, cart?.id ?? ""),
-    onSuccess: (next) => {
-      qc.setQueryData(MY_STATE_KEY, next);
-      navigate("/");
-    },
-    onError: (error) => reportError(qc, error),
-  });
+  // Stays here: once the cart is let go, this page offers bcferries.com for the sailing.
+  const { release, releasing } = useRelease(tripId, cart);
 
   const back = (
     <Button variant="ghost" size="sm" onClick={() => navigate("/")}>
@@ -65,30 +61,42 @@ export function CheckoutPage({
   if (!cart || cart.status !== "ready") {
     // Where a "Bookable" alert lands too: the sailing may be open with nothing holding it yet.
     const paused =
-      trip.paused_reason === "after_checkout"
-        ? "This trip is paused until you say whether you booked it, on Your trips."
-        : !trip.trip.enabled || trip.paused_reason !== null || trip.hold.reason === "paused"
-          ? "This trip is paused, so nothing is held for it."
-          : null;
+      !trip.trip.enabled || trip.paused_reason !== null || trip.hold.reason === "paused"
+        ? "Paused, so nothing is checked or held."
+        : null;
+    const badge = tripBadge(trip);
+    const quietUntil = state.quiet_hours?.end;
     return (
       <div className="mx-auto max-w-xl space-y-4">
         {back}
         <Card className="space-y-4 p-6">
-          <h1 className="text-lg font-bold">{tripTitle(trip, terminals)}</h1>
-          {paused ? (
+          <div className="flex items-start justify-between gap-3">
+            <h1 className="min-w-0 text-lg font-bold">{tripTitle(trip, terminals)}</h1>
+            <Badge variant={badge.tone}>{badge.text}</Badge>
+          </div>
+          {trip.paused_reason === "after_checkout" ? (
+            <BookedQuestion
+              trip={trip}
+              onAnswered={(answer) => {
+                if (endsTrip(answer)) navigate("/"); // nothing left to show here
+              }}
+            />
+          ) : paused ? (
             <p className="text-sm text-muted-foreground">{paused}</p>
           ) : unheld(trip).length > 0 || holdPending(trip) ? (
             <NotHeld trip={trip} />
           ) : cart?.status === "adding" ? (
             <p className="flex items-center gap-2 text-sm" role="status">
-              <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden /> Holding it now. This page updates when
+              <Loader2 className="size-4 motion-safe:animate-spin" aria-hidden /> Holding it. This page updates when
               it's held.
             </p>
           ) : (
             <div role="status">
               <h2 className="font-semibold">Nothing is held right now</h2>
               <p className="mt-1 text-sm text-muted-foreground">
-                Nothing in your times is bookable at the moment. We'll alert you when a sailing opens up.
+                {trip.quiet
+                  ? `It's your quiet hours, so this trip isn't checked${quietUntil ? ` until ${timeLabel(quietUntil)}` : ""}.`
+                  : "Nothing in your times is bookable. We'll alert you when a sailing opens up."}
               </p>
             </div>
           )}
@@ -121,7 +129,7 @@ export function CheckoutPage({
         </ul>
         {open.error && <p className="text-sm text-danger">{errorMessage(open.error)}</p>}
         <div className="grid gap-2 sm:grid-cols-2">
-          <Button size="lg" variant="success" disabled={open.isPending} onClick={() => open.mutate()}>
+          <Button size="lg" variant="success" disabled={open.isPending || releasing} onClick={() => open.mutate()}>
             <Smartphone aria-hidden /> Check out on this device
           </Button>
           <Button size="lg" variant="outline" onClick={() => setElsewhere(true)}>
@@ -134,8 +142,14 @@ export function CheckoutPage({
             computer is easiest.
           </p>
         )}
-        <Button variant="ghost" className="w-full" disabled={release.isPending} onClick={() => release.mutate()}>
-          Release it, I'll book it myself
+        <Button variant="ghost" className="w-full" disabled={releasing} onClick={release}>
+          {releasing ? (
+            <>
+              <Loader2 className="motion-safe:animate-spin" aria-hidden /> Releasing…
+            </>
+          ) : (
+            "Release it, I'll book it myself"
+          )}
         </Button>
       </Card>
     </div>

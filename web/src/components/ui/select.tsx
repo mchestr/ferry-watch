@@ -32,7 +32,15 @@ export function Select({
 }) {
   const field = useFieldControl();
   return (
-    <SelectPrimitive.Root value={value} onValueChange={onValueChange} disabled={disabled}>
+    <SelectPrimitive.Root
+      value={value}
+      // Never a choice: Radix forbids "" as an item's value. In a form, Radix's hidden <select> reports ""
+      // when the value and the options change together (it gets the new options a render late).
+      onValueChange={(next) => {
+        if (next !== "") onValueChange(next);
+      }}
+      disabled={disabled}
+    >
       <SelectPrimitive.Trigger
         {...field}
         aria-label={ariaLabel}

@@ -48,7 +48,7 @@ export function NotHeld({ trip }: { trip: MyTrip }) {
         <ShoppingCart className="mt-0.5 size-5 text-warning" aria-hidden />
         <div className="min-w-0 flex-1">
           <p className="font-semibold">
-            {departures.length ? `${times(departures)} ${verb} bookable, not held` : "Checking to hold it for you"}
+            {departures.length ? `${times(departures)} ${verb} bookable, not held` : "Trying to hold it"}
           </p>
           <p className="text-sm text-muted-foreground" role="status">
             {trying

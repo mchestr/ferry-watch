@@ -6,6 +6,8 @@
  * Nothing here sets or reads a cookie.
  */
 
+import { myApi } from "./api";
+
 export const TOKEN_KEY = "fw.token";
 export const SIGNED_OUT_KEY = "fw.signedOut";
 export const FLOW_KEY = "fw.signin";
@@ -50,6 +52,18 @@ export const isSignedOut = (): boolean => read(localStorage, SIGNED_OUT_KEY) ===
 export function markSignedOut(): void {
   clearToken();
   write(localStorage, SIGNED_OUT_KEY, "1");
+}
+
+/** Signs this device out (only this one: the user's other devices stay signed in), then back to the start. */
+export async function signOut(): Promise<void> {
+  try {
+    await myApi.logout();
+  } catch {
+    // Signed out here all the same: the token is dropped below.
+  } finally {
+    markSignedOut();
+    location.assign("/");
+  }
 }
 
 export function base64url(bytes: Uint8Array): string {

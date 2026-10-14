@@ -2,7 +2,7 @@
 import { z } from "zod";
 import { request } from "@/lib/api";
 import { TerminalListSchema, type Terminal, type TripSettings } from "@/lib/schema";
-import { CheckoutSchema, MyStateSchema, type MyState } from "./schema";
+import { CheckoutSchema, MyStateSchema, type MyState, type QuietHours } from "./schema";
 
 export const MY_STATE_KEY = ["my-state"] as const;
 
@@ -19,6 +19,15 @@ export type BookedReason =
   | "ran_out_of_time"
   | "changed_mind";
 
+/**
+ * "Did you book it?": yes ({booked: true}), no and keep watching (with an optional reason), or no and stop
+ * watching ({booked: false, stop: true}). Yes and stop both archive the trip.
+ */
+export type BookedAnswer = { booked: true } | { booked: false; reason?: BookedReason } | { booked: false; stop: true };
+
+/** After "Yes" or "No, cancel" the trip is archived: it's gone from the user's list. */
+export const endsTrip = (answer: BookedAnswer): boolean => answer.booked || "stop" in answer;
+
 export const myApi = {
   state: (signal?: AbortSignal): Promise<MyState> => request("/api/state", { schema: MyStateSchema, signal }),
   terminals: async (signal?: AbortSignal): Promise<Terminal[]> =>
@@ -31,9 +40,9 @@ export const myApi = {
   hold: (id: string) => mutate("POST", `${tripPath(id)}/hold`),
   release: (id: string, cartId: string) => mutate("POST", `${tripPath(id)}/cart/release`, { cart_id: cartId }),
   dismiss: (id: string, cartId: string) => mutate("POST", `${tripPath(id)}/cart/dismiss`, { cart_id: cartId }),
-  booked: (id: string, booked: boolean, reason?: BookedReason) =>
-    mutate("POST", `${tripPath(id)}/booked`, reason ? { booked, reason } : { booked }),
-  pauseAll: (paused: boolean) => mutate("PATCH", "/api/me", { paused }),
+  booked: (id: string, answer: BookedAnswer) => mutate("POST", `${tripPath(id)}/booked`, answer),
+  /** The user's quiet hours (Pacific time), or null for none. */
+  setQuietHours: (quiet: QuietHours | null) => mutate("PATCH", "/api/me", { quiet_hours: quiet }),
   /** A one-minute link to this trip's checkout. Not followed automatically: the user chooses the device. */
   checkout: (id: string) => request(`${tripPath(id)}/vnc`, { method: "POST", body: {}, schema: CheckoutSchema }),
   subscribe: (subscription: PushSubscriptionJSON) =>
@@ -42,5 +51,4 @@ export const myApi = {
     request("/api/me/push-subscriptions", { method: "DELETE", body: { endpoint }, schema: OkSchema }),
   testAlert: () => request("/api/alerts/test", { method: "POST", body: {}, schema: OkSchema }),
   logout: () => request("/auth/logout", { method: "POST", body: {}, schema: OkSchema }),
-  logoutEverywhere: () => request("/auth/logout-everywhere", { method: "POST", body: {}, schema: OkSchema }),
 };
