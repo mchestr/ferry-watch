@@ -205,17 +205,20 @@ CREATE INDEX events_user_ts ON events (user_id, ts DESC);
 
 CREATE TABLE notifications (
     id bigserial PRIMARY KEY,
-    user_id text NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    user_id text REFERENCES users (id) ON DELETE CASCADE,
+    to_email text,  -- only for an invitation, whose person isn't a user yet
     trip_id char(16),
     kind text NOT NULL,
     params jsonb NOT NULL DEFAULT '{}',
     dedup_key text UNIQUE,
     created_at timestamptz NOT NULL DEFAULT now(),
+    next_attempt_at timestamptz NOT NULL DEFAULT now(),
     sent_at timestamptz,
     attempts integer NOT NULL DEFAULT 0,
-    last_error text
+    last_error text,
+    CHECK (user_id IS NOT NULL OR (kind = 'invited' AND to_email IS NOT NULL))
 );
-CREATE INDEX notifications_unsent ON notifications (created_at) WHERE sent_at IS NULL;
+CREATE INDEX notifications_due ON notifications (next_attempt_at) WHERE sent_at IS NULL;
 
 CREATE TABLE push_subscriptions (
     id bigserial PRIMARY KEY,

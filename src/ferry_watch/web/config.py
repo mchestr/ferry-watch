@@ -63,9 +63,18 @@ class CheckoutConfig(_Config, kw_only=True):
     key_id: Annotated[str, msgspec.Meta(pattern=r"^[a-z0-9]{1,16}$")]
 
 
+class SmtpConfig(_Config, kw_only=True):
+    host: str = "smtp-relay.default.svc.cluster.local."
+    port: int = 2525
+    sender: str = "ferry-watch@chestr.dev"
+
+
 class WebConfig(_Config, kw_only=True):
     oidc: OidcConfig
     checkout: CheckoutConfig
+    base_url: str = "https://ferry.chestr.dev"
+    smtp: SmtpConfig | None = None
+    vapid_subject: str = "mailto:ferry-watch@chestr.dev"
     identity: IdentityConfig = msgspec.field(default_factory=IdentityConfig)
     polling: PollingConfig = msgspec.field(default_factory=PollingConfig)
     limits: LimitsConfig = msgspec.field(default_factory=LimitsConfig)
@@ -103,6 +112,8 @@ class WebConfig(_Config, kw_only=True):
         return user_limits(self.limits)
 
     def check(self) -> WebConfig:
+        if not re.fullmatch(r"https://[a-z0-9.-]+(:\d+)?", self.base_url):
+            raise ConfigError("baseUrl must be an https origin")
         if self.kofi_url is not None and not KOFI.fullmatch(self.kofi_url):
             raise ConfigError("kofiUrl must be https://ko-fi.com/<name>")
         if not re.fullmatch(r"https://[a-z0-9.-]+(:\d+)?", self.checkout.origin):

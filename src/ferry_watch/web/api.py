@@ -15,14 +15,19 @@ from typing import Any
 from aiohttp import web
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from ferry_watch.bcferries.errors import BookingError
+from ferry_watch.bcferries.terminals import TerminalDirectory
 from ferry_watch.models import Trip
 from ferry_watch.tickets import TTL_SECONDS, Display, mint
 
 from .auth import signed_in
 from .http import ApiError, json_body
+from .outbox import subscription_row
 from .repo import WebStore
 
 STORE = web.AppKey("store", WebStore)
+TERMINALS = web.AppKey("terminals", TerminalDirectory)
+PUBLIC = web.AppKey("public", dict[str, Any])  # what every snapshot carries: links, the push key
 MAX_CART_ID = 32
 
 
@@ -51,7 +56,17 @@ def _cart_id(body: dict[str, Any]) -> str:
 
 
 async def get_state(request: web.Request) -> web.Response:
-    return web.json_response(await request.app[STORE].snapshot(signed_in(request).uid))
+    state = await request.app[STORE].snapshot(signed_in(request).uid)
+    return web.json_response(state | request.app[PUBLIC])
+
+
+async def get_terminals(request: web.Request) -> web.Response:
+    directory = request.app[TERMINALS]
+    try:
+        terminals = await directory.get()
+    except BookingError:
+        raise ApiError(503, "BC Ferries' terminal list is unavailable right now; try again shortly") from None
+    return web.json_response({"terminals": sorted((t.to_json() for t in terminals.values()), key=lambda t: t["label"])})
 
 
 async def add_trip(request: web.Request) -> web.Response:
@@ -146,9 +161,33 @@ async def open_checkout(request: web.Request) -> web.Response:
     return web.json_response({"url": url, "ttl": TTL_SECONDS, "nonce_key": f"{held.trip.id}:{held.gen}"})
 
 
+async def subscribe(request: web.Request) -> web.Response:
+    try:
+        subscription = subscription_row(await json_body(request))
+    except ValueError as e:
+        raise ApiError(400, str(e)) from None
+    await request.app[STORE].subscribe(signed_in(request).uid, subscription)
+    return web.json_response({"ok": True})
+
+
+async def unsubscribe(request: web.Request) -> web.Response:
+    endpoint = (await json_body(request)).get("endpoint")
+    if not isinstance(endpoint, str):
+        raise ApiError(400, "Which device?", "endpoint")
+    await request.app[STORE].unsubscribe(signed_in(request).uid, endpoint)
+    return web.json_response({"ok": True})
+
+
+async def test_alert(request: web.Request) -> web.Response:
+    await request.app[STORE].test_alert(signed_in(request).uid)
+    await request.app[STORE].notify(signed_in(request).uid)
+    return web.json_response({"ok": True})
+
+
 def routes() -> list[web.RouteDef]:
     return [
         web.get("/api/state", get_state, allow_head=False),
+        web.get("/api/terminals", get_terminals, allow_head=False),
         web.post("/api/trips", add_trip),
         web.patch("/api/trips/{trip_id:[a-f0-9]{16}}", update_trip),
         web.delete("/api/trips/{trip_id:[a-f0-9]{16}}", delete_trip),
@@ -158,4 +197,7 @@ def routes() -> list[web.RouteDef]:
         web.post("/api/trips/{trip_id:[a-f0-9]{16}}/vnc", open_checkout),
         web.post("/api/trips/{trip_id:[a-f0-9]{16}}/booked", answer_booked),
         web.patch("/api/me", update_me),
+        web.post("/api/me/push-subscriptions", subscribe),
+        web.delete("/api/me/push-subscriptions", unsubscribe),
+        web.post("/api/alerts/test", test_alert),
     ]

@@ -4,15 +4,17 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
+from typing import Any
 
 import asyncpg
 from aiohttp import web
 
+from ferry_watch.bcferries.terminals import TerminalDirectory
 from ferry_watch.control.limits import Limits
 
 from . import admin, api, auth
 from .accounts import Accounts
-from .api import CHECKOUT, STORE, CheckoutSigner
+from .api import CHECKOUT, PUBLIC, STORE, TERMINALS, CheckoutSigner
 from .http import errors, same_origin, security_headers
 from .identity import OidcClient
 from .live import LiveHub
@@ -33,6 +35,8 @@ def build(
     *,
     pool: asyncpg.Pool,
     limits: Limits,
+    terminals: TerminalDirectory | None = None,
+    public: dict[str, Any] | None = None,
 ) -> web.Application:
     # Outermost first: headers on every answer, errors as JSON, then the session, then the write checks.
     app = web.Application(
@@ -42,6 +46,9 @@ def build(
     app[auth.OIDC] = oidc
     app[STORE] = store
     app[CHECKOUT] = checkout
+    if terminals is not None:
+        app[TERMINALS] = terminals
+    app[PUBLIC] = public or {}
     app.router.add_routes(auth.routes())
     app.router.add_routes(api.routes())
     admin.install(app, pool, limits)

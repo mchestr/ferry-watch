@@ -367,3 +367,36 @@ async def test_a_revoked_session_closes_its_socket(rig: Rig) -> None:
     frame = await asyncio.wait_for(ws.receive(), 5)
     assert frame.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSED)
     assert ws.close_code == 4401
+
+
+# ---- alerts
+
+
+async def test_devices_subscribe_only_to_real_push_services(rig: Rig) -> None:
+    good = {"endpoint": "https://fcm.googleapis.com/fcm/send/abc", "keys": {"p256dh": "BPk", "auth": "xyz"}}
+    assert (await rig.call("POST", "/api/me/push-subscriptions", json=good)).status == 200
+    evil = good | {"endpoint": "https://169.254.169.254/latest"}
+    assert (await rig.call("POST", "/api/me/push-subscriptions", json=evil)).status == 400
+    state = await (await rig.call("GET", "/api/state")).json()
+    assert state["devices"] == 1
+    # The same device, signed in as Bob now, moves to Bob.
+    assert (await rig.call("POST", "/api/me/push-subscriptions", BOB, json=good)).status == 200
+    assert (await (await rig.call("GET", "/api/state")).json())["devices"] == 0
+    response = await rig.call("DELETE", "/api/me/push-subscriptions", BOB, json={"endpoint": good["endpoint"]})
+    assert response.status == 200
+    assert await rig.sql("SELECT * FROM push_subscriptions") == []
+
+
+async def test_test_alerts_are_limited(rig: Rig) -> None:
+    for _ in range(6):
+        assert (await rig.call("POST", "/api/alerts/test")).status == 200
+    assert (await rig.call("POST", "/api/alerts/test")).status == 429
+    assert [r["kind"] for r in await rig.sql("SELECT DISTINCT kind FROM notifications")] == ["test"]
+
+
+async def test_an_invitation_with_an_email_is_sent(rig: Rig) -> None:
+    await make_admin(rig)
+    body = {"username": "cat", "email": "cat@example.com", "reason": "friend"}
+    assert (await rig.call("POST", "/api/admin/invites", json=body)).status == 201
+    rows = await rig.sql("SELECT kind, to_email, user_id FROM notifications")
+    assert [tuple(r) for r in rows] == [("invited", "cat@example.com", None)]

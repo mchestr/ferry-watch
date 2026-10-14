@@ -21,11 +21,18 @@ import aiohttp
 import asyncpg
 from aiohttp import web
 
+from ferry_watch.bcferries.errors import BookingError
+from ferry_watch.bcferries.terminals import TerminalDirectory
+from ferry_watch.bcferries.urls import USER_AGENT
+
 from .accounts import Accounts
 from .api import CheckoutSigner
 from .app import build
 from .config import ConfigError, WebConfig, load, read_secret, signing_key
 from .identity import OidcClient
+from .messages import Messages
+from .outbox import Mailer, Outbox
+from .push import Vapid
 from .repo import WebStore
 
 log = logging.getLogger("ferry_watch.web")
@@ -53,12 +60,25 @@ async def _file(path: Path, _: web.Request) -> web.FileResponse:
     return web.FileResponse(path)
 
 
-async def run_web(config: WebConfig, client_secret: str, checkout_key: str, stop: asyncio.Event) -> None:
+async def run_web(
+    config: WebConfig, client_secret: str, checkout_key: str, vapid_key: str | None, stop: asyncio.Event
+) -> None:
     pool = await asyncpg.create_pool(min_size=1, max_size=10)
+    tasks: list[asyncio.Task[None]] = []
     try:
         async with aiohttp.ClientSession() as http:
             limits = config.user_limits()
             accounts = Accounts(pool, config.identity_policy())
+            terminals = TerminalDirectory(http, USER_AGENT)
+            vapid = Vapid.from_raw(vapid_key, config.vapid_subject) if vapid_key else None
+            smtp = config.smtp
+            outbox = Outbox(
+                pool,
+                http,
+                Messages(config.base_url, lambda: terminals.cached),
+                vapid=vapid,
+                mailer=Mailer(smtp.host, smtp.port, smtp.sender) if smtp else None,
+            )
             app = build(
                 accounts,
                 OidcClient(http, config.oidc_settings(client_secret)),
@@ -66,7 +86,10 @@ async def run_web(config: WebConfig, client_secret: str, checkout_key: str, stop
                 CheckoutSigner(signing_key(checkout_key), config.checkout.key_id, config.checkout.origin),
                 pool=pool,
                 limits=limits,
+                terminals=terminals,
+                public={"links": {"kofi": config.kofi_url}, "push": {"key": vapid.public_key if vapid else None}},
             )
+            tasks = [asyncio.create_task(outbox.run(), name="outbox"), asyncio.create_task(_warm(terminals))]
             if config.static_dir:
                 add_static(app, Path(config.static_dir))
             runner = web.AppRunner(app, access_log=None)
@@ -76,9 +99,26 @@ async def run_web(config: WebConfig, client_secret: str, checkout_key: str, stop
             try:
                 await stop.wait()
             finally:
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
                 await runner.cleanup()
     finally:
         await pool.close()
+
+
+async def _warm(terminals: TerminalDirectory) -> None:
+    """Load the terminal list early, retrying, so alerts and the trip editor have route names."""
+    delay = 5.0
+    while True:
+        try:
+            await terminals.get()
+        except BookingError as e:
+            log.warning("%s; retrying in %.0fs", e, delay)
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, 300)
+        else:
+            return
 
 
 def main() -> None:
@@ -96,6 +136,7 @@ def main() -> None:
         client_secret = read_secret(os.environ, "FW_OIDC_CLIENT_SECRET_FILE")
         checkout_key = read_secret(os.environ, "FW_CHECKOUT_KEY_FILE")
         signing_key(checkout_key)
+        vapid_key = read_secret(os.environ, "FW_VAPID_KEY_FILE") if os.environ.get("FW_VAPID_KEY_FILE") else None
     except ConfigError as e:
         sys.exit(f"ferry-web: {e}")
 
@@ -104,7 +145,7 @@ def main() -> None:
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGTERM, signal.SIGINT):
             loop.add_signal_handler(sig, stop.set)
-        await run_web(config, client_secret, checkout_key, stop)
+        await run_web(config, client_secret, checkout_key, vapid_key, stop)
 
     asyncio.run(run())
 

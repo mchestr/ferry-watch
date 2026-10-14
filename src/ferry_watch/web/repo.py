@@ -22,6 +22,7 @@ from ferry_watch.models import PACIFIC, Trip, ValidationError
 from ferry_watch.polling import PollPolicy
 
 from .http import ApiError
+from .push import Subscription
 
 AFTER_CHECKOUT = "after_checkout"
 BOOKED_REASONS = frozenset(
@@ -230,6 +231,39 @@ class WebStore:
     async def set_paused(self, uid: str, paused: bool) -> None:
         await self._pool.execute("UPDATE users SET paused = $2 WHERE id = $1", uid, paused)
 
+    # ---- alerts
+
+    async def subscribe(self, uid: str, subscription: Subscription) -> None:
+        """A device's push subscription. A shared device belongs to whoever subscribed last."""
+        await self._pool.execute(
+            "INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth) VALUES ($1, $2, $3, $4)"
+            " ON CONFLICT (endpoint) DO UPDATE SET user_id = $1, p256dh = $3, auth = $4, failures = 0",
+            uid,
+            subscription.endpoint,
+            subscription.p256dh,
+            subscription.auth,
+        )
+
+    async def unsubscribe(self, uid: str, endpoint: str) -> None:
+        await self._pool.execute("DELETE FROM push_subscriptions WHERE user_id = $1 AND endpoint = $2", uid, endpoint)
+
+    async def test_alert(self, uid: str) -> None:
+        now = self._clock()
+        async with self._pool.acquire() as conn, conn.transaction():
+            await conn.execute("SELECT 1 FROM users WHERE id = $1 FOR UPDATE", uid)
+            limit = await self.limit(conn, uid, "testAlertsPerHour")
+            recent = await conn.fetchval(
+                "SELECT count(*) FROM notifications WHERE user_id = $1 AND kind = 'test' AND created_at > $2",
+                uid,
+                _ts(now - 3600),
+            )
+            if recent >= limit:
+                raise ApiError(429, f"Up to {limit} test alerts an hour")
+            await conn.execute("INSERT INTO notifications (user_id, kind) VALUES ($1, 'test')", uid)
+
+    async def devices(self, uid: str) -> int:
+        return int(await self._pool.fetchval("SELECT count(*) FROM push_subscriptions WHERE user_id = $1", uid))
+
     # ---- checkout tickets
 
     async def held_cart(self, uid: str, trip_id: str) -> HeldCart:
@@ -374,6 +408,7 @@ class WebStore:
                 "end": self._policy.quiet_end.strftime("%H:%M"),
                 "now": self._policy.quiet(at),
             },
+            "devices": await self.devices(uid),
             "events": [
                 {
                     "id": e["id"],

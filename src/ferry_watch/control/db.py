@@ -76,7 +76,7 @@ def _grants(web: str, control: str) -> list[str]:
         f"GRANT INSERT (trip_id), UPDATE (next_check_at) ON trip_runtime TO {web}",
         f"GRANT DELETE ON alert_memory TO {web}",  # an edited search forgets what the old one alerted
         f"GRANT SELECT, INSERT ON agent_commands, events, vnc_mints, notifications TO {web}",
-        f"GRANT UPDATE (sent_at, attempts, last_error) ON notifications TO {web}",
+        f"GRANT UPDATE (sent_at, attempts, last_error, next_attempt_at) ON notifications TO {web}",
         f"GRANT SELECT ON hold_outcomes TO {web}",
         f"GRANT UPDATE (answer_reason) ON hold_outcomes TO {web}",
         f"GRANT SELECT, INSERT, UPDATE ON usage_ledger TO {web}",

@@ -210,6 +210,12 @@ async def invite(request: web.Request) -> web.Response:
             INVITE_DAYS,
         )
         await _audit(conn, actor, "invite", "invite", invite_id, reason, after={"username": username})
+        if email is not None:
+            await conn.execute(
+                "INSERT INTO notifications (to_email, kind, params) VALUES ($1, 'invited', $2)",
+                email,
+                json.dumps({"username": username}),
+            )
     return web.json_response({"id": invite_id}, status=201)
 
 
