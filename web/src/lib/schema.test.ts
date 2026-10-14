@@ -17,6 +17,27 @@ describe("schemas", () => {
     expect(parsed).not.toHaveProperty("added_later");
   });
 
+  it("read statuses this build doesn't know as unknown, instead of rejecting the state", () => {
+    // What a newer server might send: values this build has never heard of.
+    const newer = makeState({
+      trips: [
+        makeTrip({
+          cart: makeCart({ status: "checking_out" as never }),
+          sailings: [makeSailing({ status: "waitlist" as never })],
+        }),
+      ],
+      events: [{ id: 1, ts: 1, kind: "audit" as never, text: "Opened", trip_id: "t1", trip_title: "A → B" }],
+    });
+    const parsed = StateSchema.parse(newer);
+    expect(parsed.trips[0]?.sailings[0]?.status).toBe("unknown");
+    expect(parsed.trips[0]?.cart?.status).toBe("unknown");
+    expect(parsed.events[0]?.kind).toBe("unknown");
+  });
+
+  it("keep the enums the page sends back strict", () => {
+    expect(StateSchema.safeParse(makeState({ trips: [makeTrip({ vehicle: "bus" as never })] })).success).toBe(false);
+  });
+
   it("reject times and dates in the wrong format", () => {
     expect(StateSchema.safeParse(makeState({ trips: [makeTrip({ earliest: "7:00 am" })] })).success).toBe(false);
     expect(StateSchema.safeParse(makeState({ trips: [makeTrip({ date: "Oct 12" })] })).success).toBe(false);

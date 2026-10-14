@@ -25,19 +25,49 @@ export type ApiErrorKind =
   /** JSON that doesn't match the API contract. */
   | "schema";
 
+/** Why the server refused a session (multi-tenant): sign in again quietly, or show the signed-out screen. */
+export type AuthReason = "missing" | "expired" | "reverify" | "revoked";
+
 export class ApiError extends Error {
   override readonly name = "ApiError";
   readonly kind: ApiErrorKind;
   readonly status: number | null;
   /** For a 400: the request field that failed validation, when the server names one. */
   readonly field: string | null;
+  /** For a 401 from ferry-web: why the session doesn't work. */
+  readonly reason: AuthReason | null;
 
-  constructor(message: string, kind: ApiErrorKind, details: { status?: number | null; field?: string | null } = {}) {
+  constructor(
+    message: string,
+    kind: ApiErrorKind,
+    details: { status?: number | null; field?: string | null; reason?: AuthReason | null } = {},
+  ) {
     super(message);
     this.kind = kind;
     this.status = details.status ?? null;
     this.field = details.field ?? null;
+    this.reason = details.reason ?? null;
   }
+}
+
+/**
+ * The bearer token for every request, when the app signs in itself (ferry-web). The single-container app
+ * sits behind an authenticating proxy instead, and sends none.
+ */
+let bearerToken: () => string | null = () => null;
+let onUnauthorized: (reason: AuthReason) => void = () => undefined;
+
+export function configureBearerAuth(token: () => string | null, unauthorized: (reason: AuthReason) => void): void {
+  bearerToken = token;
+  onUnauthorized = unauthorized;
+}
+
+const AUTH_REASONS: readonly AuthReason[] = ["missing", "expired", "reverify", "revoked"];
+
+function authReason(text: string): AuthReason {
+  const body = parseJson(text);
+  const reason = typeof body === "object" && body !== null ? (body as { reason?: unknown }).reason : undefined;
+  return AUTH_REASONS.find((r) => r === reason) ?? "missing";
 }
 
 export const isAuthError = (error: unknown): boolean => error instanceof ApiError && error.kind === "auth";
@@ -87,6 +117,8 @@ export async function request<T>(path: string, options: RequestOptions<T>): Prom
   try {
     const headers: Record<string, string> = { Accept: "application/json" };
     if (body !== undefined) headers["Content-Type"] = "application/json";
+    const token = bearerToken();
+    if (token) headers.Authorization = `Bearer ${token}`;
 
     let res: Response;
     try {
@@ -104,8 +136,13 @@ export async function request<T>(path: string, options: RequestOptions<T>): Prom
       throw failure(cause);
     }
 
-    if (res.type === "opaqueredirect" || res.status === 401) {
-      throw new ApiError(SESSION_EXPIRED_MESSAGE, "auth", { status: res.status === 0 ? null : res.status });
+    if (res.type === "opaqueredirect") {
+      throw new ApiError(SESSION_EXPIRED_MESSAGE, "auth", { status: null });
+    }
+    if (res.status === 401) {
+      const reason = authReason(await res.text().catch(() => ""));
+      onUnauthorized(reason);
+      throw new ApiError(SESSION_EXPIRED_MESSAGE, "auth", { status: 401, reason });
     }
 
     let text: string;

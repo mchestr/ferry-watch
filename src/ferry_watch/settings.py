@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .bcferries.site import Credentials
+from .bcferries.urls import Credentials
 
 
 class SettingsError(ValueError):

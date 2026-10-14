@@ -40,8 +40,11 @@ export function windowLabel(t: Pick<TripSettings, "earliest" | "latest">): strin
 }
 
 /** What removing the trip does, for the confirmation. Names the held sailing, if there is one. */
-export function removeConsequence(trip: Pick<Trip, "cart">): string {
-  const cart = heldCart(trip);
+/** A cart, as much of it as removing a trip needs to describe. */
+export type CartSummary = Pick<CartState, "depart"> & { status: string };
+
+export function removeConsequence(trip: { cart: CartSummary | null }): string {
+  const cart = trip.cart && trip.cart.status !== "failed" ? trip.cart : null;
   if (cart?.status === "ready") return `Removing it releases the ${timeLabel(cart.depart)} sailing in your cart.`;
   if (cart?.status === "adding") return `Removing it stops adding the ${timeLabel(cart.depart)} sailing to your cart.`;
   return "You'll stop getting alerts for it.";

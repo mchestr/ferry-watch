@@ -28,10 +28,11 @@ import aiohttp
 from aiohttp import web
 
 from .bcferries.errors import BookingError
-from .bcferries.site import USER_AGENT, SiteBrowser
+from .bcferries.site import SiteBrowser
 from .bcferries.terminals import TerminalDirectory, Terminals
+from .bcferries.urls import USER_AGENT
 from .models import Trip, ValidationError, today
-from .notify import AlertDispatcher, LogNotifier, Message, NotifyError, PushoverNotifier, trip_title
+from .notify import AlertDispatcher, LogNotifier, Message, NotifyError, PushoverNotifier, TextAlerts, trip_title
 from .settings import Settings
 from .state import AlertMemory, EventKind, RuntimeState
 from .store import ConfigStore, TripNotFound
@@ -513,11 +514,10 @@ async def _lifecycle(settings: Settings, app: web.Application) -> AsyncIterator[
             store,
             state,
             site,
-            alerts,
+            TextAlerts(alerts, terminals, settings.checkout_url),
             terminals,
             memory=AlertMemory(settings.config_path.with_name("alerted.json")),
             credentials=settings.credentials,
-            checkout_url=settings.checkout_url,
             cart_hold_minutes=settings.cart_hold_minutes,
         )
         services = Services(settings, store, state, terminals, alerts, watcher)

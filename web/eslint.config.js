@@ -26,4 +26,9 @@ export default tseslint.config(
     files: ["**/*.js"],
     extends: [js.configs.recommended, tseslint.configs.disableTypeChecked],
   },
+  {
+    // The service worker runs in its own global scope.
+    files: ["public/sw.js"],
+    languageOptions: { globals: { self: "readonly", URL: "readonly" } },
+  },
 );

@@ -42,7 +42,7 @@ interface TripSettings {
   height_ft: number;       // over 7 and at most 14; only used when vehicle == "tall"
   earliest: string;        // "HH:MM"; earliest <= latest
   latest: string;          // "HH:MM"
-  auto_cart: boolean;      // add an opened sailing to the cart (needs a BC Ferries login)
+  auto_cart: boolean;      // add an opened sailing to the cart (a guest cart unless a login is configured)
   fare: Fare;
 }
 
@@ -104,7 +104,7 @@ interface State {
   trips: Trip[];
   events: ActivityEvent[];      // newest first, at most 40
   checkout_url: string | null;  // noVNC view of the browser holding carts
-  login_configured: boolean;    // BC Ferries credentials present (auto-cart possible)
+  login_configured: boolean;    // BC Ferries credentials present (auto-cart logs in; otherwise guest carts)
   alerts_configured: boolean;   // Pushover configured
   watcher: { heartbeat_at: number; healthy: boolean };
 }

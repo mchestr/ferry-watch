@@ -70,7 +70,6 @@ export default function App() {
                     trip={trip}
                     watching={state.enabled}
                     checkoutUrl={state.checkout_url}
-                    loginConfigured={state.login_configured}
                     skew={snapshot.skew}
                     today={today}
                     defaultOpen={state.trips.length === 1}

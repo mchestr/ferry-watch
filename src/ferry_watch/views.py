@@ -6,8 +6,8 @@ import time
 from datetime import timedelta
 from typing import Any
 
-from .bcferries.site import search_url
 from .bcferries.terminals import Terminals
+from .bcferries.urls import search_url
 from .models import MAX_TRIPS, Config, Sailing, Trip, today
 from .notify import trip_title
 from .state import Cart, Event, RuntimeState, TripRuntime
@@ -95,7 +95,7 @@ def event_view(event: Event) -> dict[str, Any]:
     }
 
 
-def trip_defaults(login_configured: bool) -> dict[str, Any]:
+def trip_defaults() -> dict[str, Any]:
     tomorrow = today() + timedelta(days=1)
     return {
         "enabled": True,
@@ -110,7 +110,7 @@ def trip_defaults(login_configured: bool) -> dict[str, Any]:
         "height_ft": 8.0,
         "earliest": "00:00",
         "latest": "23:59",
-        "auto_cart": login_configured,
+        "auto_cart": True,  # a guest cart unless a login is configured
         "fare": "cheapest",
     }
 
@@ -133,7 +133,7 @@ def state_view(
         "interval_seconds": config.interval_seconds,
         "next_check_at": state.next_check_at,
         "max_trips": MAX_TRIPS,
-        "trip_defaults": trip_defaults(login_configured),
+        "trip_defaults": trip_defaults(),
         "trips": [trip_view(t, state.trips.get(t.id, _IDLE), terminals) for t in config.trips],
         "events": [event_view(e) for e in list(state.events)[:40]],
         "checkout_url": checkout_url,

@@ -11,12 +11,13 @@ from __future__ import annotations
 
 import logging
 import re
+import shutil
 import urllib.parse
 import weakref
-from dataclasses import dataclass, field
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, datetime, time
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from playwright.async_api import Browser, BrowserContext, Locator, Page, Playwright, async_playwright
 from playwright.async_api import Error as PlaywrightError
@@ -36,15 +37,15 @@ from .errors import (
 )
 from .parse import parse_sailings, parse_time
 from .terminals import Terminals
+from .urls import BASE_URL, QUEUE_HOST, USER_AGENT, CheckoutView, Credentials, checkout_view, search_url
+
+if TYPE_CHECKING:
+    from ferry_watch.protocol import ReleaseCheck
 
 log = logging.getLogger(__name__)
 
-BASE_URL = "https://www.bcferries.com"
-QUEUE_HOST = "queue-it.net"
-# A desktop Chrome UA. Headless Chromium otherwise announces itself as "HeadlessChrome".
-USER_AGENT = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0 Safari/537.36"
-)
+# Where /abandoned-cart/my-account ends up: the account page, or its login page for a guest.
+_RELEASE_LANDINGS = ("/my-account", "/login")
 
 ACTION_TIMEOUT_MS = 30_000
 NAVIGATION_TIMEOUT_MS = 60_000
@@ -61,30 +62,6 @@ class TerminalProvider(Protocol):
     """Where sessions get the terminal list from (terminals.TerminalDirectory)."""
 
     async def get(self) -> Terminals: ...
-
-
-@dataclass(frozen=True, slots=True)
-class Credentials:
-    username: str
-    password: str = field(repr=False)
-
-
-def search_url(trip: Trip, terminals: Terminals, base_url: str = BASE_URL) -> str:
-    """The booking form with route and date filled in server-side (the date picker isn't needed)."""
-    try:
-        origin, destination = terminals[trip.origin], terminals[trip.destination]
-    except KeyError as e:
-        raise RouteRejected(f"Unknown terminal {e.args[0]}") from None
-    return f"{base_url}/?" + urllib.parse.urlencode(
-        {
-            "sailing": "true",
-            "departureLocation": origin.code,
-            "departureLocationName": origin.label,
-            "arrivalLocation": destination.code,
-            "arrivalLocationName": destination.label,
-            "departingDateTime": trip.date.strftime("%m/%d/%Y"),
-        }
-    )
 
 
 def choose_fare(fares: tuple[Fare, ...], preference: FarePreference) -> Fare:
@@ -173,6 +150,95 @@ class SiteBrowser:
         session = SiteSession(name, context, page, self._terminals, self._debug_dir, base_url=self._base_url)
         await session.install_handlers()
         self._sessions.add(session)
+        return session
+
+
+# Chromium's cache lives in memory-backed /tmp in a pod, so it's capped (with the managed policy's DiskCacheSize).
+POD_DISK_CACHE_BYTES = 32 * 1024 * 1024
+
+
+class PodBrowser:
+    """A browser pod's Chromium (docs/multi-tenant/design-reference.md §5.2, §5.6).
+
+    One window, full screen (kiosk), so the viewer sees the checkout and nothing else. Each session is
+    a fresh persistent profile under /tmp: a new session closes the old one and wipes its profile, so
+    a fresh start really is fresh. Chromium ignores signals; the agent decides when it closes, after
+    emptying any cart. `after_launch` runs the lockdown self-tests on every launch.
+    """
+
+    def __init__(
+        self,
+        terminals: TerminalProvider,
+        *,
+        profile_dir: Path,
+        window_size: tuple[int, int],
+        env: Mapping[str, str],
+        sandbox: bool = False,
+        debug_dir: Path | None = None,
+        base_url: str = BASE_URL,
+        after_launch: Callable[[BrowserContext], Awaitable[None]] | None = None,
+    ) -> None:
+        self._terminals = terminals
+        self._profile_dir = profile_dir
+        self._window_size = window_size
+        self._env: dict[str, str | float | bool] = dict(env)
+        self._sandbox = sandbox
+        self._debug_dir = debug_dir
+        self._base_url = base_url
+        self._after_launch = after_launch
+        self._playwright: Playwright | None = None
+        self._session: SiteSession | None = None
+
+    async def start(self) -> None:
+        self._playwright = await async_playwright().start()
+
+    async def stop(self) -> None:
+        if self._session is not None:
+            await self._session.close()
+            self._session = None
+        if self._playwright is not None:
+            await self._playwright.stop()
+            self._playwright = None
+
+    async def new_session(self, name: str) -> SiteSession:
+        if self._playwright is None:
+            raise RuntimeError("PodBrowser.start() hasn't been called")
+        if self._session is not None:
+            await self._session.close()
+            self._session = None
+        shutil.rmtree(self._profile_dir, ignore_errors=True)
+        width, height = self._window_size
+        log.info("Launching Chromium")
+        context = await self._playwright.chromium.launch_persistent_context(
+            str(self._profile_dir),
+            headless=False,
+            args=[
+                f"--window-size={width},{height}",
+                "--window-position=0,0",
+                "--kiosk",
+                f"--disk-cache-size={POD_DISK_CACHE_BYTES}",
+            ],
+            ignore_default_args=["--disable-popup-blocking"],  # the managed policy decides
+            env=self._env,
+            handle_sigint=False,
+            handle_sigterm=False,
+            handle_sighup=False,
+            chromium_sandbox=self._sandbox,
+            user_agent=USER_AGENT,
+            no_viewport=True,
+        )
+        try:
+            if self._after_launch is not None:
+                await self._after_launch(context)
+            page = context.pages[0] if context.pages else await context.new_page()
+            page.set_default_timeout(ACTION_TIMEOUT_MS)
+            page.set_default_navigation_timeout(NAVIGATION_TIMEOUT_MS)
+            session = SiteSession(name, context, page, self._terminals, self._debug_dir, base_url=self._base_url)
+            await session.install_handlers()
+        except BaseException:
+            await context.close()
+            raise
+        self._session = session
         return session
 
 
@@ -397,8 +463,25 @@ class SiteSession:
             raise CartMismatch(f"The cart doesn't show the {format_time(depart)} {fare.name} sailing")
         return fare
 
-    async def empty_cart(self) -> None:
+    async def empty_cart(self) -> ReleaseCheck:
+        """Abandon the cart, which gives the sailing back straight away.
+
+        Returns how far the release could be confirmed: "landing_url" when BC Ferries sent us where an
+        abandoned cart lands (the account page, or its login page for a guest), "none" otherwise. Checking
+        that the cart is really empty needs captured cart pages (docs/multi-tenant §5.7).
+        """
         await self._goto(f"{self._base_url}/abandoned-cart/my-account")
+        landed = urllib.parse.urlsplit(self._page.url).path
+        return "landing_url" if landed.startswith(_RELEASE_LANDINGS) else "none"
+
+    def checkout_view(self) -> CheckoutView:
+        """What the held cart's checkout is showing: every page and frame in this context, by URL only."""
+        if self.closed:
+            return CheckoutView()
+        others = [
+            frame.url for page in self._context.pages for frame in page.frames if frame is not self._page.main_frame
+        ]
+        return checkout_view(self._page.url, others, base_url=self._base_url)
 
     async def show(self) -> None:
         """Raise this session's window, so it's what's on screen over noVNC."""

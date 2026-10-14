@@ -1,5 +1,4 @@
-import type { Trip } from "@/lib/schema";
-import { removeConsequence } from "@/lib/trip";
+import { removeConsequence, type CartSummary } from "@/lib/trip";
 import { ConfirmDialog } from "./ui/confirm-dialog";
 
 /** Confirms removing a trip. With a held cart, it names the sailing that will be released. */
@@ -10,7 +9,7 @@ export function RemoveTripDialog({
   onConfirm,
   pending,
 }: {
-  trip: Pick<Trip, "title" | "cart">;
+  trip: { title: string; cart: CartSummary | null };
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onConfirm: () => void;

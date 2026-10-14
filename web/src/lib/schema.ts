@@ -28,6 +28,15 @@ const count = z.number().int().nonnegative();
 /** Rendered as a link, so `javascript:` and friends never get through. */
 const httpUrl = z.string().min(1).refine(isHttpUrl, "expected an http(s) URL");
 
+/**
+ * A status the server reports. A value this build doesn't know reads as "unknown" instead of failing the
+ * whole message, so a newer server (a new sailing status, cart state or event kind) can't blank an open
+ * page. Enums the page sends back (vehicle, fare) stay strict.
+ */
+function reported<const T extends string>(values: readonly [T, ...T[]]) {
+  return z.enum([...values, "unknown"] as [T | "unknown", ...(T | "unknown")[]]).catch("unknown");
+}
+
 export const VehicleSchema = z.enum(["standard", "tall", "none"]);
 export const FareSchema = z.enum(["cheapest", "saver", "prepaid", "reservation"]);
 
@@ -55,7 +64,7 @@ export const SailingSchema = z.object({
   depart: timeOfDay,
   arrive: timeOfDay,
   vessel: z.string(),
-  status: z.enum(["available", "sold_out", "unavailable"]),
+  status: reported(["available", "sold_out", "unavailable"]),
   note: z.string(),
   price: z.string().nullable(),
   in_window: z.boolean(),
@@ -63,7 +72,7 @@ export const SailingSchema = z.object({
 
 export const CartStateSchema = z.object({
   id: z.string().min(1),
-  status: z.enum(["adding", "ready", "failed"]),
+  status: reported(["adding", "ready", "failed"]),
   depart: timeOfDay,
   since: epoch,
   fare: z.string().nullable(),
@@ -91,7 +100,7 @@ export const TripSchema = TripSettingsSchema.extend({
 export const ActivityEventSchema = z.object({
   id: z.number().int(),
   ts: epoch,
-  kind: z.enum(["info", "alert", "cart", "error"]),
+  kind: reported(["info", "alert", "cart", "error"]),
   text: z.string(),
   trip_id: z.string().nullable(),
   trip_title: z.string().nullable(),

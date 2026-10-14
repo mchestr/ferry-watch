@@ -28,3 +28,6 @@ def frozen_today(monkeypatch: pytest.MonkeyPatch) -> date:
     for module in ("ferry_watch.models", "ferry_watch.watcher", "ferry_watch.views", "ferry_watch.server"):
         monkeypatch.setattr(f"{module}.today", lambda: TODAY)
     return TODAY
+
+
+pytest_plugins = ["tests.postgres"]
