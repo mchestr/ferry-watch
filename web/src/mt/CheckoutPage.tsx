@@ -95,7 +95,7 @@ export function CheckoutPage({
               <h2 className="font-semibold">Nothing is held right now</h2>
               <p className="mt-1 text-sm text-muted-foreground">
                 {trip.quiet
-                  ? `It's your quiet hours, so this trip isn't checked${quietUntil ? ` until ${timeLabel(quietUntil)}` : ""}.`
+                  ? `It's your quiet hours, so this trip isn't checked${quietUntil ? ` until ${timeLabel(quietUntil)} PT` : ""}.`
                   : "Nothing in your times is bookable. We'll alert you when a sailing opens up."}
               </p>
             </div>

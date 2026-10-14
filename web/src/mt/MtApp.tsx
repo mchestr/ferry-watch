@@ -192,7 +192,7 @@ function SignedIn() {
                   {state.quiet_hours?.now && (
                     <>
                       {" · "}
-                      <span className="whitespace-nowrap">quiet until {timeLabel(state.quiet_hours.end)}</span>
+                      <span className="whitespace-nowrap">quiet until {timeLabel(state.quiet_hours.end)} PT</span>
                     </>
                   )}
                 </p>
