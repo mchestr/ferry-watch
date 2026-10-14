@@ -172,8 +172,8 @@ class FakePage:
         self.closed = False
 
     async def goto(self, url: str, **_: object) -> None:
-        if url == "about:blank":
-            return
+        if url == "about:blank":  # as Chromium does, from a tab showing an error page
+            raise PlaywrightError('Navigation to "about:blank" is interrupted by another navigation')
         if url.startswith("https://example.com"):
             if not self.outside_loads:
                 raise PlaywrightError("net::ERR_NAME_NOT_RESOLVED")

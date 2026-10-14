@@ -241,6 +241,10 @@ async def run_pod(settings: AgentSettings) -> tuple[Finish, str | None]:
     """Everything in a real pod: the processes, Chromium, and the agent. Returns how it ended."""
     for directory in (settings.home, settings.tmp / "kasm"):
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    # Xvnc only creates its socket directory when it runs as root, and the pod doesn't.
+    x11 = settings.tmp / ".X11-unix"
+    x11.mkdir(exist_ok=True)
+    x11.chmod(0o1777)
     env = {
         "DISPLAY": settings.display,
         "HOME": str(settings.home),

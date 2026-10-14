@@ -166,11 +166,16 @@ async def check_chromium(context: BrowserContext) -> list[str]:
             pass  # expected: not on the egress allowlist
         else:
             failures.append("an outside host loaded")
-        await page.goto("about:blank")
-        results = await page.evaluate(_PAGE_PROBES)
-        failures += [f"page script reached the {name}" for name, reached in sorted(results.items()) if reached]
     finally:
         await page.close()
+    # The page probes run in a fresh tab, which is at about:blank with an opaque origin. (Sending a tab
+    # that shows an error page back to about:blank only lands on another error page.)
+    probe = await context.new_page()
+    try:
+        results = await probe.evaluate(_PAGE_PROBES)
+    finally:
+        await probe.close()
+    failures += [f"page script reached the {name}" for name, reached in sorted(results.items()) if reached]
     return failures
 
 

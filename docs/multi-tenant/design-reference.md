@@ -981,7 +981,9 @@ reports `checkout_host_blocked` (R16).
 launch): the TCP check is exact; for unix sockets it requires `rfb.sock` listening with mode 0600 and logs
 the others (X11's own socket, Chromium's profile singleton), since `ss -ltnx` would list those too. Check 3
 runs its probes from `about:blank`, whose opaque origin fails the gate's Origin check just as bcferries.com's
-would, so the self-test costs no request to BC Ferries. Until the first launch, `lockdown_ok` is false, which
+would, so the self-test costs no request to BC Ferries. The probes run in a fresh tab: under the policy, sending
+a tab that shows an error page back to `about:blank` lands on another error page and never loads (found by the
+browser image's smoke test, which runs these checks against the real image). Until the first launch, `lockdown_ok` is false, which
 is harmless: nothing can cart or open the gate before a check has launched Chromium.
 1. `chrome://version`, `file:///etc/passwd` and `view-source:https://www.bcferries.com/` must each fail with
    `ERR_BLOCKED_BY_ADMINISTRATOR`; `https://example.com/` must fail at the network (`ERR_NAME_NOT_RESOLVED`,
@@ -2584,6 +2586,14 @@ as `X.Y.Z@sha256` with provenance. SBOMs and cosign signatures come with admissi
   (`Dockerfile:20-32`), with Firefox and WebKit removed, policies in 3 directories, `USER 1001:1001` and
   `tini --`.
 - **`ferry-watch-vnc-edge`:** §7.9.
+
+*As built:* `control` and `browser` are targets in the root `Dockerfile`, beside today's single-container app
+(still the default target); vnc-edge has its own (`vnc-edge/Dockerfile`, §7.9). The python:3.12-slim base
+already carries tzdata. The browser image installs the policy with `install -D` (a `COPY --chmod=0444` would
+also make the directories it creates untraversable, so Chromium could not read the policy), and the agent
+creates `/tmp/.X11-unix` itself, since Xvnc only does that as root. Each image has a smoke test that CI runs
+(`docker/control/smoke-test.sh`, `docker/browser/smoke-test.sh`); the browser one runs the agent's lockdown
+self-test against a real Chromium in the image, with no network.
 - **CI-only:** `ferry-watch-agent-e2e` carries the marker file that alone enables `FW_E2E_BASE_URL` and the
   127.0.0.1 allow policy; `fake-bcferries` is extracted from `tests/browser/test_site_flow.py` into a runnable
   server (with confirmation, expired-cart, login-wall and 3DS-iframe pages, synthetic until the pages

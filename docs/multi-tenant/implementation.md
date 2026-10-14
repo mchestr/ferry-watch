@@ -77,6 +77,17 @@ running until cutover.
 real gate (with a minimal RFB server for Xvnc): first connect with ticket and nonce, a reload by nonce alone,
 an expired ticket, no key at all, and the end of the hold.
 
+### Images
+
+| Image | What |
+|---|---|
+| `ferry-watch-control` (`Dockerfile` target `control`) | python:3.12-slim, uid 65532, `ferry-web` and `ferry-control` with the SPA; no Playwright, Chromium or selectolax. |
+| `ferry-watch-browser` (target `browser`) | Playwright's noble image with KasmVNC, matchbox and tini; Chromium only (Firefox, WebKit and ffmpeg removed); the managed policy (`docker/browser/chromium-policy.json`) in all three directories; uid 1001; `tini -- ferry-watch-agent`. |
+| `ferry-watch-vnc-edge` (`vnc-edge/Dockerfile`) | Above. |
+
+CI builds each, smoke-tests it read-only and unprivileged, and pushes it from `main` and tags. The browser
+image's smoke test runs the agent with no network and the lockdown self-test against a real Chromium.
+
 ## Where the build departs from the plan's wording
 
 Each is a two-way door.
@@ -123,11 +134,12 @@ Each is a two-way door.
 - **Frontend** (§10): the session list. The admin pages cover what the admin API does today; §9.4's
   revoke sessions, release a cart, recycle a pod, close the breaker, make admin and delete user need API
   first.
-- **Helm chart, images and CI tiers** (§7, §11): the browser and control images (vnc-edge's is built and
-  smoke-tested in CI); VAPs, network policies, RBAC, vnc-edge's HTTPRoute; the envtest VAP matrix; the
+- **Helm chart and CI tiers** (§7, §11): the chart (workloads, VAPs, network policies, RBAC, quotas,
+  vnc-edge's HTTPRoute); the envtest VAP matrix; the `agent-e2e` and `fake-bcferries` images; the
   home-cluster PR.
 - **Agent follow-ups**: the smoke trip, the page watchdog (`checkout_host_blocked`), porting the
-  disabled login path.
+  disabled login path; `/readyz` reporting the display, Chromium, the loop and lockdown (it answers 200 as
+  soon as the probe server is up).
 - **ferry-web follow-ups**: `DELETE /api/me` (delete my data), the session list, pre-auth rate limits
   on `/auth/*`, "self-book" (release, then the search link), and the `failing` suppression while the
   breaker is open.
