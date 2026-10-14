@@ -95,7 +95,6 @@ export const MyStateSchema = z.object({
     username: z.string(),
     display: z.string().nullable(),
     is_admin: z.boolean(),
-    paused: z.boolean(),
   }),
   limits: z.record(z.string(), LimitSchema),
   usage: z.record(z.string(), z.number()),

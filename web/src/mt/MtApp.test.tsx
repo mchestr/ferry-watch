@@ -10,7 +10,7 @@ const TRIP_ID = "3f9c0a1b2c3d4e5f";
 
 function myState(overrides: Partial<MyState> = {}): MyState {
   return {
-    me: { id: "u1", username: "ann", display: "Ann", is_admin: false, paused: false },
+    me: { id: "u1", username: "ann", display: "Ann", is_admin: false },
     limits: { maxTrips: { value: 3, source: "default" } },
     usage: {},
     trips: [
@@ -221,6 +221,94 @@ describe("settings", () => {
   });
 });
 
+describe("pausing a trip", () => {
+  beforeEach(() => {
+    localStorage.setItem("fw.token", "t-1");
+  });
+
+  /** The one trip, with nothing held, enabled or not. */
+  function tripState(enabled: boolean, extra: Partial<MyState["trips"][number]> = {}): MyState {
+    const base = myState().trips[0];
+    if (!base) throw new Error("no trip");
+    return myState({
+      trips: [
+        {
+          ...base,
+          trip: { ...base.trip, enabled },
+          hold: { ...base.hold, reason: enabled ? null : "paused", can_request: enabled },
+          browser: { ...base.browser, phase: enabled ? "watching" : "off", cart: null },
+          ...extra,
+        },
+      ],
+    });
+  }
+
+  it("pauses and resumes one trip, and doesn't check a paused one", async () => {
+    let enabled = true;
+    const { requests } = mockFetch((r) => {
+      if (r.url === `/api/trips/${TRIP_ID}` && r.method === "PATCH") {
+        enabled = (r.body as { enabled: boolean }).enabled;
+      }
+      if (r.url === "/api/state" || r.url.startsWith("/api/trips/")) return jsonResponse(tripState(enabled));
+      return jsonResponse({ terminals: [] });
+    });
+    const { user } = renderWithProviders(<MtApp />);
+    expect(await screen.findByRole("button", { name: "Check now" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Pause" }));
+    expect(await screen.findByText("Trip paused")).toBeInTheDocument();
+    expect(requests.find((r) => r.method === "PATCH")).toMatchObject({
+      url: `/api/trips/${TRIP_ID}`,
+      body: { enabled: false },
+    });
+    expect(screen.getByText("Paused")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Check now" })).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "Resume" }));
+    expect(await screen.findByText("Trip resumed")).toBeInTheDocument();
+    expect(requests.filter((r) => r.method === "PATCH").map((r) => r.body)).toEqual([
+      { enabled: false },
+      { enabled: true },
+    ]);
+    expect(screen.getByRole("button", { name: "Pause" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Check now" })).toBeEnabled();
+  });
+
+  it("says a held cart stays held", async () => {
+    mockFetch((r) => {
+      if (r.method === "PATCH") {
+        const held = myState().trips[0];
+        if (!held) throw new Error("no trip");
+        return jsonResponse(myState({ trips: [{ ...held, trip: { ...held.trip, enabled: false } }] }));
+      }
+      return r.url === "/api/state" ? jsonResponse(myState()) : jsonResponse({ terminals: [] });
+    });
+    const { user } = renderWithProviders(<MtApp />);
+    await user.click(await screen.findByRole("button", { name: "Pause" }));
+    expect(await screen.findByText("Trip paused. Your cart is still held.")).toBeInTheDocument();
+    expect(screen.getByText("9:00 am is held for you (Saver, $93.45)")).toBeInTheDocument();
+  });
+
+  it("can't be paused while it asks whether you booked it", async () => {
+    mockFetch((r) =>
+      r.url === "/api/state"
+        ? jsonResponse(tripState(true, { paused_reason: "after_checkout" }))
+        : jsonResponse({ terminals: [] }),
+    );
+    renderWithProviders(<MtApp />);
+    expect(await screen.findByRole("button", { name: "Pause" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Check now" })).toBeDisabled();
+  });
+
+  it("is per trip: settings has no pause", async () => {
+    history.replaceState(null, "", "/settings");
+    mockFetch((r) => (r.url === "/api/state" ? jsonResponse(myState()) : jsonResponse({ terminals: [] })));
+    renderWithProviders(<MtApp />);
+    expect(await screen.findByRole("heading", { name: "Your account" })).toBeInTheDocument();
+    expect(screen.queryByText(/Pause all/)).toBeNull();
+    expect(screen.queryByRole("switch")).toBeNull();
+  });
+});
+
 describe("a bookable sailing nothing holds", () => {
   const SAILING = {
     depart: "09:00",
@@ -346,7 +434,7 @@ describe("admin", () => {
   });
 
   it("opens the admin pages for an admin", async () => {
-    const me = { id: "u1", username: "ann", display: "Ann", is_admin: true, paused: false };
+    const me = { id: "u1", username: "ann", display: "Ann", is_admin: true };
     mockFetch((r) => {
       if (r.url === "/api/state") return jsonResponse(myState({ me }));
       if (r.url === "/api/admin/users") return jsonResponse({ users: [], invites: [] });

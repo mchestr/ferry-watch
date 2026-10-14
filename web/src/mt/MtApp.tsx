@@ -188,7 +188,6 @@ function SignedIn() {
                 <h1 className="text-xl font-bold tracking-tight">Your trips</h1>
                 <p className="text-sm text-muted-foreground">
                   {state.trips.length} of {state.limits.maxTrips?.value ?? 3} watched
-                  {state.me.paused && " · all paused"}
                 </p>
               </div>
               <Button onClick={() => setSheet({ kind: "adding" })} disabled={!state.capacity.can_add}>

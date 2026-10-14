@@ -93,7 +93,6 @@ export const AdminUserSchema = z.object({
   email: z.string().nullable(),
   state: z.string(),
   is_admin: z.boolean(),
-  paused: z.boolean(),
   trips: z.number().int(),
   created_at: epoch,
   last_seen_at: epoch.nullable(),

@@ -16,7 +16,6 @@ function people(): People {
     email: null,
     state: "active",
     is_admin: false,
-    paused: false,
     trips: 1,
     created_at: Date.now() / 1000 - 86400,
     last_seen_at: Date.now() / 1000 - 300,
@@ -148,10 +147,13 @@ describe("fleet", () => {
   it("asks why before flipping a switch, and sends the reason", async () => {
     const { requests } = api();
     const { user } = renderWithProviders(<AdminPage meId={ME} />);
-    const maintenance = await screen.findByRole("switch", { name: "Maintenance" });
+    const everything = await screen.findByRole("switch", { name: "Pause everything" });
+    expect(
+      screen.getByText("Runs no browsers, so nothing is checked. Holds already in progress finish."),
+    ).toBeVisible();
     expect(screen.getByRole("switch", { name: "Pause carting" })).toBeChecked();
-    await user.click(maintenance);
-    const dialog = await screen.findByRole("dialog", { name: "Turn maintenance on?" });
+    await user.click(everything);
+    const dialog = await screen.findByRole("dialog", { name: "Pause everything?" });
     const confirm = within(dialog).getByRole("button", { name: "Turn on" });
     expect(confirm).toBeDisabled(); // no reason yet
     await user.type(within(dialog).getByLabelText("Reason"), "Talos upgrade");
@@ -164,6 +166,7 @@ describe("fleet", () => {
       }),
     );
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(await screen.findByText("Everything is paused")).toBeInTheDocument();
   });
 
   it("says which version each part runs, on both pages", async () => {

@@ -33,7 +33,6 @@ export const myApi = {
   dismiss: (id: string, cartId: string) => mutate("POST", `${tripPath(id)}/cart/dismiss`, { cart_id: cartId }),
   booked: (id: string, booked: boolean, reason?: BookedReason) =>
     mutate("POST", `${tripPath(id)}/booked`, reason ? { booked, reason } : { booked }),
-  pauseAll: (paused: boolean) => mutate("PATCH", "/api/me", { paused }),
   /** A one-minute link to this trip's checkout. Not followed automatically: the user chooses the device. */
   checkout: (id: string) => request(`${tripPath(id)}/vnc`, { method: "POST", body: {}, schema: CheckoutSchema }),
   subscribe: (subscription: PushSubscriptionJSON) =>

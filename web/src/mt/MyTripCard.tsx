@@ -1,6 +1,6 @@
 /** One of the user's trips: its browser's status, its sailings, a held cart and the questions it raises. */
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, Pencil, RefreshCw, ShoppingCart } from "lucide-react";
+import { ChevronRight, Pause, Pencil, Play, RefreshCw, ShoppingCart } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { SailingsList } from "@/components/SailingsList";
@@ -24,13 +24,13 @@ const REASONS: readonly { value: BookedReason; label: string }[] = [
   { value: "changed_mind", label: "Changed my mind" },
 ];
 
-function useMyMutation<A>(fn: (arg: A) => Promise<MyState>, success?: string) {
+function useMyMutation<A>(fn: (arg: A) => Promise<MyState>, success?: string | ((arg: A) => string)) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: fn,
-    onSuccess: (state) => {
+    onSuccess: (state, arg) => {
       qc.setQueryData(MY_STATE_KEY, state);
-      if (success) toast.success(success);
+      if (success) toast.success(typeof success === "string" ? success : success(arg));
     },
     onError: (error) => reportError(qc, error),
   });
@@ -126,6 +126,14 @@ export function MyTripCard({
 }) {
   const badge = tripBadge(trip);
   const check = useMyMutation(() => myApi.checkNow(trip.trip.id), "Checking now");
+  const held = trip.browser.cart?.status === "ready";
+  const pause = useMyMutation(
+    (enabled: boolean) => myApi.updateTrip(trip.trip.id, { enabled }),
+    // Pausing doesn't let go of a held cart: that's Release.
+    (enabled) => (enabled ? "Trip resumed" : held ? "Trip paused. Your cart is still held." : "Trip paused"),
+  );
+  // Paused by the user, or until they say whether they booked it (the question resumes it).
+  const paused = !trip.trip.enabled || trip.paused_reason !== null;
   // A failed cart whose sailing has gone again; while it's still bookable, NotHeld says so instead.
   const failed = trip.browser.cart?.status === "failed" && unheld(trip).length === 0 ? trip.browser.cart : null;
   const dismiss = useMyMutation(() => myApi.dismiss(trip.trip.id, failed?.id ?? ""));
@@ -156,8 +164,29 @@ export function MyTripCard({
       )}
       {sailings.length > 0 && <SailingsList sailings={sailings} />}
       <div className="flex flex-wrap gap-2">
-        <Button size="sm" variant="outline" disabled={check.isPending} onClick={() => check.mutate(undefined)}>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={check.isPending || paused}
+          onClick={() => check.mutate(undefined)}
+        >
           <RefreshCw aria-hidden /> Check now
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={pause.isPending || (trip.trip.enabled && trip.paused_reason !== null)}
+          onClick={() => pause.mutate(!trip.trip.enabled)}
+        >
+          {trip.trip.enabled ? (
+            <>
+              <Pause aria-hidden /> Pause
+            </>
+          ) : (
+            <>
+              <Play aria-hidden /> Resume
+            </>
+          )}
         </Button>
         <Button size="sm" variant="ghost" onClick={onEdit}>
           <Pencil aria-hidden /> Edit
