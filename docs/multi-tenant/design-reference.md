@@ -1753,7 +1753,7 @@ rules: [{apiGroups: [""], resources: [nodes], verbs: [get, list, watch]}]
 # ferry-browser (browser ns): no bindings; only the projected control-audience token
 ```
 
-**Granted to no app identity**, asserted by helm-unittest and by `kubectl auth can-i --as` in envtest and in
+**Granted to no app identity**, asserted by `kubectl auth can-i --as` in envtest (`tests/apiserver/`) and in
 the post-deploy smoke, for both namespaces:
 - `secrets` (any verb);
 - `pods` update or deletecollection; `pods` patch for anyone but ferry-control (whose patches the VAP limits
@@ -1851,7 +1851,8 @@ connectivity.
 ### 7.5 Admission (GitOps-owned VAPs; `failurePolicy: Fail`; bindings `validationActions: [Deny]`)
 
 Params come from ConfigMap `ferry-browser-policy` in `ferry-watch-browsers`, rendered from Helm values, with
-`parameterNotFoundAction: Deny`. Keys: `allowedImages` (at most 2 digests, so one rollout can overlap);
+`parameterNotFoundAction: Deny`. Keys: `allowedImages` (as built, the one browser image, `repository:tag@digest`,
+which changes in the same release as ferry-control's config);
 `hubUrl`, `vncPubkeys`, `vncOrigin`, `podMemory`, `cpuRequest`, `maxDeadline` (93600); `requireUserNamespace`,
 `sandbox`, `seccompProfile` (all off in v1; the optional hardening turns them on, R2); `optionalEnv` (empty
 in v1, §5.7); `controlSA`, `breakGlassGroup`.
@@ -1969,8 +1970,8 @@ GitOps-owned; no app identity has verbs on them. Sizes come from the capacity ta
   workloads, and default-priority pods can't preempt a holding browser (a negative value would let them).
 - `ResourceQuota browsers` (scopeSelector PriorityClass `ferry-browser`), rendered from values:
   - `pods = maxBrowsersTotal + 1` (one terminating predecessor);
-  - `requests.memory = limits.memory = (maxBrowsersTotal + 1) × podMemory`, which helm-unittest asserts is
-    ≤ `browserMemoryBudget`;
+  - `requests.memory = limits.memory = (maxBrowsersTotal + 1) × podMemory`, computed in the HelmRelease from
+    those values (as built, §7.10), so it can't drift; `maxBrowsersTotal` is sized from the memory budget (§8.4);
   - `requests.cpu = (maxBrowsersTotal + 1) × cpuRequest` (the draft's fixed `2` capped the fleet at 20).
 
   A quota hit means an accounting bug, and it pages the admin.
@@ -1978,7 +1979,7 @@ GitOps-owned; no app identity has verbs on them. Sizes come from the capacity ta
   `activeDeadlineSeconds`.
 - `ResourceQuota objects`: `services: 1` (the headless `browsers`), `configmaps: 2` (params and the
   auto-created `kube-root-ca.crt`), `secrets: 0`, `count/poddisruptionbudgets.policy: 0`.
-- `LimitRange`: container max memory 2Gi, max cpu 1500m, max ephemeral-storage 256Mi.
+- `LimitRange`: container max memory = `podMemory` (as built), max cpu 1500m, max ephemeral-storage 256Mi.
 
 ### 7.8 Node drains, without PDBs or an anchor
 
@@ -2112,8 +2113,8 @@ kubernetes/apps/ferry-watch/                   namespace ferry-watch, components
   admission policy's parameters are templated from the same values. The browser quota and the LimitRange's
   memory maximum are computed from `podMemory`, `cpuRequest` and `maxBrowsersTotal`, so there is no separate
   budget to keep in step. `tests/apiserver/test_render.py` checks the parameters against the config.
-- **The render refuses** a browser image without a digest, an empty `vncPubkeys` and a `podMemory` not in Mi.
-  home-cluster's flux-local therefore fails until a release fills them in.
+- **The render refuses** any of the three images without a digest, an empty `vncPubkeys`, a `podMemory` not in Mi
+  and a `cpuRequest` not in millicores. home-cluster's flux-local therefore fails until a release fills them in.
 - **One HelmRelease, two namespaces.** `rawResources` keep `metadata.namespace`, so the browser namespace's
   objects come from the release in `ferry-watch`. Flux's `targetNamespace` rewrites only the HelmRelease
   itself. The browser namespace gets no `components/common`: its object quota allows no Secret. It is kept
@@ -2128,7 +2129,13 @@ kubernetes/apps/ferry-watch/                   namespace ferry-watch, components
 - **The browser image** is `repository:tag@sha256:digest`. The digest is what runs, and `pods.py` accepts the
   tag. Renovate bumps it together with the control and edge images (one group).
 - **The OIDC client id** is Authelia-generated and lives in 1Password beside the secret. ferry-web reads it
-  from the Secret (`FW_OIDC_CLIENT_ID_FILE`), so the values don't name it.
+  from the Secret (`FW_OIDC_CLIENT_ID_FILE`), so the values don't name it. Authelia enables the client only once
+  its fields reach Authelia's Secret, so a missing field can't stop Authelia.
+- **The checkout key carries its id** (`k1:<key>`, from `ferry-web keys`), so a rotation's switch is one 1Password
+  edit. `ferry.web.checkout.keyId` is only for a key stored without one.
+- **The Secret's keys**: with a template, ESO writes only the templated keys. `tests/test_deploy.py` checks that
+  every key the pods read from Secret `ferry-watch` is one the ExternalSecret (copied as `deploy/externalsecret.yaml`)
+  writes.
 - **Running beside the single-tenant app**: the dashboard runs on `ferry-next.chestr.dev` until the cutover
   (§12.5) moves `ferry.hosts.dashboard`.
 
@@ -2246,8 +2253,8 @@ This is the only place numbers are defined; other sections refer here. "Compiled
 | "Did you book it?" after a viewed hold with no detected confirmation | the trip stays paused until answered ("Yes" archives, "No" resumes); no automatic resume (owner, round 3) | — | control, web |
 | `guest_checkout_failing` admin alert | the first forced login wall or `needed_account` answer; the PrometheusRule `GuestCheckoutFailing` at 2 or more viewed holds within 7 days ending with a forced login wall or a `needed_account` / `checkout_broke` answer. Voluntary visits and `tried_sign_in` never count. | — | control, PrometheusRule |
 | **Cluster** (§8.4) | | | |
-| `browserMemoryBudget` | 12 GiB (owner range 8-24 GiB) | — | chart (quota) |
-| `podMemory` (request = limit) | 1.5 GiB → `ceil(p95 working set incl. tmpfs × 1.2)` after S-MEM | LimitRange 2 GiB | VAP, quota |
+| `browserMemoryBudget` | 12 GiB (owner range 8-24 GiB) | — | sizing `maxBrowsersTotal` (§8.4); not a value |
+| `podMemory` (request = limit) | 1.5 GiB → `ceil(p95 working set incl. tmpfs × 1.2)` after S-MEM | LimitRange = `podMemory` | VAP, quota |
 | `cpuRequest` | 200m | limit 1500m | VAP, quota |
 | `maxBrowsersTotal` | `floor(budget / podMemory) − 1` = 7 | quota pods = cap + 1 | fleet loop, quota |
 | concurrent starts / starts per hour / per-user spacing (warm and short-check pods alike) | 2 / 30 / 20 s | — | fleet loop |
@@ -2301,11 +2308,11 @@ This is the only place numbers are defined; other sections refer here. "Compiled
   - The outbox is written before sending. Alerts are delayed, never lost.
   - A web restart costs 10-20 s of dashboard downtime; a control restart means agents reconnect and replay.
 - **Image rolls:** the control image rolls freely. A new browser digest applies only to new pods. Existing pods
-  change only at natural recycles (max age, after a hold, failure), never during a hold. `allowedImages` holds
-  2 digests during the overlap.
+  change only at natural recycles (max age, after a hold, failure), never during a hold. `allowedImages` and
+  ferry-control's config change in the same release; admission checks only new pods.
 - **Ticket key rotation:**
   1. Add the new public key next to the old one (pods created from then on carry both).
-  2. After 26 h, switch web to the new private key.
+  2. After 26 h, switch web to the new private key (as built, one 1Password edit: the key carries its id).
   3. After another 26 h, drop the old public key.
 - **DB:** CNPG failover makes both control processes reconnect with back-off. Agents are unaffected.
 

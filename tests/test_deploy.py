@@ -7,15 +7,18 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Any
 
+import msgspec
 import pytest
 
-from tests.deploy import HELMRELEASE, flux_variables, helmrelease
+from tests.deploy import EXTERNALSECRET, HELMRELEASE, flux_variables, helmrelease
 
 
 def test_flux_substitutes_nothing() -> None:
     assert flux_variables(HELMRELEASE.read_text()) == []
-    assert flux_variables("a: ${APP}\nb: $APP\nc: '^[0-9]{10}$'\nd: $$ESCAPED\n") == ["a: ${APP}", "b: $APP"]
+    text = "a: ${APP}\nb: $APP\nc: '^[0-9]{10}$'\nd: $$ESCAPED\ne: '{{ $x := . }}'\nf: $${X}\n"
+    assert flux_variables(text) == ["a: ${APP}", "d: $$ESCAPED", "f: $${X}"]
 
 
 def test_it_is_an_app_template_release_that_keeps_its_migrations() -> None:
@@ -25,7 +28,34 @@ def test_it_is_an_app_template_release_that_keeps_its_migrations() -> None:
     assert spec["upgrade"]["strategy"]["name"] == "RetryOnFailure"
 
 
+def _secret_keys(node: Any, secret: str) -> set[str]:
+    """Keys of `secret` that the values read: env secretKeyRefs and secret volumes' items."""
+    keys: set[str] = set()
+    if isinstance(node, dict):
+        ref = node.get("secretKeyRef")
+        if isinstance(ref, dict) and ref.get("name") == secret:
+            keys.add(ref["key"])
+        if node.get("type") == "secret" and node.get("name") == secret:
+            keys |= {item["key"] for item in node.get("items", [])}
+        for value in node.values():
+            keys |= _secret_keys(value, secret)
+    elif isinstance(node, list):
+        for value in node:
+            keys |= _secret_keys(value, secret)
+    return keys
+
+
+def test_every_key_the_pods_read_is_one_the_externalsecret_writes() -> None:
+    """With a template, ESO writes only the templated keys; a key it doesn't write keeps a pod from starting."""
+    external_secret = msgspec.yaml.decode(EXTERNALSECRET.read_bytes())
+    secret = external_secret["spec"]["target"]["name"]
+    read = _secret_keys(helmrelease()["spec"]["values"], secret)
+    assert read  # the walk finds them at all
+    assert read <= set(external_secret["spec"]["target"]["template"]["data"])
+
+
 @pytest.mark.skipif(not os.environ.get("FW_HOME_CLUSTER"), reason="FW_HOME_CLUSTER (a home-cluster checkout) isn't set")
-def test_home_cluster_runs_this_copy() -> None:
-    theirs = Path(os.environ["FW_HOME_CLUSTER"]) / "kubernetes/apps/ferry-watch/ferry-watch/app/helmrelease.yaml"
-    assert theirs.read_text() == HELMRELEASE.read_text()
+@pytest.mark.parametrize("ours", [HELMRELEASE, EXTERNALSECRET], ids=lambda p: p.name)
+def test_home_cluster_runs_this_copy(ours: Path) -> None:
+    theirs = Path(os.environ["FW_HOME_CLUSTER"]) / "kubernetes/apps/ferry-watch/ferry-watch/app" / ours.name
+    assert theirs.read_text() == ours.read_text()

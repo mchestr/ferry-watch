@@ -31,7 +31,7 @@ from .identity import OidcSettings
 KOFI = re.compile(r"https://ko-fi\.com/[A-Za-z0-9_]{1,64}")
 ED25519_KEY_BYTES = 32
 
-__all__ = ["ConfigError", "WebConfig", "load", "new_keys", "read_secret", "signing_key"]
+__all__ = ["ConfigError", "WebConfig", "checkout_key", "load", "new_keys", "read_secret", "signing_key"]
 
 
 class _Config(msgspec.Struct, forbid_unknown_fields=True, kw_only=True, rename="camel"):
@@ -64,7 +64,8 @@ class IdentityConfig(_Config, kw_only=True):
 
 class CheckoutConfig(_Config, kw_only=True):
     origin: str
-    key_id: Annotated[str, msgspec.Meta(pattern=r"^[a-z0-9]{1,16}$")]
+    # Only for a key stored without its id; `ferry-web keys` stores `<id>:<key>`, so a rotation is one change.
+    key_id: Annotated[str, msgspec.Meta(pattern=r"^[a-z0-9]{1,16}$")] = "k1"
 
 
 class SmtpConfig(_Config, kw_only=True):
@@ -166,7 +167,7 @@ def new_keys(key_id: str = "k1") -> str:
     return "\n".join(
         [
             "# Secrets, for the deployment's Secret (never in config):",
-            f"FERRY_WATCH_CHECKOUT_KEY={_b64(raw)}",
+            f"FERRY_WATCH_CHECKOUT_KEY={key_id}:{_b64(raw)}",
             f"FERRY_WATCH_VAPID_KEY={_b64(vapid.private_numbers().private_value.to_bytes(32, 'big'))}",
             "# The checkout key's public half, for the browser pods (FW_VNC_PUBKEYS; not a secret):",
             f"{key_id}:{_b64(public)}",
@@ -176,6 +177,16 @@ def new_keys(key_id: str = "k1") -> str:
 
 def _b64(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+
+def checkout_key(text: str, default_id: str) -> tuple[str, Ed25519PrivateKey]:
+    """The checkout signing key and its id: `<id>:<key>`, or a bare key whose id is the config's keyId."""
+    key_id, sep, key = text.partition(":")  # base64url has no colon
+    if not sep:
+        key_id, key = default_id, text
+    if not re.fullmatch(r"[a-z0-9]{1,16}", key_id):
+        raise ConfigError("The checkout key's id must be 1-16 lowercase letters or digits")
+    return key_id, signing_key(key)
 
 
 def signing_key(text: str) -> Ed25519PrivateKey:

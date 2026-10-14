@@ -1,6 +1,7 @@
 """The deployment as home-cluster runs it: `deploy/helmrelease.yaml` through app-template.
 
-`deploy/helmrelease.yaml` is a copy of home-cluster's `kubernetes/apps/ferry-watch/ferry-watch/app/helmrelease.yaml`
+`deploy/helmrelease.yaml` (and `externalsecret.yaml`) are copies of home-cluster's
+`kubernetes/apps/ferry-watch/ferry-watch/app/helmrelease.yaml` (and `externalsecret.yaml`)
 (docs/multi-tenant/design-reference.md §7.10). Its values carry ferry-control's and ferry-web's configs and the
 admission policies, so CI renders it the way Flux would and tests the result (tests/apiserver, kubeconform).
 
@@ -24,26 +25,42 @@ import msgspec
 
 ROOT = Path(__file__).resolve().parents[1]
 HELMRELEASE = Path(os.environ.get("FW_HELMRELEASE", ROOT / "deploy" / "helmrelease.yaml"))
+EXTERNALSECRET = HELMRELEASE.with_name("externalsecret.yaml")  # the Secret ferry-watch the pods read
 APP_TEMPLATE = os.environ.get("FW_APP_TEMPLATE", "oci://ghcr.io/bjw-s-labs/helm/app-template")
 APP_TEMPLATE_VERSION = "5.3.0"  # home-cluster's kubernetes/components/common/repos/app-template
 RELEASE = "ferry-watch"
 NAMESPACE = "ferry-watch"
 
-# What a release fills in: the browser image's digest and the checkout key's public half.
+# What a release fills in: each image's digest and the checkout key's public half.
 BROWSER_IMAGE = "ghcr.io/mchestr/ferry-watch-browser:0.6.0@sha256:" + "2" * 64
+CONTROL_TAG = "0.6.0@sha256:" + "1" * 64
+EDGE_TAG = "0.6.0@sha256:" + "3" * 64
+
+
+def _image(container: str, tag: str) -> dict[str, Any]:
+    return {"containers": {container: {"image": {"tag": tag}}}}
+
+
 TEST_VALUES: dict[str, Any] = {
     "ferry": {
         "browserImage": {"tag": BROWSER_IMAGE.partition(":")[2]},
         "control": {"pod": {"vncPubkeys": "k1:" + base64.urlsafe_b64encode(bytes(32)).decode().rstrip("=")}},
-    }
+    },
+    "controllers": {
+        "ferry-web": _image("app", CONTROL_TAG),
+        "ferry-control": _image("app", CONTROL_TAG),
+        "db": _image("migrate", CONTROL_TAG),
+        "vnc-edge": _image("app", EDGE_TAG),
+    },
 }
 
-# Flux's postBuild substitution rewrites ${VAR} and $VAR everywhere in the file; $$ is its escape.
-_FLUX_VARIABLE = re.compile(r"(?<!\$)\$(\{|[A-Za-z_])")
+# Flux's postBuild substitution (fluxcd/pkg/envsubst) rewrites ${VAR} and turns the escape $$ into $; a bare
+# $name is left alone.
+_FLUX_VARIABLE = re.compile(r"\$\{|\$\$")
 
 
 def flux_variables(text: str) -> list[str]:
-    """Lines Flux would substitute into (and so silently change)."""
+    """Lines Flux's substitution would change."""
     return [line.strip() for line in text.splitlines() if _FLUX_VARIABLE.search(line)]
 
 

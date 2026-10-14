@@ -22,15 +22,23 @@ def helm() -> Path:
 
 def with_values(**pod: Any) -> dict[str, Any]:
     ferry = TEST_VALUES["ferry"]
-    return {"ferry": ferry | {"control": {"pod": ferry["control"]["pod"] | pod}}}
+    return TEST_VALUES | {"ferry": ferry | {"control": {"pod": ferry["control"]["pod"] | pod}}}
+
+
+def with_tag(controller: str, tag: str) -> dict[str, Any]:
+    controllers = TEST_VALUES["controllers"]
+    return TEST_VALUES | {"controllers": controllers | {controller: {"containers": {"app": {"image": {"tag": tag}}}}}}
 
 
 @pytest.mark.parametrize(
     ("overrides", "message"),
     [
-        ({"ferry": {"browserImage": {"tag": "0.6.0"}}}, "must pin the digest"),
+        (TEST_VALUES | {"ferry": TEST_VALUES["ferry"] | {"browserImage": {"tag": "0.6.0"}}}, "must pin its digest"),
+        (with_tag("ferry-control", "0.6.0"), "must pin its digest"),
+        (with_tag("vnc-edge", "0.6.0"), "must pin its digest"),
         (with_values(vncPubkeys=""), "vncPubkeys"),
         (with_values(podMemory="1.5Gi"), "must be in Mi"),
+        (with_values(cpuRequest="1"), "millicores"),
     ],
 )
 def test_a_release_must_fill_in_what_the_cluster_checks(helm: Path, overrides: dict[str, Any], message: str) -> None:

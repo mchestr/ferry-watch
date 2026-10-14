@@ -257,7 +257,7 @@ mandatory reason. Polling values are fleet-wide, from `polling.py`, changed by v
 | "Did you book it?" | trip paused until answered | — | no automatic resume |
 | app session | 7 d idle / 30 d; re-checked every 24 h | re-check 1-24 h | silent while Authelia's session lives |
 | `checksPerMinute` (whole fleet) | 20 | 40 | typically 2-5 used, ~14 worst case |
-| `browserMemoryBudget` / `podMemory` | 12 GiB / 1.5 GiB | LimitRange 2 GiB | `podMemory` to measured p95 x 1.2 |
+| `browserMemoryBudget` / `podMemory` | 12 GiB / 1.5 GiB | LimitRange = `podMemory` | `podMemory` to measured p95 x 1.2 |
 | `maxBrowsersTotal` / `shortCheckSlots` | 7 / 1 | `floor(budget/podMemory) - 1` | 6 warm browsers at the start |
 
 **Capacity** (design-reference.md §8.4): warm browsers = people with a sailing within 7 days at once: 8 GiB ->
@@ -388,9 +388,10 @@ branch, except the 1Password fields, the release values (both listed in its
 **M1: you on the new stack**
 - [ ] `kubernetes/apps/ferry-watch/`: namespace with `components/common`; `ks.yaml` with `components/cnpg`
       (`APP=ferrywatch`), `dependsOn: cloudnative-pg-cluster`; an app-template HelmRelease
-      (`upgrade.strategy: RetryOnFailure`); values for hosts, FQDN allowlist, `identity.oidc`,
-      `bootstrapAdmins`, ceilings, memory budget, `kofiUrl`, `autoCart` and alert-only lists, ticket public keys
-      (`polling` only to change your round-3 numbers).
+      (`upgrade.strategy: RetryOnFailure`); `ferry.*` values for hosts, `ferry.web.oidc`,
+      `ferry.web.identity.bootstrapAdmins`, limits, `podMemory` and `fleet.maxBrowsersTotal`, `kofiUrl`,
+      `autoCart` and alert-only lists, `ferry.control.pod.vncPubkeys` (`polling` only to change your round-3
+      numbers).
 - [ ] Authelia (`default/authelia/app/resources/configuration.yaml`; YAML in design-reference.md §6.2.3):
       `authorization_policies.ferry-watch` (default deny; **`one_factor`** for `group:ferry-watch`,
       `group:admin`) and a client `Ferry Watch` in the cluster's usual pattern (confidential, PKCE S256,

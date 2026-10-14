@@ -30,7 +30,7 @@ from ferry_watch.bcferries.urls import USER_AGENT
 from .accounts import Accounts
 from .api import CheckoutSigner
 from .app import build
-from .config import ConfigError, WebConfig, load, new_keys, read_secret, signing_key
+from .config import ConfigError, WebConfig, checkout_key, load, new_keys, read_secret
 from .identity import OidcClient
 from .messages import Messages
 from .outbox import Mailer, Outbox
@@ -63,7 +63,7 @@ async def _file(path: Path, _: web.Request) -> web.FileResponse:
 
 
 async def run_web(
-    config: WebConfig, client_secret: str, checkout_key: str, vapid_key: str | None, stop: asyncio.Event
+    config: WebConfig, client_secret: str, checkout: CheckoutSigner, vapid_key: str | None, stop: asyncio.Event
 ) -> None:
     pool = await asyncpg.create_pool(min_size=1, max_size=10)
     tasks: list[asyncio.Task[None]] = []
@@ -85,7 +85,7 @@ async def run_web(
                 accounts,
                 OidcClient(http, config.oidc_settings(client_secret)),
                 WebStore(pool, limits, config.policy(), clock=time.time),
-                CheckoutSigner(signing_key(checkout_key), config.checkout.key_id, config.checkout.origin),
+                checkout,
                 pool=pool,
                 limits=limits,
                 terminals=terminals,
@@ -146,8 +146,8 @@ def main() -> None:
             client_id = read_secret(os.environ, "FW_OIDC_CLIENT_ID_FILE")
         config = load(Path(os.environ.get("FW_WEB_CONFIG", "/etc/ferry-web/config.json")), client_id=client_id)
         client_secret = read_secret(os.environ, "FW_OIDC_CLIENT_SECRET_FILE")
-        checkout_key = read_secret(os.environ, "FW_CHECKOUT_KEY_FILE")
-        signing_key(checkout_key)
+        key_id, key = checkout_key(read_secret(os.environ, "FW_CHECKOUT_KEY_FILE"), config.checkout.key_id)
+        checkout = CheckoutSigner(key, key_id, config.checkout.origin)
         vapid_key = read_secret(os.environ, "FW_VAPID_KEY_FILE") if os.environ.get("FW_VAPID_KEY_FILE") else None
     except ConfigError as e:
         sys.exit(f"ferry-web: {e}")
@@ -157,7 +157,7 @@ def main() -> None:
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGTERM, signal.SIGINT):
             loop.add_signal_handler(sig, stop.set)
-        await run_web(config, client_secret, checkout_key, vapid_key, stop)
+        await run_web(config, client_secret, checkout, vapid_key, stop)
 
     asyncio.run(run())
 

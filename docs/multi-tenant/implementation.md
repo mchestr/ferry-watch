@@ -95,7 +95,7 @@ There is no chart: home-cluster deploys Ferry Watch with app-template, as one He
 
 | Part | What |
 |---|---|
-| `ferry.*` values | The hosts, the browser image (`tag@digest`), and ferry-control's and ferry-web's configs. Each `config.json`, the policy parameters, the quota and the LimitRange are rendered from them. The render refuses a missing digest or checkout key. |
+| `ferry.*` values | The hosts, the browser image (`tag@digest`), and ferry-control's and ferry-web's configs. Each `config.json`, the policy parameters, the quota and the LimitRange are rendered from them. The render refuses an image without its digest, a missing checkout key, and memory or CPU in the wrong unit. |
 | `controllers`, `service`, `route`, `networkpolicies` | ferry-web, ferry-control (Recreate: one holds the lock), vnc-edge (two, rolling), the db hook Job (postgres-init, then `ferry-control migrate`), their Services, the two HTTPRoutes, default deny and per-workload policies. |
 | `rawResources` | The browser namespace (PSA restricted, kept on uninstall), `ferry-browser`, the headless `browsers` Service, the policy params, the three quotas, the LimitRange, default deny and the two Cilium policies; ferry-control's Role and ClusterRoles; PriorityClass `ferry-browser`; `fw-browser-pod`, `fw-browser-pod-lock` and `fw-ns-objects`. |
 
@@ -140,7 +140,8 @@ Each is a two-way door.
   one HelmRelease, and the planned helm-unittest suites are the render and envtest tests above. Two app
   changes came with it: the browser image may carry a tag before its digest, so Renovate can bump it, and
   ferry-web may read the OIDC client id from a file (`FW_OIDC_CLIENT_ID_FILE`). `ferry-web keys` prints a
-  fresh checkout key pair and VAPID key for setting up.
+  fresh checkout key pair and VAPID key for setting up; the checkout key is stored with its id (`k1:<key>`),
+  so a rotation's switch is one change.
 - **vnc-edge has its own Dockerfile** (`vnc-edge/`) rather than a target in one shared Dockerfile (§11.2):
   its build context then holds nothing but the edge's own files. The checkout host and the dashboard origin
   are build arguments.
