@@ -315,6 +315,118 @@ describe("pausing a trip", () => {
   });
 });
 
+describe("did you book it?", () => {
+  beforeEach(() => {
+    localStorage.setItem("fw.token", "t-1");
+  });
+
+  /** The trip after a viewed checkout, paused until it's answered. */
+  function asking(): MyState {
+    const base = myState().trips[0];
+    if (!base) throw new Error("no trip");
+    return myState({
+      trips: [
+        {
+          ...base,
+          paused_reason: "after_checkout",
+          hold: { ...base.hold, reason: "paused", can_request: false },
+          browser: { ...base.browser, phase: "off", mode: "off", cart: null },
+        },
+      ],
+    });
+  }
+
+  /** ferry-web as the contract has it: yes and "no, cancel" archive the trip; "no" resumes it. */
+  function api() {
+    let state = asking();
+    return mockFetch((r) => {
+      if (r.url === `/api/trips/${TRIP_ID}/booked`) {
+        const answer = r.body as { booked: boolean; stop?: boolean };
+        const trip = state.trips[0];
+        state =
+          answer.booked || answer.stop || !trip
+            ? myState({ trips: [] })
+            : myState({ trips: [{ ...trip, paused_reason: null, hold: { ...trip.hold, reason: null } }] });
+      }
+      if (r.url === "/api/state" || r.url.startsWith("/api/trips/")) return jsonResponse(state);
+      return jsonResponse({ terminals: [] });
+    });
+  }
+
+  const booked = (requests: { url: string; body: unknown }[]) =>
+    requests.filter((r) => r.url === `/api/trips/${TRIP_ID}/booked`).map((r) => r.body);
+
+  it("asks on the trip card, with three answers", async () => {
+    api();
+    renderWithProviders(<MtApp />);
+    expect(await screen.findByText("Did you book it?")).toBeInTheDocument();
+    expect(statusBadge()).toBe("Paused");
+    expect(screen.getByRole("button", { name: "Yes, booked" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "No, keep watching" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "No, cancel" })).toBeInTheDocument();
+  });
+
+  it("archives the trip on yes", async () => {
+    const { requests } = api();
+    const { user } = renderWithProviders(<MtApp />);
+    await user.click(await screen.findByRole("button", { name: "Yes, booked" }));
+    expect(await screen.findByText("No trips yet")).toBeInTheDocument();
+    expect(booked(requests)).toEqual([{ booked: true }]);
+  });
+
+  it("keeps watching on no, with a reason or without", async () => {
+    const { requests } = api();
+    const { user } = renderWithProviders(<MtApp />);
+    await user.click(await screen.findByRole("button", { name: "No, keep watching" }));
+    await user.click(screen.getByRole("button", { name: "Checkout broke" }));
+    await waitFor(() => expect(screen.queryByText("Did you book it?")).toBeNull());
+    expect(booked(requests)).toEqual([{ booked: false, reason: "checkout_broke" }]);
+    expect(screen.getByRole("button", { name: "Pause" })).toBeEnabled();
+  });
+
+  it("can skip the reason", async () => {
+    const { requests } = api();
+    const { user } = renderWithProviders(<MtApp />);
+    await user.click(await screen.findByRole("button", { name: "No, keep watching" }));
+    await user.click(screen.getByRole("button", { name: "Skip" }));
+    await waitFor(() => expect(screen.queryByText("Did you book it?")).toBeNull());
+    expect(booked(requests)).toEqual([{ booked: false }]);
+  });
+
+  it("stops watching on no, cancel", async () => {
+    const { requests } = api();
+    const { user } = renderWithProviders(<MtApp />);
+    await user.click(await screen.findByRole("button", { name: "No, cancel" }));
+    expect(await screen.findByText("Stopped watching")).toBeInTheDocument();
+    expect(screen.getByText("No trips yet")).toBeInTheDocument();
+    expect(booked(requests)).toEqual([{ booked: false, stop: true }]);
+  });
+
+  it.each([
+    ["No, cancel", { booked: false, stop: true }],
+    ["Yes, booked", { booked: true }],
+  ])("asks on the trip's checkout page too, and goes back to the trips after %s", async (button, body) => {
+    history.replaceState(null, "", `/c/${TRIP_ID}`);
+    const { requests } = api();
+    const { user } = renderWithProviders(<MtApp />);
+    expect(await screen.findByText("Did you book it?")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: button }));
+    expect(await screen.findByRole("heading", { name: "Your trips" })).toBeInTheDocument();
+    expect(location.pathname).toBe("/");
+    expect(booked(requests)).toEqual([body]);
+  });
+
+  it("stays on the checkout page after no, keep watching", async () => {
+    history.replaceState(null, "", `/c/${TRIP_ID}`);
+    api();
+    const { user } = renderWithProviders(<MtApp />);
+    await user.click(await screen.findByRole("button", { name: "No, keep watching" }));
+    await user.click(screen.getByRole("button", { name: "Skip" }));
+    expect(await screen.findByText("Nothing is held right now")).toBeInTheDocument();
+    expect(location.pathname).toBe(`/c/${TRIP_ID}`);
+  });
+});
+
 describe("quiet hours", () => {
   beforeEach(() => {
     localStorage.setItem("fw.token", "t-1");

@@ -12,7 +12,8 @@ import { errorMessage } from "@/lib/api";
 import { reportError, useNow } from "@/lib/hooks";
 import type { Terminal } from "@/lib/schema";
 import { clock, timeLabel } from "@/lib/time";
-import { MY_STATE_KEY, myApi } from "./api";
+import { endsTrip, MY_STATE_KEY, myApi } from "./api";
+import { BookedQuestion } from "./BookedQuestion";
 import { navigate } from "./router";
 import type { MyState } from "./schema";
 import { NotHeld } from "./NotHeld";
@@ -66,11 +67,9 @@ export function CheckoutPage({
   if (!cart || cart.status !== "ready") {
     // Where a "Bookable" alert lands too: the sailing may be open with nothing holding it yet.
     const paused =
-      trip.paused_reason === "after_checkout"
-        ? "Paused until you say whether you booked it, on Your trips."
-        : !trip.trip.enabled || trip.paused_reason !== null || trip.hold.reason === "paused"
-          ? "Paused, so nothing is checked or held."
-          : null;
+      !trip.trip.enabled || trip.paused_reason !== null || trip.hold.reason === "paused"
+        ? "Paused, so nothing is checked or held."
+        : null;
     const badge = tripBadge(trip);
     const quietUntil = state.quiet_hours?.end;
     return (
@@ -81,7 +80,14 @@ export function CheckoutPage({
             <h1 className="min-w-0 text-lg font-bold">{tripTitle(trip, terminals)}</h1>
             <Badge variant={badge.tone}>{badge.text}</Badge>
           </div>
-          {paused ? (
+          {trip.paused_reason === "after_checkout" ? (
+            <BookedQuestion
+              trip={trip}
+              onAnswered={(answer) => {
+                if (endsTrip(answer)) navigate("/"); // nothing left to show here
+              }}
+            />
+          ) : paused ? (
             <p className="text-sm text-muted-foreground">{paused}</p>
           ) : unheld(trip).length > 0 || holdPending(trip) ? (
             <NotHeld trip={trip} />
