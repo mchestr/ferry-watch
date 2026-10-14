@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import ssl
 from dataclasses import dataclass, field
+from datetime import datetime
 from http import HTTPStatus
 from pathlib import Path
 from typing import Any, Protocol
@@ -56,6 +57,7 @@ class ObservedPod:
     deleting: bool = False
     unschedulable: bool = False
     termination_message: str | None = None  # one enum line, written by the agent
+    created: float = 0.0  # epoch seconds
 
     @classmethod
     def from_api(cls, item: dict[str, Any]) -> ObservedPod:
@@ -78,7 +80,12 @@ class ObservedPod:
             deleting=meta.get("deletionTimestamp") is not None,
             unschedulable=unschedulable,
             termination_message=message,
+            created=_epoch(meta.get("creationTimestamp")),
         )
+
+
+def _epoch(stamp: str | None) -> float:
+    return datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp() if stamp else 0.0
 
 
 class Cluster(Protocol):
