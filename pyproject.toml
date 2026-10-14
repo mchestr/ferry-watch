@@ -26,6 +26,7 @@ control = [
 [project.scripts]
 ferry-watch = "ferry_watch.__main__:main"
 ferry-watch-agent = "ferry_watch.agent.main:main"
+ferry-control = "ferry_watch.control.main:main"
 
 [dependency-groups]
 dev = [

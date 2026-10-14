@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncpg
 import pytest
 
+from ferry_watch.control.config import ControlConfig, PodConfig
 from ferry_watch.control.db import migrate, migrations
-from tests.postgres import ROLES, Database
+from ferry_watch.control.main import run_migrate
+from tests.postgres import ROLES, Database, Server
 
 USER = "u5yq2kz7m4c3x8a1b2d3e"[:20]
 TRIP = "3f9c0a1b2c3d4e5f"
@@ -153,3 +155,27 @@ async def test_control_cannot_touch_people_or_sessions(db: Database) -> None:
         await control.execute("UPDATE trips SET paused_reason = 'after_checkout'")  # the one thing it may change
     finally:
         await control.close()
+
+
+async def test_the_migrate_command_builds_an_empty_database(pg_server: Server, monkeypatch: pytest.MonkeyPatch) -> None:
+    admin = await asyncpg.connect(pg_server.dsn(pg_server.admin, "postgres"))
+    try:
+        await admin.execute("DROP DATABASE IF EXISTS fw_empty")
+        await admin.execute("CREATE DATABASE fw_empty OWNER ferrywatch")
+        for name, value in {
+            "PGHOST": pg_server.host,
+            "PGPORT": str(pg_server.port),
+            "PGUSER": "ferrywatch",
+            "PGDATABASE": "fw_empty",
+        }.items():
+            monkeypatch.setenv(name, value)
+        await run_migrate(ControlConfig(pod=PodConfig(image="x", hub_url="x", vnc_pubkeys="x", vnc_origin="x")))
+        await run_migrate(ControlConfig(pod=PodConfig(image="x", hub_url="x", vnc_pubkeys="x", vnc_origin="x")))
+        web = await asyncpg.connect(pg_server.dsn(ROLES.web, "fw_empty"))
+        try:
+            assert await web.fetchval("SELECT count(*) FROM trips") == 0
+        finally:
+            await web.close()
+    finally:
+        await admin.execute("DROP DATABASE IF EXISTS fw_empty WITH (FORCE)")
+        await admin.close()
