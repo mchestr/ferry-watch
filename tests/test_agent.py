@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
-from datetime import date, time
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -13,18 +13,16 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 
-from ferry_watch.agent.alerts import AgentAlerts
 from ferry_watch.agent.hub import HubClient, Identity
 from ferry_watch.agent.store import OneTripStore
-from ferry_watch.bcferries.errors import QueueTimeout
-from ferry_watch.models import Fare, Trip
+from ferry_watch.models import Trip
 from ferry_watch.protocol import (
     Ack,
     Alert,
-    AlertKind,
     AlertParams,
     CartClaim,
     CartClaimResult,
+    ClaimReason,
     Configure,
     ControlMessage,
     Event,
@@ -36,7 +34,6 @@ from ferry_watch.protocol import (
     decode_agent_message,
     encode,
 )
-from tests.fakes import sailing
 
 TRIP = Trip(id="3f9c0a1b2c3d4e5f", origin="SWB", destination="TSA", date=date(2026, 10, 14))
 IDENTITY = Identity(
@@ -105,7 +102,7 @@ class FakeOperator:
             if self.ack and isinstance(message, Event | Alert):
                 await ws.send_bytes(encode(Ack(**_envelope(), acked=message.seq)))
             if isinstance(message, CartClaim) and self.grant is not None:
-                reason = "ok" if self.grant else "holding_elsewhere"
+                reason: ClaimReason = "ok" if self.grant else "holding_elsewhere"
                 answer = CartClaimResult(**_envelope(), claim=message.seq, granted=self.grant, reason=reason)
                 await ws.send_bytes(encode(answer))
 
@@ -132,7 +129,6 @@ async def operator(aiohttp_server: Callable[..., Any]) -> tuple[FakeOperator, Te
 class Agent:
     client: HubClient
     store: OneTripStore
-    alerts: AgentAlerts
     handled: list[ControlMessage]
     task: asyncio.Task[None]
 
@@ -162,12 +158,9 @@ async def agent(operator: tuple[FakeOperator, TestServer], tmp_path: Path) -> As
             claim_timeout=0.2,
         )
 
-        def send(kind: AlertKind, params: AlertParams) -> None:
-            client.send(Alert(**client.envelope(), kind=kind, params=params))
-
         task = asyncio.create_task(client.run())
         try:
-            yield Agent(client, store, AgentAlerts(send), handled, task)
+            yield Agent(client, store, handled, task)
         finally:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
@@ -217,9 +210,9 @@ async def test_configure_reaches_the_store(operator: tuple[FakeOperator, TestSer
 async def test_alerts_are_kept_until_acknowledged(operator: tuple[FakeOperator, TestServer], agent: Agent) -> None:
     fake, _ = operator
     await asyncio.wait_for(agent.client.connected.wait(), 5)
-    agent.alerts.cart_held(TRIP, sailing(9), Fare("Saver", "$93.45", selectable=True), [sailing(11)])
+    seq = agent.client.alert("cart_held", AlertParams(departures=["09:00", "11:00"], fare="Saver", price="$93.45"))
     await fake.wait_for(lambda: any(isinstance(m, Alert) for m in fake.received))
-    await until(lambda: not agent.client.unacked)
+    await until(lambda: agent.client.acked(seq))
     alert = next(m for m in fake.received if isinstance(m, Alert))
     assert alert.kind == "cart_held"
     assert alert.params == AlertParams(departures=["09:00", "11:00"], fare="Saver", price="$93.45")
@@ -231,8 +224,8 @@ async def test_unacknowledged_messages_ride_along_after_a_reconnect(
     fake, _ = operator
     fake.ack = False
     await asyncio.wait_for(agent.client.connected.wait(), 5)
-    agent.alerts.cart_lost(TRIP, time(9))
-    agent.client.send(Event(**agent.client.envelope(), code="viewer_disconnected"))
+    agent.client.alert("cart_lost", AlertParams(departures=["09:00"]))
+    agent.client.event("viewer_disconnected")
     await fake.wait_for(lambda: len(fake.received) == 2)
 
     # The kubelet rotates the token; the operator drops the connection.
@@ -334,22 +327,3 @@ def test_the_store_notifies_the_watcher() -> None:
     store.apply(configure(rev=5))
     assert calls == [5]
     assert store.config.enabled is True
-
-
-# ---- the alert sink
-
-
-def test_alerts_carry_kinds_and_times_never_text() -> None:
-    sent: list[tuple[str, AlertParams]] = []
-    alerts = AgentAlerts(lambda kind, params: sent.append((kind, params)))
-    alerts.bookable(TRIP, [sailing(9), sailing(11)], cart_failed=False)
-    alerts.bookable(TRIP, [sailing(9)], cart_failed=True)
-    alerts.failing(TRIP, "Still in BC Ferries' waiting room after 10 minutes", QueueTimeout("x"))
-    alerts.cart_expired(TRIP, time(9), 60)
-    alerts.login_failed("BC Ferries login failed: whatever the page said")
-    assert sent == [
-        ("bookable", AlertParams(departures=["09:00", "11:00"])),
-        ("cart_failed", AlertParams(departures=["09:00"])),
-        ("failing", AlertParams(error_class="queue_timeout")),
-        ("cart_expired", AlertParams(departures=["09:00"], minutes=60)),
-    ]

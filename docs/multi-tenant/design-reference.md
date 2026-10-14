@@ -806,6 +806,11 @@ No lifecycle hooks exist, so the VAP forbids them outright. This fixes three thi
 | `entrypoint.sh:20-26` Xvnc flags | §5.6. `-AlwaysShared`, `-interface 0.0.0.0`, `-websocketPort`, `-httpd` and `-DisableBasicAuth` are removed; `:99`, `-geometry` and `-depth 24` stay. |
 | `Dockerfile:36-38` `/vnc` symlink, `:65` `USER pwuser`, `:67` `tini -g` | Symlink removed. `USER 1001:1001` (numeric). `ENTRYPOINT ["/usr/bin/tini","--","ferry-watch-agent"]`. Firefox and WebKit removed from the image. |
 
+**As built:** the one-trip watcher is a new module, `src/ferry_watch/agent/watch.py` (`TripWatcher`), rather
+than edits to `watcher.py`, which keeps running today's single-container app until cutover and is deleted with
+it. The rows above describe what changed relative to `watcher.py`. The login path is not yet ported; it stays in
+`watcher.py` (and its tests) until then.
+
 ### 5.3 Protocol v1 (agent ↔ ferry-control)
 
 One WebSocket to `ws://ferry-control.ferry-watch.svc.cluster.local.:8766/agent/v1` (fully qualified with a

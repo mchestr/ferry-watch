@@ -29,11 +29,15 @@ from ferry_watch.protocol import (
     VERSION,
     Ack,
     Alert,
+    AlertKind,
+    AlertParams,
     Bye,
     CartClaim,
     CartClaimResult,
     ControlMessage,
     Event,
+    EventCode,
+    EventParams,
     FarePreference,
     Hello,
     HelloAck,
@@ -112,6 +116,15 @@ class HubClient:
             del self._outbox[oldest]
         self._unsent.append(message.seq)
         self._wake.set()
+
+    def event(self, code: EventCode, params: EventParams | None = None) -> None:
+        self.send(Event(**self.envelope(), code=code, params=params or EventParams()))
+
+    def alert(self, kind: AlertKind, params: AlertParams | None = None) -> int:
+        """Send an alert; returns its sequence number, to learn when the operator has it."""
+        message = Alert(**self.envelope(), kind=kind, params=params or AlertParams())
+        self.send(message)
+        return message.seq
 
     def publish(self, state: State) -> None:
         """The trip's latest state. Only the newest is sent."""

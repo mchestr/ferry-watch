@@ -35,14 +35,13 @@ from .errors import (
 )
 from .parse import parse_sailings, parse_time
 from .terminals import Terminals
-from .urls import BASE_URL, USER_AGENT, Credentials, search_url
+from .urls import BASE_URL, QUEUE_HOST, USER_AGENT, CheckoutView, Credentials, checkout_view, search_url
 
 if TYPE_CHECKING:
     from ferry_watch.protocol import ReleaseCheck
 
 log = logging.getLogger(__name__)
 
-QUEUE_HOST = "queue-it.net"
 # Where /abandoned-cart/my-account ends up: the account page, or its login page for a guest.
 _RELEASE_LANDINGS = ("/my-account", "/login")
 
@@ -383,6 +382,15 @@ class SiteSession:
         await self._goto(f"{self._base_url}/abandoned-cart/my-account")
         landed = urllib.parse.urlsplit(self._page.url).path
         return "landing_url" if landed.startswith(_RELEASE_LANDINGS) else "none"
+
+    def checkout_view(self) -> CheckoutView:
+        """What the held cart's checkout is showing: every page and frame in this context, by URL only."""
+        if self.closed:
+            return CheckoutView()
+        others = [
+            frame.url for page in self._context.pages for frame in page.frames if frame is not self._page.main_frame
+        ]
+        return checkout_view(self._page.url, others, base_url=self._base_url)
 
     async def show(self) -> None:
         """Raise this session's window, so it's what's on screen over noVNC."""

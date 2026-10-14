@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from ferry_watch.bcferries.errors import SessionExpired
-from ferry_watch.bcferries.urls import Credentials
+from ferry_watch.bcferries.urls import CheckoutView, Credentials
 from ferry_watch.models import Fare, FarePreference, Sailing, SailingStatus, Trip
 from ferry_watch.notify import Message
 from ferry_watch.protocol import ReleaseCheck
@@ -87,7 +87,12 @@ class FakeSession:
 
     async def empty_cart(self) -> ReleaseCheck:
         self.calls.append("empty cart")
-        return "landing_url"
+        if self.site.empty_error:
+            raise self.site.empty_error
+        return self.site.empty_check
+
+    def checkout_view(self) -> CheckoutView:
+        return self.site.view
 
     async def show(self) -> None:
         self.calls.append("show")
@@ -117,6 +122,9 @@ class FakeSite:
     login_error: Exception | None = None
     cart_error: Exception | None = None
     expire_next_refresh: bool = False
+    empty_check: ReleaseCheck = "landing_url"
+    empty_error: Exception | None = None
+    view: CheckoutView = field(default_factory=CheckoutView)  # what a held cart's checkout shows
     sessions: list[FakeSession] = field(default_factory=list)
     search_hook: Any = None
     cart_hook: Any = None

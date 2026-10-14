@@ -22,11 +22,17 @@ class OneTripStore:
         self._trip_id = trip_id
         self._rev = -1
         self._config = Config(enabled=False, trips=())
+        self._latest: Configure | None = None
         self._listeners: list[Callable[[], None]] = []
 
     @property
     def config(self) -> Config:
         return self._config
+
+    @property
+    def latest(self) -> Configure | None:
+        """The last configure applied: the limits and flags beyond the trip (None before the first)."""
+        return self._latest
 
     @property
     def rev(self) -> int:
@@ -50,6 +56,7 @@ class OneTripStore:
         trip = replace(trip, auto_cart=trip.auto_cart and message.auto_cart)
         self._config = Config(enabled=message.active, interval_seconds=message.interval_s, trips=(trip,))
         self._rev = message.rev
+        self._latest = message
         for listener in self._listeners:
             listener()
         return True

@@ -106,20 +106,26 @@ class Verdict:
     hard_deadline: float
 
 
-def evaluate(hold: HoldState, limits: HoldLimits, now: float) -> Verdict:
-    """Where this hold stands at `now`. Marks a notice as given, so each is returned once."""
-    limits = limits.clamped()
-    hard_deadline = hold.ready_at + limits.hard_s
-    paused = hold.paused_s(now)
+def release_due(hold: HoldState, limits: HoldLimits, now: float) -> Release | None:
+    """Whether a clock has run out at `now`, and which. Changes nothing (the gate asks this too)."""
+    return peek(hold, limits, now).release
 
+
+def peek(hold: HoldState, limits: HoldLimits, now: float) -> Verdict:
+    """Where this hold stands at `now`, without giving any notice (for status reports)."""
+    release, unclaimed_deadline, session_deadline, hard_deadline = _check(hold, limits.clamped(), now)
+    return Verdict(release, None, unclaimed_deadline, session_deadline, hard_deadline)
+
+
+def _check(hold: HoldState, limits: HoldLimits, now: float) -> tuple[Release | None, float | None, float | None, float]:
+    hard_deadline = hold.ready_at + limits.hard_s
     unclaimed_deadline = None
     if hold.first_viewer_at is None:
         started = hold.acked_at if hold.acked_at is not None else hold.ready_at
         unclaimed_deadline = started + limits.unclaimed_s
-
     session_deadline = None
     if hold.first_viewer_at is not None:
-        session_deadline = hold.first_viewer_at + limits.session_s + paused  # payment pages don't count
+        session_deadline = hold.first_viewer_at + limits.session_s + hold.paused_s(now)  # payment pages don't count
 
     release: Release | None = None
     if now >= hard_deadline:
@@ -135,6 +141,13 @@ def evaluate(hold: HoldState, limits: HoldLimits, now: float) -> Verdict:
         and now - hold.last_disconnect_at >= limits.viewer_gone_s
     ):
         release = Release.VIEWER_GONE
+    return release, unclaimed_deadline, session_deadline, hard_deadline
+
+
+def evaluate(hold: HoldState, limits: HoldLimits, now: float) -> Verdict:
+    """Where this hold stands at `now`. Marks a notice as given, so each is returned once."""
+    limits = limits.clamped()
+    release, unclaimed_deadline, session_deadline, hard_deadline = _check(hold, limits, now)
 
     notice: Notice | None = None
     if release is None:
