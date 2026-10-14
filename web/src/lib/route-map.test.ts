@@ -7,6 +7,7 @@ import {
   placeLabel,
   routePath,
   routeScene,
+  samplePoints,
   smoothRing,
   toScreen,
   type RouteMapData,
@@ -167,6 +168,28 @@ describe("routeScene", () => {
     for (const stop of [scene?.from, scene?.to]) {
       expect(stop?.at[0]).toBeGreaterThanOrEqual(FRAME.padding - 0.01);
       expect(stop?.at[0]).toBeLessThanOrEqual(FRAME.width - FRAME.padding + 0.01);
+    }
+  });
+
+  it("keeps the labels off the route, even at the frame's edge", () => {
+    // The route comes into Delta Harbour from the left, at the frame's right-hand edge: beside its marker the
+    // label would cover the line, and above or below it, it would run off the frame.
+    const data = {
+      ...DATA,
+      terminals: { AAA: [1000, 5000], DDD: [5000, 4000] },
+      routes: { "AAA-DDD": [1000, 5000, 3000, -900, 1000, -100] },
+    };
+    const terminals = [terminal("AAA", "Alpha", ["DDD"]), terminal("DDD", "Delta Harbour", ["AAA"])];
+    const scene = routeScene(data, "AAA", "DDD", terminals);
+    const path = routePath(data, "AAA", "DDD") ?? [];
+    const line = samplePoints(
+      path.map((p) => toScreen(scene?.view ?? { scale: 1, left: 0, top: 0 }, p)),
+      1,
+    );
+    for (const { box } of [scene?.from.label, scene?.to?.label].flatMap((label) => (label ? [label] : []))) {
+      expect(line.filter(([x, y]) => x >= box.left && x <= box.right && y >= box.top && y <= box.bottom)).toEqual([]);
+      expect(box.left).toBeGreaterThanOrEqual(0);
+      expect(box.right).toBeLessThanOrEqual(FRAME.width);
     }
   });
 

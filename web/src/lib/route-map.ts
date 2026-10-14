@@ -196,6 +196,8 @@ const PLACEMENTS: readonly Placement[] = [
 /**
  * Where a marker's label goes: inside the frame, clear of `avoid` (other labels and markers), off the
  * `line` where it can be, and preferably on the side facing away from `away` (the other end of the route).
+ * The gap keeps it clear of its own marker, which isn't in `avoid`: a corner placement sits nearer the
+ * marker than another label may.
  */
 export function placeLabel(
   text: string,
@@ -315,10 +317,9 @@ export function routeScene(data: RouteMapData, from: string, to: string, termina
     const line = path?.map((p) => toScreen(view, p));
     const a = toScreen(view, fromAt);
     const b = toScreen(view, toAt);
-    const markers = [markerBox(a), markerBox(b)];
     const options = { fontSize: LABEL_SIZE, gap: MARKER_GAP, line: line ? samplePoints(line, 4) : [] };
-    const fromLabel = placeLabel(place(from), a, FRAME, { ...options, avoid: markers, away: b });
-    const toLabel = placeLabel(place(to), b, FRAME, { ...options, avoid: [...markers, fromLabel.box], away: a });
+    const fromLabel = placeLabel(place(from), a, FRAME, { ...options, avoid: [markerBox(b)], away: b });
+    const toLabel = placeLabel(place(to), b, FRAME, { ...options, avoid: [markerBox(a), fromLabel.box], away: a });
     return {
       description: `Map of the route from ${place(from)} to ${place(to)}`,
       view,
@@ -353,7 +354,7 @@ export function routeScene(data: RouteMapData, from: string, to: string, termina
   const label = placeLabel(place(from), a, FRAME, {
     fontSize: LABEL_SIZE,
     gap: MARKER_GAP,
-    avoid: [markerBox(a), ...others.map((stop) => markerBox(stop.at))],
+    avoid: others.map((stop) => markerBox(stop.at)),
     line: lines,
     away: others.length > 0 ? centre(others.map((stop) => stop.at)) : undefined,
   });
