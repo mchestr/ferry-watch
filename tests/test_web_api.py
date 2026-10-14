@@ -73,7 +73,12 @@ async def rig(db: Database, aiohttp_client: Callable[..., Any]) -> AsyncIterator
     async with aiohttp.ClientSession() as http:
         oidc = OidcClient(http, OidcSettings(issuer="https://idp", client_id="c", client_secret="s", redirect_uri="x"))
         app = build(
-            accounts, oidc, WebStore(pool, Limits(), PollPolicy(), clock=time.time), CheckoutSigner(KEY, "k1", ORIGIN)
+            accounts,
+            oidc,
+            WebStore(pool, Limits(), PollPolicy(), clock=time.time),
+            CheckoutSigner(KEY, "k1", ORIGIN),
+            pool=pool,
+            limits=Limits(),
         )
         client: TestClient = await aiohttp_client(app)
         try:
@@ -251,3 +256,61 @@ async def test_writes_must_be_same_site_json(rig: Rig) -> None:
     assert response.status == 403
     response = await rig.call("POST", "/api/trips", data="from=SWB")
     assert response.status == 415
+
+
+# ---- admin
+
+
+async def make_admin(rig: Rig) -> None:
+    await rig.sql("UPDATE users SET is_admin = true WHERE id = $1", ANN)
+
+
+async def test_admin_routes_are_for_admins(rig: Rig) -> None:
+    assert (await rig.call("GET", "/api/admin/users", BOB)).status == 403
+    assert (await rig.call("POST", "/api/admin/invites", BOB, json={"username": "x", "reason": "r"})).status == 403
+
+
+async def test_inviting_someone(rig: Rig) -> None:
+    await make_admin(rig)
+    assert (await rig.call("POST", "/api/admin/invites", json={"username": "cat"})).status == 400  # no reason
+    bad = {"username": "cat", "reason": "friend", "limits": {"maxTrips": 99}}
+    assert (await rig.call("POST", "/api/admin/invites", json=bad)).status == 400  # past the ceiling
+    good = {"username": "cat", "email": "cat@example.com", "reason": "friend", "limits": {"maxTrips": 5}}
+    response = await rig.call("POST", "/api/admin/invites", json=good)
+    assert response.status == 201
+    listing = await (await rig.call("GET", "/api/admin/users")).json()
+    assert [i["username"] for i in listing["invites"]] == ["cat"]
+    audit = await rig.sql("SELECT actor, action, reason FROM audit_log")
+    assert [tuple(r) for r in audit] == [(ANN, "invite", "friend")]
+
+
+async def test_suspending_revokes_every_session(rig: Rig) -> None:
+    await make_admin(rig)
+    assert (await rig.call("GET", "/api/state", BOB)).status == 200
+    response = await rig.call("POST", f"/api/admin/users/{BOB}/state", json={"state": "suspended", "reason": "abuse"})
+    assert response.status == 200
+    assert (await rig.call("GET", "/api/state", BOB)).status == 401
+    assert (await rig.sql("SELECT state FROM users WHERE id = $1", BOB))[0]["state"] == "suspended"
+    response = await rig.call("POST", f"/api/admin/users/{ANN}/state", json={"state": "suspended", "reason": "x"})
+    assert response.status == 409  # not yourself
+
+
+async def test_limit_overrides_stop_at_the_ceiling(rig: Rig) -> None:
+    await make_admin(rig)
+    path = f"/api/admin/users/{BOB}/limits"
+    response = await rig.call("POST", path, json={"key": "maxTrips", "value": 7, "reason": "planning a summer"})
+    assert await response.json() == {"value": 7, "source": "override"}
+    response = await rig.call("POST", path, json={"key": "maxTrips", "value": 50, "reason": "lots"})
+    assert await response.json() == {"value": 10, "source": "ceiling"}
+    response = await rig.call("POST", path, json={"key": "maxTrips", "value": None, "reason": "back to normal"})
+    assert await response.json() == {"value": 3, "source": "default"}
+
+
+async def test_the_fleet_switches(rig: Rig) -> None:
+    await make_admin(rig)
+    body = {"switch": "pause_carting", "on": True, "reason": "Talos upgrade"}
+    assert (await rig.call("POST", "/api/admin/switches", json=body)).status == 200
+    overview = await (await rig.call("GET", "/api/admin/overview")).json()
+    assert overview["switches"]["pause_carting"] is True
+    body = {"switch": "brake", "on": True, "reason": "no"}
+    assert (await rig.call("POST", "/api/admin/switches", json=body)).status == 400

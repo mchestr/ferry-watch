@@ -128,7 +128,7 @@ async def test_web_cannot_write_what_agents_report(db: Database) -> None:
 async def test_web_flips_only_the_maintenance_switches(db: Database) -> None:
     control = await db.connect(ROLES.control)
     try:
-        await control.execute("INSERT INTO fleet_state (key, value) VALUES ('maintenance', 'false'), ('brake', '{}')")
+        await control.execute("INSERT INTO fleet_state (key, value) VALUES ('brake', '{}')")
     finally:
         await control.close()
     web = await db.connect(ROLES.web)

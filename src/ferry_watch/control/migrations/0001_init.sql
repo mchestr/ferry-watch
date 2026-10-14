@@ -270,6 +270,8 @@ CREATE TABLE fleet_state (
     key text PRIMARY KEY CHECK (key IN ('brake', 'breaker', 'maintenance', 'pause_carting', 'control_alive_at')),
     value jsonb NOT NULL
 );
+-- The admin's two switches exist from the start, so ferry-web (which may only update them) can flip them.
+INSERT INTO fleet_state (key, value) VALUES ('maintenance', 'false'), ('pause_carting', 'false');
 
 CREATE TABLE audit_log (
     id bigserial PRIMARY KEY,
