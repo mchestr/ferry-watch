@@ -198,7 +198,8 @@ CREATE TABLE events (
     ts timestamptz NOT NULL DEFAULT now(),
     kind text NOT NULL,
     code text NOT NULL,
-    params jsonb NOT NULL DEFAULT '{}'
+    params jsonb NOT NULL DEFAULT '{}',
+    dedup_key text UNIQUE  -- pod:boot:seq for agent events, so a replay after a reconnect isn't counted twice
 );
 CREATE INDEX events_user_ts ON events (user_id, ts DESC);
 
@@ -249,7 +250,9 @@ CREATE TABLE hold_outcomes (
     login_seen text NOT NULL DEFAULT 'none' CHECK (login_seen IN ('none', 'visit', 'forced')),
     release_check text,
     checkout_seconds integer,
-    created_at timestamptz NOT NULL DEFAULT now()
+    pod text,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    dedup_key text UNIQUE  -- pod:boot:seq of the message it came from
 );
 
 CREATE TABLE usage_ledger (
