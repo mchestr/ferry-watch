@@ -73,6 +73,21 @@ def test_quiet_hours_are_pacific_whatever_the_clock_zone() -> None:
     assert NIGHT.contains(datetime(2026, 10, 11, 19, 0, tzinfo=UTC)) is False  # noon Pacific
 
 
+@pytest.mark.parametrize(
+    ("at", "end"),
+    [
+        (datetime(2026, 10, 11, 23, 30), datetime(2026, 10, 12, 6, 0)),  # before midnight: tomorrow's 6:00
+        (datetime(2026, 10, 12, 2, 0), datetime(2026, 10, 12, 6, 0)),
+        (datetime(2026, 10, 12, 7, 0), datetime(2026, 10, 12, 7, 0)),  # not quiet: unchanged
+        (datetime(2026, 10, 31, 23, 30), datetime(2026, 11, 1, 6, 0)),  # across the end of daylight time
+    ],
+)
+def test_quiet_hours_end(at: datetime, end: datetime) -> None:
+    assert NIGHT.end_after(at.replace(tzinfo=PACIFIC)) == end.replace(tzinfo=PACIFIC)
+    nap = QuietHours(time(13, 0), time(15, 0))
+    assert nap.end_after(datetime(2026, 10, 11, 14, 0, tzinfo=PACIFIC)) == datetime(2026, 10, 11, 15, 0, tzinfo=PACIFIC)
+
+
 def test_quiet_hours_cover_something() -> None:
     with pytest.raises(ValueError, match="different times"):
         QuietHours(time(6, 0), time(6, 0))

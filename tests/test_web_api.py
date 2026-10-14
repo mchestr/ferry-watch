@@ -507,6 +507,9 @@ async def test_in_quiet_hours_a_trip_isnt_checked_until_lifted(rig: Rig) -> None
 
     rig.clock[0] += 601
     assert [t["quiet"] for t in (await trips()).values()] == [True, True]  # 10 minutes, then quiet again
+    await rig.sql("UPDATE trip_runtime SET next_check_at = to_timestamp($1)", today_at(23, 45))
+    morning = datetime.combine(datetime.now(PACIFIC).date() + timedelta(days=1), dt_time(6), PACIFIC).timestamp()
+    assert [t["browser"]["next_check_at"] for t in (await trips()).values()] == [morning, morning]
     rig.clock[0] = today_at(12)
     state = await (await rig.call("GET", "/api/state")).json()
     assert state["quiet_hours"]["now"] is False

@@ -72,6 +72,14 @@ async def _archive(conn: asyncpg.pool.PoolConnectionProxy, uid: str, trip_id: st
     return True
 
 
+def _after_quiet(due: float | None, context: HoldContext, lifted_until: float | None) -> float | None:
+    """When a short check due at `due` runs: not in the user's quiet hours, unless they're lifted for it."""
+    quiet = context.allowance.quiet
+    if due is None or quiet is None or (lifted_until is not None and due < lifted_until):
+        return due
+    return quiet.end_after(datetime.fromtimestamp(due, PACIFIC)).timestamp()
+
+
 _OLD_QUIET_HOURS = {"start": "23:00", "end": "06:00"}  # 0.6.2's fleet-wide quiet hours, for its dashboard
 
 
@@ -576,8 +584,8 @@ class WebStore:
             sailings = json.loads(r["sailings"]) if r["sailings"] else []
             requested_until = _epoch(r["hold_requested_until"])
             # A manual check or "Hold it for me" lifts the user's quiet hours for the trip.
-            lifted = [t for t in (requested_until, _epoch(r["quiet_lifted_until"])) if t is not None]
-            quiet = context.quiet(max(lifted, default=None), now)
+            lifted = max((t for t in (requested_until, _epoch(r["quiet_lifted_until"])) if t is not None), default=None)
+            quiet = context.quiet(lifted, now)
             hold = context.hold(
                 Trip.from_json(spec),
                 paused=not r["enabled"] or r["paused_reason"] is not None,
@@ -598,7 +606,7 @@ class WebStore:
                         "phase": r["agent_phase"] or r["phase"] or "off",
                         "mode": r["mode"] or "off",
                         "queue_position": r["queue_position"],
-                        "next_check_at": _epoch(r["next_check_at"]),
+                        "next_check_at": _after_quiet(_epoch(r["next_check_at"]), context, lifted),
                         "last_check_at": _epoch(r["last_check_at"]),
                         "checked_at": _epoch(r["checked_at"]),
                         "next_due": _epoch(r["next_due"]),

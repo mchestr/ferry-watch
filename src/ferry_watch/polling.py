@@ -99,6 +99,14 @@ class QuietHours:
             return self.start <= now < self.end
         return now >= self.start or now < self.end
 
+    def end_after(self, at: datetime) -> datetime:
+        """When the quiet hours `at` falls in end (`at` itself, outside them)."""
+        if not self.contains(at):
+            return at
+        local = at.astimezone(PACIFIC)
+        end = datetime.combine(local.date(), self.end, tzinfo=PACIFIC)
+        return end if end > local else datetime.combine(local.date() + timedelta(days=1), self.end, tzinfo=PACIFIC)
+
 
 def quiet_hours(start: time | None, end: time | None) -> QuietHours | None:
     """A user's quiet hours as stored (`user_settings`): None unless both times are set."""
