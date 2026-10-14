@@ -133,3 +133,23 @@ forbidden_modules = [
   "ferry_watch.settings",
   "ferry_watch.__main__",
 ]
+
+[[tool.importlinter.contracts]]
+name = "The control plane never drives a browser"
+type = "forbidden"
+source_modules = ["ferry_watch.control"]
+forbidden_modules = [
+  "playwright",
+  "selectolax",
+  "ferry_watch.bcferries.site",
+  "ferry_watch.bcferries.parse",
+  "ferry_watch.agent",
+  "ferry_watch.server",
+  "ferry_watch.watcher",
+]
+
+[[tool.importlinter.contracts]]
+name = "The agent never imports the control plane"
+type = "forbidden"
+source_modules = ["ferry_watch.agent"]
+forbidden_modules = ["ferry_watch.control"]

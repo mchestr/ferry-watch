@@ -357,7 +357,9 @@ class Configure(_Message, tag="configure", frozen=True, kw_only=True):
 
 
 CommandOp = Literal["check_now", "release", "dismiss", "drain", "vnc_revoke"]
-CommandReason = Literal["deleted", "past", "superseded", "suspended", "maintenance", "recycle", "hold_ended", "limit"]
+CommandReason = Literal[
+    "deleted", "paused", "past", "superseded", "suspended", "maintenance", "recycle", "hold_ended", "limit"
+]
 
 
 class Command(_Message, tag="command", frozen=True, kw_only=True):
