@@ -446,7 +446,9 @@ describe("did you book it?", () => {
     await user.click(await screen.findByRole("button", { name: "No, keep watching" }));
     await user.click(screen.getByRole("button", { name: "Checkout broke" }));
     await waitFor(() => expect(screen.queryByText("Did you book it?")).toBeNull());
-    act(() => queryClient.setQueryData(MY_STATE_KEY, asking())); // held and checked out again
+    act(() => {
+      queryClient.setQueryData(MY_STATE_KEY, asking()); // held and checked out again
+    });
     expect(await screen.findByRole("button", { name: "Yes, booked" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Checkout broke" })).toBeNull();
   });
@@ -605,7 +607,9 @@ describe("quiet hours", () => {
     });
     mockFetch((r) => (r.url === "/api/state" ? jsonResponse(state) : jsonResponse({ terminals: [] })));
     renderWithProviders(<MtApp />);
-    expect(await screen.findByText("It's your quiet hours, so this trip isn't checked until 6:00 am PT.")).toBeVisible();
+    expect(
+      await screen.findByText("It's your quiet hours, so this trip isn't checked until 6:00 am PT."),
+    ).toBeVisible();
     expect(screen.getByText("Quiet hours")).toBeInTheDocument();
   });
 });

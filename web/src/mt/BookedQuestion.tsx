@@ -18,7 +18,10 @@ const REASONS: readonly { value: BookedReason; label: string }[] = [
   { value: "changed_mind", label: "Changed my mind" },
 ];
 
-type Props = { trip: MyTrip; onAnswered?: (answer: BookedAnswer) => void };
+interface Props {
+  trip: MyTrip;
+  onAnswered?: (answer: BookedAnswer) => void;
+}
 
 /** `onAnswered` runs once the answer is saved (after "Yes" or "No, cancel", the trip is gone: see endsTrip). */
 export function BookedQuestion(props: Props) {

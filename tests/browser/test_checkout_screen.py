@@ -222,4 +222,5 @@ async def test_the_viewer_cant_close_or_leave_the_checkout(pod: Pod, landing: st
     await asyncio.sleep(1)  # anything a binding started has had time to show
     assert not pod.tab.is_closed(), "a key closed the checkout"
     shown = await page.evaluate(CANVAS, list(COLOUR))
-    assert shown is not None and shown["shown"] > 0.99, "the viewer no longer shows only the checkout"
+    assert shown is not None, "the viewer has no screen any more"
+    assert shown["shown"] > 0.99, "the viewer no longer shows only the checkout"
