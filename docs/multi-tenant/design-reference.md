@@ -1013,7 +1013,8 @@ is harmless: nothing can cart or open the gate before a check has launched Chrom
   arrives on the unix socket with no user, so without it Xvnc takes away its view and input rights
   (`:91-108`) and never sends a frame: the checkout is black and ignores every tap. With `-rfbunixpath`
   there is no WebSocket or HTTP listener, so there is no basic auth to turn off; access stays the socket's
-  0600 mode and the gate.
+  0600 mode and the gate. Two tests run the real Xvnc with these flags and fail on a black or deaf screen:
+  `tests/browser/test_checkout_screen.py` and the browser image's smoke test (`docker/browser/selftest.py`).
 - **Removed:** `-AlwaysShared`, `-interface`, `-websocketPort`, `-httpd`, `-sslOnly`,
   `-IdleTimeout` (the gate's ping replaces it; idle-dropping a user who is reading the page only forces a
   reconnect), and `-DLP_KeyRateLimit` (KasmVNC drops any key-down within `1000/limit` ms of the previous key

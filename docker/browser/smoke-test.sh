@@ -3,7 +3,8 @@
 #   docker/browser/smoke-test.sh <image>
 # Runs it as a pod would (read-only, uid 1001, no capabilities, memory /tmp and /dev/shm, the eight env
 # vars) with no network at all, then checks: the probes answer; the policy is in all three directories
-# and only Chromium ships; the agent's lockdown self-test passes against a real Chromium; SIGTERM ends it
+# and only Chromium ships; the agent's lockdown self-test passes against a real Chromium; the agent's Xvnc
+# shows that Chromium to a client on its unix socket and takes its clicks and keys; SIGTERM ends it
 # cleanly with one enum-only termination line.
 set -euo pipefail
 
