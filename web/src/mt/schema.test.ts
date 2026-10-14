@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { makeSettings } from "@/test/fixtures";
-import { MyStateSchema } from "./schema";
+import { DEFAULT_QUIET_HOURS, MyStateSchema } from "./schema";
 
 /** /api/state as ferry-web 0.6.2 sent it: one global quiet hours, me.paused, no settings. */
 function older(): Record<string, unknown> {
@@ -55,15 +55,15 @@ describe("MyStateSchema", () => {
     expect(state.trips[0]?.quiet).toBe(true);
   });
 
-  it("reads no quiet hours as none", () => {
+  it("reads an older server's no quiet hours as the default, which everyone has now", () => {
     const state = MyStateSchema.parse({ ...older(), settings: { quiet_hours: null }, quiet_hours: null });
-    expect(state.settings.quiet_hours).toBeNull();
+    expect(state.settings.quiet_hours).toEqual({ start: "22:00", end: "05:00" });
     expect(state.quiet_hours).toBeNull();
   });
 
   it("tolerates an older server: no settings of the user's own, and no trip is quiet", () => {
     const state = MyStateSchema.parse(older());
-    expect(state.settings).toEqual({ quiet_hours: null });
+    expect(state.settings).toEqual({ quiet_hours: DEFAULT_QUIET_HOURS });
     expect(state.trips[0]?.quiet).toBe(false);
     const none = older();
     delete none.quiet_hours;

@@ -6,7 +6,6 @@ import { toast } from "sonner";
 import { Button, LinkButton } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Field, Input } from "@/components/ui/controls";
-import { Switch } from "@/components/ui/switch";
 import { reportError } from "@/lib/hooks";
 import { parseTimeOfDay, timeLabel } from "@/lib/time";
 import { MY_STATE_KEY, myApi } from "./api";
@@ -14,92 +13,74 @@ import { signOut } from "./auth";
 import { pushSupported, subscribe } from "./push";
 import type { MyState, QuietHours } from "./schema";
 
-/** What quiet hours start as when turned on. */
-const NIGHT: QuietHours = { start: "23:00", end: "06:00" };
-
 /**
- * The user's quiet hours: off unless they turn them on. The switch saves at once (with the times last shown,
- * 11 pm to 6 am at first); changed times wait for Save.
+ * The user's quiet hours. Everyone has them, 10 pm to 5 am unless they change them; changed times wait for Save.
  */
-function QuietHoursSetting({ saved }: { saved: QuietHours | null }) {
+function QuietHoursSetting({ saved }: { saved: QuietHours }) {
   const qc = useQueryClient();
-  const [draft, setDraft] = useState<QuietHours>(saved ?? NIGHT);
+  const [draft, setDraft] = useState<QuietHours>(saved);
   // Saved here or on another device: the times start afresh from what's saved.
-  const key = saved ? `${saved.start}-${saved.end}` : "";
+  const key = `${saved.start}-${saved.end}`;
   const [shownKey, setShownKey] = useState(key);
   if (key !== shownKey) {
     setShownKey(key);
-    if (saved) setDraft(saved);
+    setDraft(saved);
   }
   const save = useMutation({
     mutationFn: myApi.setQuietHours,
     onSuccess: (next, quiet) => {
       qc.setQueryData(MY_STATE_KEY, next);
-      toast.success(
-        quiet ? `Quiet hours: ${timeLabel(quiet.start)} to ${timeLabel(quiet.end)}` : "Quiet hours are off",
-      );
+      toast.success(`Quiet hours: ${timeLabel(quiet.start)} to ${timeLabel(quiet.end)}`);
     },
     onError: (error) => reportError(qc, error),
   });
-  // While saving, show what's being saved.
-  const on = save.isPending ? save.variables !== null : saved !== null;
   const blank = parseTimeOfDay(draft.start) === null || parseTimeOfDay(draft.end) === null;
   const error = blank
     ? "Enter a start and an end."
     : draft.start === draft.end
       ? "Start and end can't be the same."
       : null;
-  const changed = saved !== null && (draft.start !== saved.start || draft.end !== saved.end);
+  const changed = draft.start !== saved.start || draft.end !== saved.end;
   return (
-    <div className="space-y-3">
-      <label className="flex items-center justify-between gap-3 text-sm">
-        <span>
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (error === null) save.mutate(draft);
+      }}
+    >
+      <fieldset className="min-w-0 space-y-3">
+        <legend className="text-sm">
           Quiet hours <span className="text-muted-foreground">(Pacific time)</span>
-        </span>
-        <Switch
-          checked={on}
-          disabled={save.isPending}
-          onCheckedChange={(next) => save.mutate(next ? (error === null ? draft : NIGHT) : null)}
-        />
-      </label>
-      <p className="text-xs text-muted-foreground">
-        Your trips aren't checked during them, so nothing is held and you get no alerts. Check now and Hold it for me
-        still work.
-      </p>
-      {on && (
-        <form
-          className="space-y-3"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (error === null) save.mutate(draft);
-          }}
-        >
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Start" error={error}>
-              <Input
-                type="time"
-                required
-                value={draft.start}
-                onChange={(e) => setDraft((d) => ({ ...d, start: e.target.value }))}
-              />
-            </Field>
-            <Field label="End">
-              <Input
-                type="time"
-                required
-                value={draft.end}
-                onChange={(e) => setDraft((d) => ({ ...d, end: e.target.value }))}
-              />
-            </Field>
-          </div>
-          {changed && (
-            <Button type="submit" size="sm" disabled={save.isPending || error !== null}>
-              Save
-            </Button>
-          )}
-        </form>
-      )}
-    </div>
+        </legend>
+        <p className="text-xs text-muted-foreground">
+          Your trips aren't checked during them, so nothing is held and you get no alerts. Check now and Hold it for me
+          still work.
+        </p>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Start" error={error}>
+            <Input
+              type="time"
+              required
+              value={draft.start}
+              onChange={(e) => setDraft((d) => ({ ...d, start: e.target.value }))}
+            />
+          </Field>
+          <Field label="End">
+            <Input
+              type="time"
+              required
+              value={draft.end}
+              onChange={(e) => setDraft((d) => ({ ...d, end: e.target.value }))}
+            />
+          </Field>
+        </div>
+        {changed && (
+          <Button type="submit" size="sm" disabled={save.isPending || error !== null}>
+            Save
+          </Button>
+        )}
+      </fieldset>
+    </form>
   );
 }
 
