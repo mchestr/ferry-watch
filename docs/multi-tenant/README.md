@@ -1,5 +1,8 @@
 # Ferry Watch multi-tenant: plan for approval
 
+**Implementation status:** [implementation.md](implementation.md) lists what's built, where the code departs
+from this plan, and what's left.
+
 This is the document to read and approve. Implementation detail lives in
 **[design-reference.md](design-reference.md)** next to it; sections are cited as "design-reference.md §N".
 Your decisions and the verified cluster facts are logged in [decisions.md](decisions.md), and the evidence
