@@ -285,6 +285,13 @@ async def test_a_paused_trip_s_pod_is_drained(rig: Rig) -> None:
     assert rig.hub.commands == [(name, "drain", "paused")]
 
 
+async def test_the_old_account_pause_is_ignored(rig: Rig) -> None:
+    """Trips are paused one at a time: users.paused (moved onto each trip by 0004) no longer stops anything."""
+    await rig.add_trip(NEAR)
+    await rig.run("UPDATE users SET paused = true")  # as a ferry-web from before 0004 could still set it
+    assert (await rig.fleet.reconcile()).started == [f"fw-{NEAR.id}-g1"]
+
+
 async def test_quiet_hours_stop_a_users_browsers_until_lifted(rig: Rig) -> None:
     await rig.add_trip(NEAR)
     await rig.run("INSERT INTO user_settings (user_id, quiet_start, quiet_end) VALUES ($1, '23:00', '06:00')", ANN)

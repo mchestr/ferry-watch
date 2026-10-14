@@ -369,6 +369,20 @@ async def test_pausing_and_resuming_one_trip(rig: Rig) -> None:
     assert [(r["trip_id"], r["now"]) for r in rows] == [(trip_id, True), (other, False)]
 
 
+async def test_the_old_account_pause_is_ignored(rig: Rig) -> None:
+    """users.paused is no longer read: 0004 paused each of the account's trips instead."""
+    trip_id = await rig.add()
+    await seen(rig, trip_id, sailing("09:00"))
+    await rig.sql("UPDATE users SET paused = true")  # as a ferry-web from before 0004 could still set it
+    state = await (await rig.call("GET", "/api/state")).json()
+    assert state["me"]["paused"] is False
+    assert (state["trips"][0]["hold"]["reason"], state["trips"][0]["hold"]["can_request"]) == (None, True)
+    assert (await rig.call("POST", f"/api/trips/{trip_id}/hold")).status == 200
+    await make_admin(rig)
+    people = await (await rig.call("GET", "/api/admin/users")).json()
+    assert [u["paused"] for u in people["users"]] == [False, False]  # kept a release; always false
+
+
 # ---- quiet hours
 
 

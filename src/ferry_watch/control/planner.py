@@ -36,7 +36,6 @@ USER_START_SPACING_S = 20.0
 class UserView:
     id: str
     active: bool = True  # not suspended
-    paused: bool = False  # the user paused everything
     max_active_browsers: int = 1
     quiet: QuietHours | None = None  # their trips aren't checked then
 
@@ -118,7 +117,6 @@ def _ineligible(
     reasons: list[tuple[bool, CommandReason]] = [
         (fleet.maintenance, "maintenance"),
         (user is None or not user.active, "suspended"),
-        (user is not None and user.paused, "paused"),
         (not view.trip.enabled or view.paused_reason is not None, "paused"),
         (quiet, "paused"),  # the user's quiet hours: not checked at all, as if paused
         (view.archived, "deleted"),

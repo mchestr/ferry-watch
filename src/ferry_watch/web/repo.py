@@ -289,16 +289,15 @@ class WebStore:
         trip, _ = await self.trip(uid, trip_id)
         now = self._clock()
         row = await self._pool.fetchrow(
-            "SELECT t.paused_reason, u.paused, s.sailings, s.cart, m.alerted FROM trips t"
-            " JOIN users u ON u.id = t.user_id LEFT JOIN trip_state s ON s.trip_id = t.id"
-            " LEFT JOIN alert_memory m ON m.trip_id = t.id WHERE t.id = $1 AND t.user_id = $2",
+            "SELECT t.paused_reason, s.sailings, s.cart, m.alerted FROM trips t"
+            " LEFT JOIN trip_state s ON s.trip_id = t.id LEFT JOIN alert_memory m ON m.trip_id = t.id"
+            " WHERE t.id = $1 AND t.user_id = $2",
             trip_id,
             uid,
         )
         if row is None:
             raise ApiError(404, "No such trip")
-        paused = not trip.enabled or row["paused_reason"] is not None or row["paused"]
-        if paused:
+        if not trip.enabled or row["paused_reason"] is not None:  # paused, or waiting on "Did you book it?"
             raise ApiError(409, HOLD_REFUSED["paused"])
         cart = json.loads(row["cart"]) if row["cart"] else None
         if cart is not None and cart.get("status") in ("adding", "ready"):
@@ -529,7 +528,7 @@ class WebStore:
 
     async def snapshot(self, uid: str) -> dict[str, Any]:
         now = self._clock()
-        user = await self._pool.fetchrow("SELECT id, username, display, is_admin, paused FROM users WHERE id = $1", uid)
+        user = await self._pool.fetchrow("SELECT id, username, display, is_admin FROM users WHERE id = $1", uid)
         if user is None:
             raise ApiError(404, "No such user")
         overrides = await self.overrides(self._pool, uid)
@@ -560,7 +559,7 @@ class WebStore:
             quiet = context.quiet(max(lifted, default=None), now)
             hold = context.hold(
                 Trip.from_json(spec),
-                paused=user["paused"] or not r["enabled"] or r["paused_reason"] is not None,
+                paused=not r["enabled"] or r["paused_reason"] is not None,
                 quiet=quiet,
                 sailings=sailings,
                 alerted=r["alerted"] or (),
@@ -614,7 +613,7 @@ class WebStore:
                 "username": user["username"],
                 "display": user["display"],
                 "is_admin": user["is_admin"],
-                "paused": user["paused"],
+                "paused": False,  # for a release, for the old dashboard: trips are paused one at a time now
             },
             "limits": limits,
             "usage": usage,

@@ -223,7 +223,7 @@ async def list_users(request: web.Request) -> web.Response:
     admin(request)
     pool, limits, policy = request.app[POOL], request.app[LIMITS], request.app[POLICY]
     users = await pool.fetch(
-        "SELECT u.id, u.username, u.email, u.state, u.is_admin, u.paused, u.created_at, u.last_seen_at,"
+        "SELECT u.id, u.username, u.email, u.state, u.is_admin, u.created_at, u.last_seen_at,"
         " (SELECT count(*) FROM trips t WHERE t.user_id = u.id AND t.archived_at IS NULL) AS trips"
         " FROM users u ORDER BY u.created_at"
     )
@@ -262,7 +262,7 @@ async def list_users(request: web.Request) -> web.Response:
                     "email": u["email"],
                     "state": u["state"],
                     "is_admin": u["is_admin"],
-                    "paused": u["paused"],
+                    "paused": False,  # for a release, for the old dashboard: trips are paused one at a time now
                     "trips": u["trips"],
                     "created_at": u["created_at"].timestamp(),
                     "last_seen_at": u["last_seen_at"].timestamp() if u["last_seen_at"] else None,
