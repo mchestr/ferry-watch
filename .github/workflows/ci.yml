@@ -30,10 +30,11 @@ jobs:
       - run: uv run ruff format --check
       - run: uv run ruff check --output-format=github
       - run: uv run mypy
+      - run: uv run lint-imports
       - run: uv run pytest -m "not browser" --cov=ferry_watch --cov-report=term-missing
       - name: Playwright package matches the image's browsers
         run: |
-          lock="$(uv export --locked --no-hashes --no-dev | sed -n 's/^playwright==\([0-9.]*\).*/\1/p')"
+          lock="$(uv export --locked --no-hashes --no-dev --extra browser | sed -n 's/^playwright==\([0-9.]*\).*/\1/p')"
           image="$(sed -n 's|^FROM mcr.microsoft.com/playwright/python:v\([0-9.]*\)-.*|\1|p' Dockerfile)"
           echo "uv.lock has playwright $lock, the Dockerfile uses the $image image"
           test -n "$lock" && test "$lock" = "$image"

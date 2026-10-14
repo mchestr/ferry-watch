@@ -2550,6 +2550,15 @@ One uv workspace with one `uv.lock`:
 `ferry_watch_control.control` nor `ferry_watch_agent`; `ferry_watch_core` imports none of them. A CI job
 installs `ferry-watch-control` alone and imports every entrypoint.
 
+**As built (a two-way door):** one distribution, `ferry-watch`, with the same boundaries drawn as subpackages
+and held by import-linter (`[tool.importlinter]` in `pyproject.toml`, `lint-imports` in CI) instead of three
+workspace members. Playwright and selectolax sit in a `browser` extra, so a control-plane image installs
+without them (`uv sync --no-dev`); the agent image and today's single-container image add `--extra browser`.
+Contracts so far: the shared core (`protocol`, `polling`, `holds`, `tickets`, `models`, `bcferries.urls`,
+`terminals`, `errors`) never imports Playwright, selectolax, `site`, `parse` or the agent; the agent never imports
+the single-container app. Contracts for `ferry_watch.control` and `ferry_watch.web` are added with those
+packages. Splitting into workspace members later moves directories and changes no imports' direction.
+
 New dependencies are `msgspec`, `asyncpg`, `lightkube`, `PyJWT[crypto]` (Ed25519 tickets, and the
 `id_token`'s signature against the issuer's JWKS, RS256 by Authelia's default; the token-endpoint call is a plain aiohttp POST) and
 `pywebpush` (or `http-ece` plus `py-vapid` on aiohttp). Each is checked against `filterwarnings = ["error"]`

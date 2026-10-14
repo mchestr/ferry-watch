@@ -48,9 +48,9 @@ ENV UV_PROJECT_ENVIRONMENT=/opt/venv \
 
 WORKDIR /app
 COPY pyproject.toml uv.lock README.md ./
-RUN uv sync --locked --no-dev --no-install-project
+RUN uv sync --locked --no-dev --extra browser --no-install-project
 COPY src/ src/
-RUN uv sync --locked --no-dev --no-editable && rm /usr/local/bin/uv
+RUN uv sync --locked --no-dev --extra browser --no-editable && rm /usr/local/bin/uv
 
 COPY --from=web /web/dist /app/static
 COPY entrypoint.sh /app/entrypoint.sh
