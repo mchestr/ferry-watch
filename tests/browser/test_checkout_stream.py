@@ -16,6 +16,7 @@ import asyncio
 import contextlib
 import functools
 import json
+import logging
 import os
 import shutil
 import tempfile
@@ -29,7 +30,7 @@ import aiohttp
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer, unused_port
-from playwright.async_api import BrowserContext, Page
+from playwright.async_api import Browser, BrowserContext, Page
 
 from ferry_watch.agent import cast_fields
 from ferry_watch.agent.cast_frames import jpeg_size
@@ -1139,3 +1140,48 @@ async def test_the_classic_viewer_finds_the_pods_own_screen_after_a_stream(
         assert abs(clicks[0][1] - tab_height / 2) <= 2
         await page.keyboard.type("4502")
         assert await _until(lambda: pod.tab.evaluate("window.keys"), lambda k: len(k) >= 4) == ["4", "5", "0", "2"]
+
+
+async def test_classic_then_a_stream_then_classic_again_finds_the_pods_own_screen(
+    pod: Pod, sites: Sites, site: edge.Site, browser: Browser, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A user opens the checkout in the classic viewer on a phone, turns the beta on and opens it again from Ferry
+    Watch (a stream, by the same nonce), then goes back to the classic viewer. KasmVNC's first resize took Xvnc's own
+    1280x1000 mode away; the restore before the second classic viewer still finds the pod's own screen."""
+    caplog.set_level(logging.WARNING)
+    path = f"/t/{edge.TRIP}/g/{edge.GEN}/ws"
+    async with make_rig(pod, sites, app=lambda gate: edge.edge_app(site, gate, []), path=path) as rig:
+        await rig.pod.tab.evaluate(screen.SHOW_COLOUR)
+        classic = screen.Pod(pod.rfb_socket, pod.tab)
+        context = await browser.new_context(**screen.PHONE)
+        phone = await context.new_page()
+        try:
+            await phone.goto(f"{rig.origin}{edge.LANDING}#{edge.ticket()}")
+            await phone.tap("#open")
+            await phone.wait_for_selector("html.noVNC_connected")
+            await screen._fitted(phone, classic)
+            assert " 1280x1000 " not in await _modes(pod)  # KasmVNC's resize replaced Xvnc's own mode
+            record = await phone.evaluate("(key) => JSON.parse(localStorage.getItem(key))", edge.RECORD)
+            await phone.goto("about:blank")
+
+            viewer = await rig.connect(PHONE, nonce=record["n"], ticket="")
+            await viewer.image()
+            assert await rig.tab("[innerWidth, innerHeight, devicePixelRatio]") == [390, 664, 2]
+            await viewer.close()
+            await rig.tab(SIZES)
+
+            await phone.goto(f"{rig.origin}{edge.classic_url(touch=True)}")  # "Use the classic viewer"
+            await phone.wait_for_selector("html.noVNC_connected")
+            await screen._fitted(phone, classic)
+            sizes = await _until(lambda: rig.tab("window.__sizes"), lambda s: bool(s) and s[-1] == [390, 664, 1])
+            assert sizes[-1] == [390, 664, 1], sizes
+            assert [1280, 1000, 1] in sizes[:-1], f"the pod's own screen wasn't there before the client's: {sizes}"
+            assert all(dpr == 1 for _, _, dpr in sizes)
+            assert "Couldn't restore" not in caplog.text
+            assert not rig.screen.changed  # nothing left to undo before the next classic viewer
+            modes = await _modes(pod)
+            assert "fw780x1328" not in modes, "the stream's mode was left behind"
+            in_use = [line.split()[0] for line in modes.splitlines() if line.startswith("   ") and "*" in line]
+            assert in_use == ["390x664"]  # KasmVNC's own
+        finally:
+            await context.close()

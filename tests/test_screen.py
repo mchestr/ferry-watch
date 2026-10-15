@@ -8,6 +8,7 @@ X server's modes and refuses what Xvnc refuses (measured on KasmVNC 1.5.0's).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import stat
@@ -42,7 +43,7 @@ if (root / "hang").exists():
     with open(root / "log", "a") as log:
         log.write(f"hung {{os.getpid()}}\\n")
     time.sleep(60)
-if (root / "fail").exists():
+if (root / "fail").exists() or (root / f"fail{{args[0]}}").exists():
     sys.exit(1)
 path = root / "xrandr.json"
 state = json.loads(path.read_text()) if path.exists() else {LAUNCH!r}
@@ -125,6 +126,20 @@ class Tools:
     def ours(self) -> list[str]:
         return [name for name in self.x_server()["modes"] if name.startswith("fw")]
 
+    def kasmvnc(self, width: int, height: int) -> None:
+        """A classic viewer resizes the screen to its own size, as Xvnc does it (measured): a mode named for the
+        size, in use, and the one Xvnc made before (at launch, or for the last such resize) deleted."""
+        state = self.x_server()
+        name, old = f"{width}x{height}", state.get("preferred", "1280x1000")
+        state["modes"][name] = [width, height]
+        state["output"].append(name)
+        state["current"] = name
+        if old != name and old in state["modes"]:
+            state["output"].remove(old)
+            del state["modes"][old]
+        state["preferred"] = name
+        (self.root / "xrandr.json").write_text(json.dumps(state))
+
 
 @pytest.fixture
 async def tools(tmp_path: Path) -> AsyncIterator[Tools]:
@@ -138,6 +153,15 @@ async def tools(tmp_path: Path) -> AsyncIterator[Tools]:
     screen = Screen(":99", (1280, 1000), tmp_path / "xsettings", env)
     yield Tools(tmp_path, screen)
     await screen.close()
+
+
+def xsettingsd_running(work: Path) -> bool:
+    for entry in Path("/proc").iterdir():
+        if entry.name.isdigit():
+            with contextlib.suppress(OSError):
+                if str(work).encode() in (entry / "cmdline").read_bytes():
+                    return True
+    return False
 
 
 async def until(check: Callable[[], bool]) -> None:
@@ -230,6 +254,7 @@ async def test_restore_puts_back_the_pods_own_screen(tools: Tools) -> None:
     assert time.monotonic() - started < 3
     calls = tools.calls()
     assert calls == [
+        "xrandr --query",  # Xvnc's own mode of the pod's size is still there
         "xsettingsd term",
         "xrandr --output VNC-0 --mode 1280x1000",
         "xrandr --delmode VNC-0 fw1280x800",  # least recently used first
@@ -260,16 +285,76 @@ async def test_restore_is_bounded_and_never_raises(tools: Tools) -> None:
     for pid in hung:
         with pytest.raises(ProcessLookupError):
             os.kill(pid, 0)  # killed, not left behind
-    assert "xsettingsd term" in tools.calls()  # back to 1x whatever xrandr did
+    assert not xsettingsd_running(tools.work)  # back to 1x whatever xrandr did
     assert tools.screen.current is None
     (tools.root / "hang").unlink()
     tools.forget()
     await tools.screen.restore()  # the mode left behind is removed next time
     assert tools.calls() == [
+        "xrandr --query",
         "xrandr --output VNC-0 --mode 1280x1000",
         "xrandr --delmode VNC-0 fw780x1328",
         "xrandr --rmmode fw780x1328",
     ]
+
+
+async def test_restore_makes_the_pods_own_mode_once_a_classic_viewer_has_had_its_own(
+    tools: Tools, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Classic, then a stream, then classic again: Xvnc deleted its 1280x1000 mode when the first classic viewer
+    resized the screen, so the restore makes one of its own, and the next classic viewer finds nothing to undo."""
+    tools.kasmvnc(390, 664)
+    await tools.screen.apply(390, 664, 2)
+    await until(lambda: any(line.startswith("xsettingsd -c") for line in tools.lines()))
+    tools.forget()
+    await tools.screen.restore()
+    assert tools.calls() == [
+        "xrandr --query",
+        "xrandr --newmode fw1280x1000 60 1280 1280 1280 1280 1000 1000 1000 1000",
+        "xrandr --addmode VNC-0 fw1280x1000",
+        "xsettingsd term",
+        "xrandr --output VNC-0 --mode fw1280x1000",
+        "xrandr --delmode VNC-0 fw780x1328",
+        "xrandr --rmmode fw780x1328",
+    ]
+    assert tools.x_server()["current"] == "fw1280x1000"
+    assert tools.ours() == ["fw1280x1000"]
+    assert not tools.screen.changed
+    assert "Couldn't restore" not in caplog.text
+
+    tools.kasmvnc(390, 664)  # the classic viewer's own size
+    tools.forget()
+    await tools.screen.restore()  # its reconnect: nothing to undo, nothing the page sees
+    assert tools.calls() == []
+    await tools.screen.apply(390, 664, 2)  # a stream, then classic again: the mode made before is used
+    tools.forget()
+    await tools.screen.restore()
+    assert tools.calls() == [
+        "xrandr --query",
+        "xsettingsd term",
+        "xrandr --output VNC-0 --mode fw1280x1000",
+        "xrandr --delmode VNC-0 fw780x1328",
+        "xrandr --rmmode fw780x1328",
+    ]
+    assert not tools.screen.changed
+
+
+async def test_a_restore_that_cant_switch_still_removes_our_other_modes(
+    tools: Tools, caplog: pytest.LogCaptureFixture
+) -> None:
+    await tools.screen.apply(1280, 800, 1)
+    await tools.screen.apply(390, 664, 2)
+    (tools.root / "fail--output").touch()  # the switch to the pod's own mode is refused
+    tools.forget()
+    await tools.screen.restore()
+    assert tools.calls()[-3:] == [
+        "xrandr --output VNC-0 --mode 1280x1000",
+        "xrandr --delmode VNC-0 fw1280x800",
+        "xrandr --rmmode fw1280x800",
+    ]
+    assert tools.ours() == ["fw780x1328"]  # the one on the screen stays
+    assert "Couldn't restore the pod's screen: ScreenError" in caplog.text
+    assert tools.screen.changed  # to be tried again
 
 
 async def test_a_failed_apply_raises_and_is_tried_again(tools: Tools) -> None:

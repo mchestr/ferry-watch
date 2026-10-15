@@ -8,9 +8,9 @@ and at 2x `xsettingsd` serves `Xft/DPI` 192, which Chromium follows live (device
   changes nothing the page can see. Otherwise it sets the DPI first and then the mode, without waiting in
   between, which moves the page's width monotonically from the old one to the new. At most MAX_MODES of our
   modes are on the X server at once; a new size replaces the one used least recently.
-- `restore()` puts back the pod's own screen (its launch size at 1x, xsettingsd stopped, our modes deleted). The
-  gate calls it only before it bridges a classic (KasmVNC) viewer, which therefore finds the pod exactly as
-  0.6.4 left it. It's bounded and never raises.
+- `restore()` puts back the pod's own screen (its launch size at 1x, xsettingsd stopped, our modes deleted but
+  the one it shows, if Xvnc no longer has its own of that size). The gate calls it only before it bridges a
+  classic (KasmVNC) viewer, which therefore finds the pod exactly as 0.6.4 left it. It's bounded and never raises.
 
 Every argument is built from validated integers, and nothing runs through a shell. xsettingsd opens no
 listener (it is an X client), and if it dies the page falls back to 1x.
@@ -22,8 +22,10 @@ import asyncio
 import contextlib
 import logging
 import os
+import re
 import signal
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
@@ -36,6 +38,20 @@ XSETTINGSD_STOP_SECONDS: Final = 1.0
 MAX_MODES: Final = 16  # of ours on the X server at once: a new one replaces the least recently used
 MAX_PIXELS: Final = (3840, 3200)  # 1920x1600 CSS px at 2x, the most a hello can ask for
 CONFIG_NAME: Final = "xsettingsd.conf"
+
+
+_SIZE: Final = re.compile(r"\bcurrent (\d+) x (\d+)")
+_OUTPUT_MODE: Final = re.compile(r" {3}(\S+)(.*)")  # "   390x664     60.00*+": a mode on the output (* in use)
+
+
+@dataclass(frozen=True, slots=True)
+class _Shown:
+    """What `xrandr --query` says: the output, the screen's size, the output's modes and the one in use."""
+
+    output: str
+    size: tuple[int, int]
+    modes: frozenset[str]
+    active: str | None
 
 
 class ScreenError(Exception):
@@ -72,8 +88,7 @@ class Screen:
         output = await self._output_name()
         name = await self._ours(output, width, height)
         await self._set_scale(dsf)  # DPI first, then the mode, with no wait in between
-        await self._xrandr("--output", output, "--mode", name)
-        self._showing = name
+        await self._show(output, name)
         self.current = (w, h, dsf)
         return True
 
@@ -83,31 +98,54 @@ class Screen:
         return self._touched
 
     async def restore(self) -> None:
-        """The pod's own screen: its launch size at 1x, xsettingsd stopped, our modes gone. Never raises."""
+        """The pod's own screen: its launch size at 1x, xsettingsd stopped, our other modes gone. Never raises."""
         if not self._touched:
             return
+        restored = False
         try:
             async with asyncio.timeout(RESTORE_SECONDS):
-                output = await self._output_name()
-                width, height = self._default
-                await self._set_scale(1)  # as apply(): DPI, then the mode, with no wait in between
-                await self._xrandr("--output", output, "--mode", f"{width}x{height}")
-                self._showing = None
-                for name in list(self._modes):
-                    await self._remove(output, name)
+                try:
+                    output, name = await self._mode_for(*self._default)
+                    await self._set_scale(1)  # as apply(): DPI, then the mode, with no wait in between
+                    await self._show(output, name)
+                except ScreenError:
+                    await self._tidy()  # our other modes go all the same
+                    raise
+                await self._tidy()
+                restored = True
         except Exception as e:  # noqa: BLE001 - a classic viewer is waiting: it gets the screen as it is
             log.warning("Couldn't restore the pod's screen: %s", type(e).__name__)
         finally:
             await self._stop_xsettingsd(grace=0)  # only if the budget ran out first
             self._dsf = 1
             self.current = None
-            self._touched = bool(self._modes)  # modes left behind are tried again next time
+            self._touched = not restored  # tried again next time
 
     async def close(self) -> None:
         """Stop xsettingsd (the agent is exiting)."""
         await self._stop_xsettingsd()
 
-    # ---- our modes
+    # ---- modes
+
+    async def _mode_for(self, width: int, height: int) -> tuple[str, str]:
+        """The output, and a mode of this size for it: the X server's own of that name if it has one, else ours.
+        Xvnc makes one of the pod's size at launch, but replaces it with one of a classic viewer's size as soon as
+        that viewer resizes the screen."""
+        shown = await self._query()
+        name = f"{width}x{height}"
+        if name not in shown.modes:
+            name = await self._ours(shown.output, width, height)
+        return shown.output, name
+
+    async def _show(self, output: str, name: str) -> None:
+        await self._xrandr("--output", output, "--mode", name)
+        self._showing = name if name in self._modes else None
+
+    async def _tidy(self) -> None:
+        """Remove our modes but the one the output shows."""
+        output = await self._output_name()
+        for name in [n for n in self._modes if n != self._showing]:
+            await self._remove(output, name)
 
     async def _ours(self, output: str, width: int, height: int) -> str:
         """Our mode of this size, on the output and now the most recently used. Making a new one first removes the
@@ -140,13 +178,28 @@ class Screen:
 
     async def _output_name(self) -> str:
         if self._output is None:
-            for line in (await self._xrandr("--query")).splitlines():
-                if " connected" in line:
-                    self._output = line.split()[0]
-                    break
-            else:
-                raise ScreenError("no connected RandR output")
+            await self._query()
+        assert self._output is not None  # noqa: S101 - _query found it
         return self._output
+
+    async def _query(self) -> _Shown:
+        """The screen as the X server has it now."""
+        lines = (await self._xrandr("--query")).splitlines()
+        size = next((m for line in lines if (m := _SIZE.search(line))), None)
+        at = next((i for i, line in enumerate(lines) if " connected" in line), None)
+        if size is None or at is None:
+            raise ScreenError("no connected RandR output")
+        self._output = lines[at].split()[0]
+        modes: set[str] = set()
+        active: str | None = None
+        for line in lines[at + 1 :]:
+            if not line.startswith(" "):
+                break  # the next output's
+            if (mode := _OUTPUT_MODE.match(line)) is not None:
+                modes.add(mode[1])
+                if "*" in mode[2]:
+                    active = mode[1]
+        return _Shown(self._output, (int(size[1]), int(size[2])), frozenset(modes), active)
 
     async def _xrandr(self, *args: str) -> str:
         process = await asyncio.create_subprocess_exec(

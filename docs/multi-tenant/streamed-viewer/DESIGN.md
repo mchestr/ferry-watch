@@ -200,6 +200,11 @@ feasibility 6).
 - **Restore** (`Screen.restore()`): runs only in the gate, after the previous viewer's teardown and before a
   `binary` viewer is bridged (PROTOCOL §2.3).
   - Sets DPI 1 and mode 1280x1000 together, then deletes the added modes.
+  - Xvnc's own 1280x1000 mode is gone once a classic viewer has resized the screen: Xvnc replaces its mode with
+    one of the viewer's size (measured). The restore then makes one of ours of the pod's size and keeps it while
+    it's shown, and it deletes our other modes even when switching failed. Found in review: classic, then a
+    stream, then classic again left the stream's 780x1328 for KasmVNC to resize from, and every later classic
+    viewer repeated the failing restore.
   - Bounded to 3 s in total, with 2 s per `xrandr` and a timed-out `xrandr` killed. Measured 44 ms; afterwards
     xsettingsd was stopped and no modes were left.
   - It never runs at hold end or drain, because the pod exits anyway (C22).
@@ -1109,7 +1114,8 @@ The vnc-edge **Dockerfile** is unchanged.
 14. **Then the stock KasmVNC client through the shim reconnects with the same nonce**: DPR 1 and 1280x1000 before
     its resize (the page reports it among its sizes before the client's own; the restore's first event can be the
     DPR change alone), xsettingsd stopped, no fw modes left, and `test_checkout_screen.py`'s fitted/click/type
-    assertions pass.
+    assertions pass. The same when a classic viewer came first (classic → stream → classic, which Xvnc's
+    replaced launch mode broke until review).
 15. Hold end: `gate.close` → 4000 and open dialogs dismissed.
 
 `tests/browser/test_checkout_screen.py` stays as is and must pass. `docker/browser/selftest.py` gains a screen
