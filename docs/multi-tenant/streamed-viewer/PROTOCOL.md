@@ -139,8 +139,10 @@ values, an open JavaScript dialog) and the pod's screen size persist across conn
 1. After `open`, the viewer MUST send `hello` (§6.1) as its first message.
 2. The agent MUST receive `hello` within **5 s** of the upgrade, else close **4408**. Any other first message, a
    `hello` that fails any rule of §6.1, or a second `hello`: close **4400**.
-3. The agent applies the size (DESIGN §4.1). If the X screen already has exactly this size and scale factor (a
-   reconnect from the same device), nothing changes and the page sees nothing. Otherwise the agent changes
+3. The agent calls `verdict()` (§7.2: `hello` is a message like any other); when it returns a code, the agent
+   closes with it and changes nothing, neither the screen nor the dialogs. Otherwise it applies the size (DESIGN
+   §4.1). If the X screen already has exactly this size and scale factor (a reconnect from the same device),
+   nothing changes and the page sees nothing. Otherwise the agent changes
    Xft/DPI first and then the RandR mode, without waiting in between, and waits until the page reports the new
    size (at most 1 s).
 4. It sends, in this order: `ready` (§5.1), `pages` (§5.2), `clock` (§5.8), a `dialog` (§5.5) for each JavaScript

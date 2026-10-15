@@ -691,7 +691,10 @@ class CloseCode(IntEnum):  # in cast_protocol.py
 ### 6.3 `CastSession` lifecycle
 
 1. **Hello.** Wait up to 5 s for `hello` (else 4408). A wrong first message or a bad hello closes 4400.
-2. **Target.** `target = watcher.checkout_target()`; if None, close with `verdict()` or 4000.
+2. **Target.** First `verdict()`: a viewer whose verdict changed while the gate waited for its `hello` (the kill
+   switch flipped before it, the watch loop stuck) is closed with that code before anything below happens, so the
+   screen and the dialogs stay as they were. Then `target = watcher.checkout_target()`; if None, close with
+   `verdict()` or 4000.
 3. **Screen.**
    - `dsf = 2 if dpr ≥ 1.5 and w·h·4 ≤ 1.6 MP else 1`.
    - `changed = await screen.apply(w, h, dsf)`. If changed, poll `VIEWPORT` in the main world until

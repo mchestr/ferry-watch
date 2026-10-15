@@ -519,7 +519,14 @@ class CastSession:
         return hello
 
     async def _start(self, hello: Hello) -> None:
-        """§3.2 steps 3-4: the screen, then ready, pages, clock, open dialogs and the first image."""
+        """§3.2 steps 3-4: the screen, then ready, pages, clock, open dialogs and the first image.
+
+        `hello` is a message like any other (§7.2): a viewer whose verdict changed while the gate waited for it (the
+        kill switch flipped, say) gets its code before the session touches anything, not the screen and not the
+        dialogs. Nothing between here and the screen change awaits, so this one look covers all of it."""
+        if (code := self._verdict()) is not None:
+            self._end(code)
+            return
         target = self._pod.target()
         if target is None:
             self._end(self._verdict() or CloseCode.ENDED)

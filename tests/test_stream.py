@@ -450,6 +450,20 @@ async def test_a_hold_that_runs_out_on_the_clock_closes_the_stream_with_nothing_
     assert len(viewer.images) == count
 
 
+async def test_a_hello_after_the_verdict_changed_changes_nothing_on_the_pod(rig: Rig) -> None:
+    """A socket admitted before the kill switch was flipped sends its hello after it (the watch loop may be stuck):
+    the session ends with the verdict's code before it sizes the screen or takes the dialogs (§7.2, C35)."""
+    viewer = await rig.connect(None)
+    await eventually(lambda: rig.sessions)
+    rig.verdict[0] = CloseCode.WITHDRAWN
+    await viewer.send(PHONE)
+    assert await viewer.closed() == CloseCode.WITHDRAWN
+    assert rig.screen.applied == []
+    assert rig.dialogs.log == []
+    assert viewer.messages == []
+    assert rig.page.calls == []
+
+
 async def test_the_verdict_is_asked_every_second_without_any_message(rig: Rig) -> None:
     viewer = await rig.opened()
     started = time.monotonic()
