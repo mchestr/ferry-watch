@@ -610,6 +610,32 @@ async def test_the_field_map_is_sent_on_its_schedule_and_unchanged_is_fields_ok(
     assert changed["f"][0]["m"] == 63
 
 
+async def test_a_failed_map_is_tried_again_and_a_navigation_makes_one_due(rig: Rig) -> None:
+    """Neither waits for another image: a map read while the page was between documents fails, and a page that
+    loads a new document may send no image after its last one (PROTOCOL §5.3.4)."""
+    empty = {"f": [], "trunc": False, "slow": False, "clip": [0, 0, 390, 664], "vv": [0, 0, 0, 0, 1], "cw": 390,
+             "ch": 3000, "own": []}  # fmt: skip
+    calls: list[float] = []
+
+    def fields(_: str) -> Any:
+        calls.append(time.monotonic())
+        if len(calls) == 1:
+            raise RuntimeError("Execution context was destroyed")
+        return empty
+
+    rig.page.scripts["FIELDS"] = fields
+    viewer = await rig.opened()
+    first = await viewer.message("fields")
+    assert len(calls) == 2
+    assert calls[1] - calls[0] >= 0.9  # a second after the failure
+    rig.page.scripts["FIELDS"] = {**empty, "ch": 4000}
+    count = len(viewer.messages)
+    rig.page.emit("framenavigated", rig.page.main_frame)
+    again = await viewer.message("fields", after=count)
+    assert again["rev"] == first["rev"] + 1
+    assert again["ch"] == 4000
+
+
 async def test_the_map_starts_every_250_ms_while_images_keep_coming(rig: Rig) -> None:
     """No debounce: a page that never stops changing still gets a map, one every 250 ms (PROTOCOL §5.3.4)."""
     started: list[float] = []

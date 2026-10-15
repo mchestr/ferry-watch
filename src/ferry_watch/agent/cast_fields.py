@@ -348,6 +348,7 @@ class FieldMapper:
             except CdpError as e:
                 log.debug("No field map this time: %s", e)
                 self._slow = True
+                self.due()  # again, a second from now: the page may have been between documents
 
     async def _evaluate(self, front: Front, seq: int, n: int) -> bool:
         """One evaluation, sent as `fields` or `fields_ok`. Returns whether it ran out of time."""

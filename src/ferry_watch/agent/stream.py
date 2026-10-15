@@ -78,7 +78,7 @@ from .cast_protocol import (
 from .cast_scripts import VIEWPORT
 
 if TYPE_CHECKING:
-    from playwright.async_api import BrowserContext, Page
+    from playwright.async_api import BrowserContext, Frame, Page
 
     from .dialogs import DialogSink, KeptDialog
 
@@ -97,6 +97,7 @@ LOCALE: Final = "en-US"
 # What the field map waits for (PROTOCOL §5.3.4), once carried out.
 _MAP_AFTER: Final = (Tap, Wheel, Key, Text, Compose, Choose, SetDate, Answer, PageOp, Pinch, Resize)
 _FOCUS_KEYS: Final = frozenset({"Tab", "Enter", "Escape"})
+_FRAME_EVENTS: Final = ("frameattached", "framenavigated", "framedetached")
 
 
 class ScreenControl(Protocol):
@@ -363,9 +364,12 @@ class CastSession:
             with contextlib.suppress(Exception):
                 self._context.remove_listener("page", self._on_page)
         if pages is not None:
+            listeners: list[tuple[str, Callable[..., Any]]] = [("close", self._on_page_closed)]
+            listeners += [(event, self._on_frame) for event in _FRAME_EVENTS]
             for entry in pages.listed:
-                with contextlib.suppress(Exception):
-                    entry.page.remove_listener("close", self._on_page_closed)
+                for event, listener in listeners:
+                    with contextlib.suppress(Exception):
+                        entry.page.remove_listener(event, listener)
             await asyncio.gather(
                 *(e.worlds.close() for e in pages.listed if e.worlds is not None),
                 *(e.cdp.detach() for e in pages.listed if e.cdp is not None),
@@ -494,7 +498,16 @@ class CastSession:
         entry = pages.track(page)
         if entry is not None and not known:
             page.on("close", self._on_page_closed)
+            page.on("frameattached", self._on_frame)
+            page.on("framenavigated", self._on_frame)
+            page.on("framedetached", self._on_frame)
         return entry
+
+    def _on_frame(self, frame: Frame) -> None:
+        """A frame attached, navigated or detached: on the front page, the map is due (PROTOCOL §5.3.4)."""
+        front = self._pages.front if self._pages is not None else None
+        if front is not None and frame.page is front.page:
+            self._mapper.due()
 
     def _on_page(self, page: Page) -> None:
         """A pop-up or new tab: it becomes the front page (if it is listed)."""

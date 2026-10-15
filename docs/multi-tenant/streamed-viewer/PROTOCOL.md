@@ -452,8 +452,10 @@ One normative schedule:
   with every message §8.3 waits for, even one that changed nothing on screen).
 - It **starts** when it is due, no evaluation is in flight, at least **250 ms** have passed since the previous one
   started, and at least **50 ms** have passed since the event that made it due. After an evaluation that hit its
-  30 ms budget or timed out, the next starts no sooner than **1 s** later. There is no debounce: continuous images
-  give one evaluation every 250 ms, never none.
+  30 ms budget or timed out, the next starts no sooner than **1 s** later. An evaluation that failed (the page
+  went between documents during it, or didn't answer) sends nothing and is due again, also 1 s later: a page that
+  finished loading may send no image after its last one. There is no debounce: continuous images give one
+  evaluation every 250 ms, never none.
 - The result is sent as `fields` with `rev` + 1 when anything differs from the latest `fields`, otherwise as
   `fields_ok` for the same `rev`.
 

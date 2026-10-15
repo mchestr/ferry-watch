@@ -71,6 +71,7 @@ class FakeFrame:
     child_frames: list[FakeFrame] = field(default_factory=list)
     out_of_process: bool = False
     detached: bool = False
+    page: FakePage | None = None
 
     def is_detached(self) -> bool:
         return self.detached
@@ -86,7 +87,7 @@ class FakePage(Emitter):
         super().__init__()
         self.url = url
         self.title = title
-        self.main_frame = FakeFrame(url)
+        self.main_frame = FakeFrame(url, page=self)
         self.closed = False
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.hang: set[str] = set()
