@@ -1,0 +1,19 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Occlusion checkout</title>
+<style>body{margin:0;height:3000px;font-family:system-ui} select,input{font-size:16px;padding:6px;box-sizing:border-box}
+ #pay{position:fixed;left:0;bottom:0;width:100%;height:120px;font-size:20px;z-index:5}
+ iframe{position:absolute;left:10px;top:420px;width:360px;height:240px;border:2px solid #b00}</style></head>
+<body><form id="f" onsubmit="event.preventDefault(); log.push('form submit')">
+<select id="s3" style="position:absolute;top:60px;left:20px;width:300px;height:40px"><option>BC</option><option>AB</option><option>ON</option></select>
+<input id="d2" type="date" style="position:absolute;top:120px;left:20px;width:300px;height:40px">
+<select id="s4" style="position:absolute;top:180px;left:20px;width:300px;height:40px"><option>one</option><option>two</option><option>three</option></select>
+<select id="s2" style="position:absolute;top:520px;left:20px;width:150px;height:40px;z-index:1"><option>BC</option><option>AB</option><option>ON</option></select>
+<select id="s1" style="position:absolute;top:580px;left:200px;width:150px;height:40px;z-index:1"><option>BC</option><option>AB</option><option>ON</option></select>
+<input id="d1" type="date" style="position:absolute;top:600px;left:20px;width:150px;height:40px;z-index:1">
+<iframe id="card" src="{{PAY}}/card3.html"></iframe>
+<button id="pay" type="submit">Pay now</button></form>
+<script>window.log=[];
+document.getElementById('pay').addEventListener('click', e => log.push('PAY clicked (isTrusted=' + e.isTrusted + ')'));
+document.getElementById('s4').addEventListener('mousedown', e => e.preventDefault()); // a custom-styled select: the list never opens
+for (const id of ['s1','s2','s3','s4','d1','d2']) for (const t of ['input','change']) document.getElementById(id).addEventListener(t, e => log.push(id + ' ' + t + ' ' + e.isTrusted + ' ' + e.target.value));
+</script></body></html>

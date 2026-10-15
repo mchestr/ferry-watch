@@ -99,11 +99,12 @@ either kind): the gate ends the old one (close code **4001** for a `fw.cast1` vi
 viewer, waits until its session has finished its teardown (§3.5) before the new connection proceeds. Both kinds
 count as "a viewer" for viewer seconds and the hold clocks exactly as in 0.6.4.
 
-**Before it bridges a `binary` viewer, the gate MUST**, after the previous viewer's teardown: dismiss every
-JavaScript dialog a stream session left open (§5.5), and restore the pod's own screen (the X screen back to its
-launch size, Xft/DPI back to the default by stopping xsettingsd, the added RandR modes removed; DESIGN §4.1),
-bounded to 3 s in total. A `binary` viewer therefore always finds the pod as a 0.6.4 classic viewer would. The
-screen is restored at no other time (§3.5).
+**Before it bridges a `binary` viewer, the gate MUST**, after the previous viewer's teardown, restore the pod's
+own screen (the X screen back to its launch size, Xft/DPI back to the default by stopping xsettingsd, the added
+RandR modes removed; DESIGN §4.1), bounded to 3 s in total. A `binary` viewer therefore always finds the pod's
+screen as a 0.6.4 classic viewer would. The screen is restored at no other time (§3.5). A JavaScript dialog a
+stream session left open stays open: Chromium draws it on the pod's screen, where the classic viewer answers it
+(§5.5).
 
 ### 2.4 The device's nonce and ticket
 
@@ -142,7 +143,9 @@ values, an open JavaScript dialog) and the pod's screen size persist across conn
 4. It sends, in this order: `ready` (§5.1), `pages` (§5.2), `clock` (§5.8), a `dialog` (§5.5) for each JavaScript
    dialog already open on a page of the checkout, then a first image (§4) taken with `Page.captureScreenshot`,
    with header flag bit 0 set. (Chromium's screencast sends nothing until the page changes, so without this a
-   static page would never be shown.)
+   static page would never be shown.) While a dialog is open on the front page, that page can't be captured at
+   all (DESIGN §13): the first image then follows the dialog's answer, and a viewer MUST be able to show a
+   `dialog` before it has any image.
 5. Images follow (§4); `fields`, `fields_ok` and `focus` follow whenever they apply.
 
 The viewer MUST NOT send any message other than `hello` before it receives `ready`; the agent closes **4400** if
@@ -177,9 +180,8 @@ task is cancelled meanwhile, and MUST be bounded (2 s per CDP call).
 
 Teardown MUST NOT restore the pod's screen and MUST NOT dismiss an open JavaScript dialog: a viewer that reconnects
 (the bank app, a screen lock, a network change) finds the page exactly as it left it. The screen is restored only
-before a `binary` viewer is bridged (§2.3). Open dialogs are dismissed only then, and when the gate closes the
-viewer because the checkout is over, access was withdrawn, the pod is draining or the streamed viewer was
-withdrawn (codes 4000, 4002, 4003, 4005).
+before a `binary` viewer is bridged (§2.3). Open dialogs are dismissed only when the gate closes the viewer
+because the checkout is over, access was revoked or the pod is draining (codes 4000, 4002, 4003; §5.5).
 
 ### 3.6 Close codes
 
@@ -277,12 +279,15 @@ normative for the agent because the CPU budget and the first-image rule depend o
 
 | Mode | Source | Rate | Enters when |
 |---|---|---|---|
-| **live** | `Page.startScreencast` (JPEG q50, `everyNthFrame` 2), every Chromium frame acked at once | at most **15** binary messages a second | the session starts; any viewer message other than `ack` while **still**; `visible: true`; **still** saw 4 unchanged captures in a row |
+| **live** | `Page.startScreencast` (JPEG q50, `everyNthFrame` 1), every Chromium frame acked at once | at most **15** binary messages a second | the session starts; any viewer message other than `ack` while **still**; `visible: true`; **still** saw 4 unchanged captures in a row |
 | **still** | every 500 ms: `Page.getLayoutMetrics`, then `Page.captureScreenshot` (JPEG q50, at most 1 s, else skipped); sent only when its bytes or its metadata differ from the last image sent | at most **2** a second | **live**, no viewer message other than `ack` for 1 s, and Chromium delivered at least 8 frames in that second (an animated page) |
 | **paused** | none | 0 | `visible: false` |
 
 - On entering **live** from **still** because of a viewer message, the agent restarts the screencast before it
   carries out that message.
+- `everyNthFrame` is 1. With 2, Chromium can skip the last frame of a change and then, the page being still, send
+  nothing more: on the pod screen a single wheel step left the viewer showing the page as it was before the step
+  (DESIGN §13). An unchanged frame costs 32 bytes on the wire (kind 2).
 - A screenshot-based image's metadata: `w`, `h` as the page's latest screencast frame (or `innerWidth`/
   `innerHeight` if it has none), `scale`, `sx`, `sy` from `Page.getLayoutMetrics` `cssVisualViewport` (`scale`,
   `pageX`, `pageY`), `top` 0.
@@ -447,8 +452,10 @@ One normative schedule:
   with every message §8.3 waits for, even one that changed nothing on screen).
 - It **starts** when it is due, no evaluation is in flight, at least **250 ms** have passed since the previous one
   started, and at least **50 ms** have passed since the event that made it due. After an evaluation that hit its
-  30 ms budget or timed out, the next starts no sooner than **1 s** later. There is no debounce: continuous images
-  give one evaluation every 250 ms, never none.
+  30 ms budget or timed out, the next starts no sooner than **1 s** later. An evaluation that failed (the page
+  went between documents during it, or didn't answer) sends nothing and is due again, also 1 s later: a page that
+  finished loading may send no image after its last one. There is no debounce: continuous images give one
+  evaluation every 250 ms, never none.
 - The result is sent as `fields` with `rev` + 1 when anything differs from the latest `fields`, otherwise as
   `fields_ok` for the same `rev`.
 
@@ -465,15 +472,21 @@ number field advancing to the expiry.
 
 - `seq`, `n`: as in §5.3.1, for the evaluation behind this report.
 - `f` is a field object as in §5.3.1 without `id` (with `nopt`/`opts`/`sel`/`trunc` for a select, `v` for a
-  date/time), or `null` when nothing editable has focus. The innermost focused frame's element is reported (a
-  frame's focused element being an `IFRAME` means "look inside").
+  date/time), or `null` when nothing editable has focus, or when nothing of the focused element can be clicked
+  (its `m` would be 0: scrolled out of view or covered; as in the map, no field is sent with `m` = 0). The innermost
+  focused frame's element is reported (a frame's focused element being an `IFRAME` means "look inside").
 - `popup` is true when the message just carried out was a `tap` whose point lies inside the now-focused element and
   that element is a `<select>`: the agent's own click opened its list in the pod, which is never in the images. The
   viewer MUST then show its own option picker built from `opts` (§8.6).
 
 ### 5.5 `dialog`
 
-A JavaScript dialog on any page of the checkout. The page is blocked until it is answered.
+A JavaScript dialog on any page of the checkout. The page is blocked until it is answered: it can't be captured
+and answers almost no CDP (DESIGN §13). While a dialog is open on the front page, the agent sends that page
+nothing: a `tap`, `pinch`, `key`, `text`, `compose`, `choose` or `date` is answered `error stale` (§5.7), a `move`
+or `wheel` is ignored, and no image, `fields`, `fields_ok` or `focus` comes from it until the last of its dialogs
+is answered or closed. Then a screenshot-based image follows at once (with flag bit 0 set if it is the session's
+first, §3.2), and images, the map and input resume.
 
 ```json
 {"t": "dialog", "id": 3, "page": 1, "kind": "confirm", "origin": "https://pay.example", "msg": "Leave checkout?", "def": ""}
@@ -488,11 +501,16 @@ A JavaScript dialog on any page of the checkout. The page is blocked until it is
 | `msg` | string | ≤ 500 code points, clean text except U+000A (line feed) is kept |
 | `def` | string | ≤ 256 code points, clean text: the prompt's default ("" otherwise) |
 
-Dialogs stay open across a reconnect (§3.5). The agent dismisses every open dialog when the viewer is closed with
-4000, 4002, 4003 or 4005, and before a `binary` viewer is bridged; at that point it also stops listening for
-dialogs, so a classic viewer gets 0.6.4's behaviour (Playwright dismisses every dialog at once) until the next
-`fw.cast1` session. Until the first `fw.cast1` session of the pod's life, dialogs are dismissed by Playwright as in
-0.6.4.
+Dialogs are kept for whoever views the checkout, of either kind, from the gate's first admission of a viewer in the
+pod's life (before it, Playwright dismisses every dialog the moment it opens, as in 0.6.4, which suits the agent's
+own browsing). A kept dialog stays open until it is answered: by a stream viewer, with `dialog` (§6.13); or by a
+classic viewer on the pod's screen, where Chromium draws it (0.7.0 fixes 0.6.4's classic viewer, which never saw a
+dialog: Playwright dismissed each one unseen). Dialogs stay open across a reconnect (§3.5) and a switch between the
+two kinds. A dialog that closes without the stream viewer's answer (its page navigated or closed) is announced to
+the stream session as `dialog_closed` (§5.6). The agent dismisses every open dialog (and accepts a `beforeunload`, as
+Playwright does) when the gate closes the viewer with 4000, 4002 or 4003 (the checkout is over, access was
+revoked, the pod is draining), and then stops keeping them, so its own browsing afterwards (emptying the cart)
+can't wait on one. A 4005 leaves them open for the classic viewer the stream moves to.
 
 ### 5.6 `dialog_closed`
 
@@ -507,7 +525,7 @@ fatal.
 | `code` | Meaning |
 |---|---|
 | `invalid` | A value broke a rule of §6 (out of range, too long, not typed text, a bad key combination). The message was dropped |
-| `stale` | It named a page that isn't the front page; an image the agent no longer remembers, or one that no longer matches the page (§6.4); a field-map `rev` the agent no longer holds (it keeps the latest 2); or a field that is gone, changed, or covered at the moment of acting (§6.11). **Nothing was sent to the page** |
+| `stale` | It named a page that isn't the front page; it was input while a dialog blocks the front page (§5.5); an image the agent no longer remembers, or one that no longer matches the page (§6.4); a field-map `rev` the agent no longer holds (it keeps the latest 2); or a field that is gone, changed, or covered at the moment of acting (§6.11). **Nothing was sent to the page** |
 | `failed` | The agent acted and the page didn't take it (e.g. the select didn't change, or the field didn't get focus) |
 | `rate` | Dropped by a rate limit (§7.1) |
 | `unsupported` | e.g. `date` on a pod whose browser locale isn't en-US |

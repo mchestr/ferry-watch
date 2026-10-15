@@ -1,0 +1,19 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Checkout with a timer and a spinner</title>
+<style>
+ body{font-family:system-ui;margin:0;padding:12px}
+ header{position:sticky;top:0;background:#0b4f8a;color:#fff;padding:10px;display:flex;justify-content:space-between;align-items:center}
+ input{font-size:16px;padding:8px;margin:4px 0 12px;width:100%;box-sizing:border-box}
+ .spin{width:18px;height:18px;border:3px solid #fff;border-top-color:transparent;border-radius:50%;animation:s 0.9s linear infinite}
+ @keyframes s{to{transform:rotate(360deg)}}
+ .sec{height:200px;background:linear-gradient(#f4f8ff,#dde8f6);margin:8px 0}
+ body.nospin .spin{display:none}
+</style></head><body>
+<header><span id="timer">Held for 15:00</span><span class="spin"></span></header>
+<label>Name <input id="name" autocomplete="name"></label>
+<label>Email <input id="email" type="email" autocomplete="email"></label>
+<div class="sec"></div><div class="sec"></div><div class="sec"></div><div class="sec"></div>
+<script>
+ const p=new URLSearchParams(location.search); if(p.get('spin')==='0') document.body.classList.add('nospin');
+ let s=900; if(p.get('timer')!=='0') setInterval(()=>{s--;document.getElementById('timer').textContent=`Held for ${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`},1000);
+</script></body></html>

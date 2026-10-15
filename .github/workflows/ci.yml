@@ -60,9 +60,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
       - run: uv sync --locked
-      # KasmVNC's web client for the checkout tests, and its Xvnc with matchbox, installed as the browser image
-      # installs them, so test_checkout_screen.py can run the pod's real screen.
-      - name: KasmVNC and matchbox, for the checkout tests
+      # KasmVNC's web client for the checkout tests, and its Xvnc with matchbox, xrandr and xsettingsd, installed as
+      # the browser image installs them, so test_checkout_screen.py can run the pod's real screen.
+      - name: KasmVNC, matchbox, xrandr and xsettingsd, for the checkout tests
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
@@ -73,8 +73,8 @@ jobs:
             "https://github.com/kasmtech/KasmVNC/releases/download/v${version}/kasmvncserver_noble_${version}_amd64.deb" "$deb"
           echo "${sum}  ${deb}" | sha256sum -c -
           apt-get update
-          apt-get install -y --no-install-recommends matchbox-window-manager "$deb"
-          for tool in Xvnc matchbox-window-manager; do command -v "$tool"; done
+          apt-get install -y --no-install-recommends matchbox-window-manager xsettingsd x11-xserver-utils "$deb"
+          for tool in Xvnc matchbox-window-manager xrandr xsettingsd; do command -v "$tool"; done
           echo "FW_KASMVNC_WWW=/usr/share/kasmvnc/www" >> "$GITHUB_ENV"
       - run: uv run pytest -m browser
 
