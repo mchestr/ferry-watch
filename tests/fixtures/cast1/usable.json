@@ -1,0 +1,175 @@
+{
+  "protocol": "fw.cast1",
+  "numbering": [
+    {"id": "acks-unnumbered", "sec": "1", "sent": ["hello", "ack", "tap", "ack", "wheel"],
+     "numbers": [1, null, 2, null, 3], "last_input": 3},
+    {"id": "all-others-numbered", "sec": "1", "sent": ["hello", "move", "visible", "resize", "move"],
+     "numbers": [1, 2, 3, 4, 5], "last_input": 4,
+     "note": "move and visible are numbered but aren't inputs §8.3 waits for"},
+    {"id": "hello-only", "sec": "1", "sent": ["hello"], "numbers": [1], "last_input": 0},
+    {
+      "id": "every-input-type", "sec": "8.3",
+      "sent": [
+        "hello", "tap", "wheel", "pinch", "key", "text", "compose", "choose", "date", "dialog", "page", "resize",
+        "move", "visible", "ack"
+      ],
+      "numbers": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, null], "last_input": 12
+    }
+  ],
+  "cases": [
+    {
+      "id": "same", "sec": "8.3",
+      "map": {"t": "fields", "page": 1, "rev": 12, "seq": 340, "n": 57, "sx": 0, "sy": 530.5, "scale": 1, "cw": 390,
+       "ch": 1200, "trunc": false, "f": []},
+      "oks": [], "image": {"page": 1, "seq": 341, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+      "last_input": 57, "shifted": false, "usable": true
+    },
+    {
+      "id": "other-page", "sec": "8.3",
+      "map": {"t": "fields", "page": 1, "rev": 12, "seq": 340, "n": 57, "sx": 0, "sy": 530.5, "scale": 1, "cw": 390,
+       "ch": 1200, "trunc": false, "f": []},
+      "oks": [], "image": {"page": 2, "seq": 341, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+      "last_input": 57, "shifted": false, "usable": false
+    },
+    {
+      "id": "sx-0.5", "sec": "8.3",
+      "map": {"t": "fields", "page": 1, "rev": 12, "seq": 340, "n": 57, "sx": 0, "sy": 530.5, "scale": 1, "cw": 390,
+       "ch": 1200, "trunc": false, "f": []},
+      "oks": [], "image": {"page": 1, "seq": 341, "w": 390, "h": 664, "scale": 1, "sx": 0.5, "sy": 530.5},
+      "last_input": 57, "shifted": false, "usable": true
+    },
+    {
+      "id": "sx-0.75", "sec": "8.3",
+      "map": {"t": "fields", "page": 1, "rev": 12, "seq": 340, "n": 57, "sx": 0, "sy": 530.5, "scale": 1, "cw": 390,
+       "ch": 1200, "trunc": false, "f": []},
+      "oks": [], "image": {"page": 1, "seq": 341, "w": 390, "h": 664, "scale": 1, "sx": 0.75, "sy": 530.5},
+      "last_input": 57, "shifted": false, "usable": false
+    },
+    {
+      "id": "sy-0.5", "sec": "8.3",
+      "map": {"t": "fields", "page": 1, "rev": 12, "seq": 340, "n": 57, "sx": 0, "sy": 530.5, "scale": 1, "cw": 390,
+       "ch": 1200, "trunc": false, "f": []},
+      "oks": [], "image": {"page": 1, "seq": 341, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 531},
+      "last_input": 57, "shifted": false, "usable": true
+    },
+    {
+      "id": "sy-0.625", "sec": "8.3",
+      "map": {"t": "fields", "page": 1, "rev": 12, "seq": 340, "n": 57, "sx": 0, "sy": 530.5, "scale": 1, "cw": 390,
+       "ch": 1200, "trunc": false, "f": []},
+      "oks": [], "image": {"page": 1, "seq": 341, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 531.125},
+      "last_input": 57, "shifted": false, "usable": false
+    },
+    {
+      "id": "scale-close", "sec": "8.3",
+      "map": {"t": "fields", "page": 1, "rev": 12, "seq": 340, "n": 57, "sx": 0, "sy": 530.5, "scale": 1, "cw": 390,
+       "ch": 1200, "trunc": false, "f": []},
+      "oks": [], "image": {"page": 1, "seq": 341, "w": 390, "h": 664, "scale": 1.0005, "sx": 0, "sy": 530.5},
+      "last_input": 57, "shifted": false, "usable": true, "note": "header floats are f32: stay off the 0.001 edge"
+    },
+    {
+      "id": "scale-far", "sec": "8.3",
+      "map": {"t": "fields", "page": 1, "rev": 12, "seq": 340, "n": 57, "sx": 0, "sy": 530.5, "scale": 1, "cw": 390,
+       "ch": 1200, "trunc": false, "f": []},
+      "oks": [], "image": {"page": 1, "seq": 341, "w": 390, "h": 664, "scale": 1.002, "sx": 0, "sy": 530.5},
+      "last_input": 57, "shifted": false, "usable": false
+    },
+    {
+      "id": "scale-measured", "sec": "8.3",
+      "map": {"t": "fields", "page": 1, "rev": 12, "seq": 340, "n": 57, "sx": 175, "sy": 770.5, "scale": 2,
+       "cw": 390, "ch": 1200, "trunc": false, "f": []},
+      "oks": [],
+      "image": {"page": 1, "seq": 341, "w": 390, "h": 664, "scale": 2.000000238418579, "sx": 175, "sy": 770.5},
+      "last_input": 57, "shifted": false, "usable": true
+    },
+    {
+      "id": "seq-plus-4", "sec": "8.3",
+      "map": {"t": "fields", "page": 1, "rev": 12, "seq": 340, "n": 57, "sx": 0, "sy": 530.5, "scale": 1, "cw": 390,
+       "ch": 1200, "trunc": false, "f": []},
+      "oks": [], "image": {"page": 1, "seq": 344, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+      "last_input": 57, "shifted": false, "usable": true
+    },
+    {
+      "id": "seq-plus-5", "sec": "8.3",
+      "map": {"t": "fields", "page": 1, "rev": 12, "seq": 340, "n": 57, "sx": 0, "sy": 530.5, "scale": 1, "cw": 390,
+       "ch": 1200, "trunc": false, "f": []},
+      "oks": [], "image": {"page": 1, "seq": 345, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+      "last_input": 57, "shifted": false, "usable": false
+    },
+    {
+      "id": "seq-minus-4", "sec": "8.3",
+      "map": {"t": "fields", "page": 1, "rev": 12, "seq": 340, "n": 57, "sx": 0, "sy": 530.5, "scale": 1, "cw": 390,
+       "ch": 1200, "trunc": false, "f": []},
+      "oks": [], "image": {"page": 1, "seq": 336, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+      "last_input": 57, "shifted": false, "usable": true, "note": "an image older than the map"
+    },
+    {
+      "id": "seq-minus-5", "sec": "8.3",
+      "map": {"t": "fields", "page": 1, "rev": 12, "seq": 340, "n": 57, "sx": 0, "sy": 530.5, "scale": 1, "cw": 390,
+       "ch": 1200, "trunc": false, "f": []},
+      "oks": [], "image": {"page": 1, "seq": 335, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+      "last_input": 57, "shifted": false, "usable": false
+    },
+    {
+      "id": "n-equal", "sec": "8.3",
+      "map": {"t": "fields", "page": 1, "rev": 12, "seq": 340, "n": 57, "sx": 0, "sy": 530.5, "scale": 1, "cw": 390,
+       "ch": 1200, "trunc": false, "f": []},
+      "oks": [], "image": {"page": 1, "seq": 341, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+      "last_input": 57, "shifted": false, "usable": true
+    },
+    {
+      "id": "n-behind", "sec": "8.3",
+      "map": {"t": "fields", "page": 1, "rev": 12, "seq": 340, "n": 57, "sx": 0, "sy": 530.5, "scale": 1, "cw": 390,
+       "ch": 1200, "trunc": false, "f": []},
+      "oks": [], "image": {"page": 1, "seq": 341, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+      "last_input": 58, "shifted": false, "usable": false, "note": "the map predates the user's latest input"
+    },
+    {
+      "id": "n-ahead", "sec": "8.3",
+      "map": {"t": "fields", "page": 1, "rev": 12, "seq": 340, "n": 57, "sx": 0, "sy": 530.5, "scale": 1, "cw": 390,
+       "ch": 1200, "trunc": false, "f": []},
+      "oks": [], "image": {"page": 1, "seq": 341, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+      "last_input": 40, "shifted": false, "usable": true
+    },
+    {
+      "id": "shifted", "sec": "8.3",
+      "map": {"t": "fields", "page": 1, "rev": 12, "seq": 340, "n": 57, "sx": 0, "sy": 530.5, "scale": 1, "cw": 390,
+       "ch": 1200, "trunc": false, "f": []},
+      "oks": [], "image": {"page": 1, "seq": 341, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+      "last_input": 57, "shifted": true, "usable": false
+    },
+    {
+      "id": "fields-ok-catches-up", "sec": "8.3",
+      "map": {"t": "fields", "page": 1, "rev": 12, "seq": 340, "n": 57, "sx": 0, "sy": 530.5, "scale": 1, "cw": 390,
+       "ch": 1200, "trunc": false, "f": []},
+      "oks": [{"t": "fields_ok", "page": 1, "rev": 12, "seq": 350, "n": 60}],
+      "image": {"page": 1, "seq": 352, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5}, "last_input": 60,
+      "shifted": false, "usable": true
+    },
+    {
+      "id": "without-fields-ok", "sec": "8.3",
+      "map": {"t": "fields", "page": 1, "rev": 12, "seq": 340, "n": 57, "sx": 0, "sy": 530.5, "scale": 1, "cw": 390,
+       "ch": 1200, "trunc": false, "f": []},
+      "oks": [], "image": {"page": 1, "seq": 352, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+      "last_input": 60, "shifted": false, "usable": false
+    },
+    {
+      "id": "fields-ok-other-rev", "sec": "8.3",
+      "map": {"t": "fields", "page": 1, "rev": 12, "seq": 340, "n": 57, "sx": 0, "sy": 530.5, "scale": 1, "cw": 390,
+       "ch": 1200, "trunc": false, "f": []},
+      "oks": [{"t": "fields_ok", "page": 1, "rev": 11, "seq": 350, "n": 60}],
+      "image": {"page": 1, "seq": 352, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5}, "last_input": 60,
+      "shifted": false, "usable": false
+    },
+    {
+      "id": "fields-ok-latest-wins", "sec": "8.3",
+      "map": {"t": "fields", "page": 1, "rev": 12, "seq": 340, "n": 57, "sx": 0, "sy": 530.5, "scale": 1, "cw": 390,
+       "ch": 1200, "trunc": false, "f": []},
+      "oks": [
+        {"t": "fields_ok", "page": 1, "rev": 12, "seq": 350, "n": 60},
+        {"t": "fields_ok", "page": 1, "rev": 12, "seq": 360, "n": 63}
+      ],
+      "image": {"page": 1, "seq": 362, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5}, "last_input": 63,
+      "shifted": false, "usable": true
+    }
+  ]
+}

@@ -263,7 +263,7 @@ Emulation domain.
 
 | Gesture | Viewer → protocol | Agent → CDP | Result |
 |---|---|---|---|
-| Tap | `tap {page, seq, x, y, ms}` on `touchend` (no movement over 8 px, under 500 ms), or on `pointerup` for a mouse | live state from `Page.getLayoutMetrics`; if image `seq` no longer matches the page (scroll/scale moved by more than 1 px / 0.01): `error stale`, nothing sent. Else `mouseMoved`, `mousePressed`, wait `ms`, `mouseReleased` at (x/s, y/s) | Clicks in 3 ms + `ms`, `pointerType: mouse`. **11/11** into the cross-site iframe at 11 scroll offsets (round 1) |
+| Tap | `tap {page, seq, x, y, ms}` on `touchend` (under 8 px of movement, under 500 ms), or on `pointerup` for a mouse | live state from `Page.getLayoutMetrics`; if image `seq` no longer matches the page (scroll/scale moved by more than 1 px / 0.01): `error stale`, nothing sent. Else `mouseMoved`, `mousePressed`, wait `ms`, `mouseReleased` at (x/s, y/s) | Clicks in 3 ms + `ms`, `pointerType: mouse`. **11/11** into the cross-site iframe at 11 scroll offsets (round 1) |
 | Mouse movement (computers) | `move {page, x, y}`, ≤ 1 per 33 ms | `mouseMoved`, coalesced | 15 moves → 15 `mousemove` and a `mouseenter` before the click (`round2/s8`) |
 | Scroll, finger-following | `wheel {dx,dy}`, ≤ 1 per 33 ms (summed) | `mouseWheel`; queued wheels merged | 1:1 at DPR 2. Round 2 (`round2/s5`, 60 and 120 Hz, drag + coast): peak queue 1 (was 43 and 136, which would have closed 4429), finished 25-47 ms after the last send (was 1.3-3.7 s), every pixel dispatched, exact final scroll |
 | Flick / momentum | the viewer keeps sending decaying `wheel` | `mouseWheel` | 320 px finger + 1,114 px coast (round 1). Also starting over the iframe |
@@ -788,7 +788,7 @@ read once per session in the main world must start with `en-US`, else `date` ans
 - **Touch.**
   - A tap is under 8 px of movement and under 500 ms. It is sent on `touchend` with `seq` and `ms`; if it hits a
     usable map's text field, the proxy is focused first in the same task.
-  - More than 8 px starts a scroll: `wheel` at most every 33 ms with summed deltas. The velocity is filtered
+  - 8 px or more starts a scroll: `wheel` at most every 33 ms with summed deltas. The velocity is filtered
     (0.8 new / 0.2 old).
   - A release within 80 ms of the last move above 0.3 px/ms coasts with exponential decay (0.997/ms default;
     tuned on devices). Any touch stops a coast, and a touch that stops a coast is not a tap.

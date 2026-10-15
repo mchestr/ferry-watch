@@ -200,6 +200,7 @@ The agent closes with these codes. The viewer's required behaviour is in the las
 | 4408 | No `hello` within 5 s | reconnect with backoff |
 | 4429 | The queue limit (§3.4), the drop limit or the overall rate (§7.1) was exceeded | reconnect after 2 s |
 | 4500 | The agent couldn't run the session (CDP or screen failure) | reconnect with backoff; after 2 consecutive 4500s, offer the classic viewer prominently |
+| any other | Not sent by the agent; a proxy on the way may close with, for example, 1001 or 1011 | reconnect with backoff |
 
 The viewer closes with **1000** when it leaves (for example to the classic viewer); the agent treats any
 viewer-initiated close the same way.
@@ -208,10 +209,13 @@ viewer-initiated close the same way.
 
 The viewer reconnects after a close that the table says to, offering `fw.cast1` and the nonce (and the pending
 ticket only if it never opened). Delays between attempts: **0.5, 1, 2, 5, 10, 10, ...** seconds, reset after a
-connection that reached `ready`. The viewer MUST stop and go to `/gone.html` once the device record's
-`hard_deadline` has passed. After **3** consecutive attempts that never reached `open`, it MUST show the classic
-viewer option prominently (the gate may be refusing it for a reason a browser can't see, such as the kill
-switch).
+connection that reached `ready`: the n-th reconnect attempt since the page loaded or since the last connection that
+reached `ready` waits the n-th delay, except that after a 4400 or a 4429 the table's fixed delay replaces it (that
+attempt still counts). The viewer MUST stop and go to `/gone.html` instead of reconnecting once the device record's
+`hard_deadline` has passed. After **3** consecutive connections that never reached `open` (the page's first
+included; one that opens ends the run), it MUST show the classic viewer option prominently (the gate may be
+refusing it for a reason a browser can't see, such as the kill switch). "2 consecutive 4500s" in §3.6 means two
+closes in a row with 4500.
 
 ### 3.8 Visibility
 
@@ -787,8 +791,9 @@ closed after **6000 s** with **4004**.
 
 - `tap.seq` and `pinch.seq` MUST be the `seq` of the binary message whose image is drawn when the gesture began
   (pinch) or ended (tap).
-- While the viewer draws an image shifted by a scroll prediction, or scaled by a local pinch zoom (DESIGN §7.4),
-  a touch that would be a tap is not a tap: it ends the prediction or the coast, and nothing is sent.
+- While the viewer coasts after a flick, or draws an image shifted by a scroll prediction or scaled by a local
+  pinch zoom (DESIGN §7.4), a touch that would be a tap is not a tap: it ends the coast or the prediction, and
+  nothing is sent. What counts is the state when the touch begins.
 
 ### 8.3 Using the field map
 
@@ -801,18 +806,25 @@ A map `M` (a `fields` message, plus any later `fields_ok` for its `rev`, whose `
 - no prediction shift or local zoom is drawn (§8.2).
 
 A tap point **hits** field `f` when it lies in `f.c` and the bit of `f.m` for the 3×3 cell of `f.c` containing it
-is set. Only a usable map's fields can be hit. Native picker overlays (§8.6) are shown only while the map is usable,
-only for a field with `m` = 511, `c` = `r`, `r` inside the image, not `ro`, and for a select only with `opts` and
-not `trunc`; every overlay sits below the viewer's own controls.
+is set. With `f.c` = `[x, y, w, h]`, the point (`px`, `py`) lies in it when `x ≤ px < x + w` and `y ≤ py < y + h`,
+and its cell is column `floor(3·(px − x)/w)`, row `floor(3·(py − y)/h)`. A point that hits more than one field
+hits none of them (the viewer can't tell which would get the click; the `focus` report settles it). Only a usable
+map's fields can be hit. Native picker overlays (§8.6) are shown only while the map is usable, only for a `select`,
+`date` or `time` field with `m` = 511, `c` = `r`, `r` inside the image (`0 ≤ x`, `0 ≤ y`, `x + w ≤` the image's
+`w`, `y + h ≤` its `h`), not `ro`, and for a select only with `opts` and not `trunc`; every overlay sits below the
+viewer's own controls.
 
 ### 8.4 Pointer and keyboard input
 
-- **Touch** (and pen): a touch that moves less than 8 px and lasts under 500 ms is a tap, sent on `touchend` with
-  `ms` = its duration (clamped to 300). One finger moving starts a scroll (`wheel`); two fingers a local pinch, then
-  one `pinch`. No `move` messages.
+- **Touch** (and pen): a touch that stays less than 8 CSS px from where it began and lasts under 500 ms is a tap at
+  the point where it began, sent on `touchend` with `ms` = its duration (clamped to 300). One finger moving 8 px or
+  more from where it began starts a scroll (`wheel`) whose deltas follow the finger from that point; two fingers a
+  local pinch, then one `pinch` as soon as fewer than two fingers remain, its `scale` clamped to 0.25-4 (the
+  remaining finger then does nothing). A touch that begins outside the image (§8.1) does nothing. No `move`
+  messages.
 - **Mouse** (`pointerType === "mouse"`): `move` from `pointermove` while over the image, at most one per 33 ms
-  (the latest position); a click is a `tap` sent on `pointerup`, with `ms` = the press duration (clamped to 300);
-  the wheel is `wheel` (line-mode deltas × 40).
+  (the latest position); a click is a `tap` at the `pointerdown` point, sent on `pointerup`, with `ms` = the press
+  duration (clamped to 300; there is no 500 ms limit); the wheel is `wheel` (line-mode deltas × 40).
 - **Physical keyboard** (a `keydown`/`keyup` with `isComposing` false and no Ctrl, Alt or Meta, except AltGr-made
   characters): `key` with `ph: down` on `keydown` and `ph: up` on `keyup`, for the named keys of §6.9, `Shift`, and
   keys whose `key` is one code point of clean text (sent as `c`; the `up` carries the same `c` its `down` did,
@@ -908,7 +920,7 @@ load (DESIGN §11, step 0). An implementation conforms only if it passes all of 
 | `headers.json` | §4.4 and more; malformed binary messages | pack/unpack | parse; refuse the malformed |
 | `rects.json` | page states (scale, visual viewport offset, frame chains, client rects) → `r`, `c`; §11.3 | `frame_rect()` | — |
 | `hits.json` | a map + an image + tap points → field id or none; overlay or not | — | `fieldAt()`, `overlayFor()` |
-| `usable.json` | (map `seq`, `n`, offsets) × (image, last input number, prediction) → usable or not | — | `mapUsable()` |
+| `usable.json` | (map `seq`, `n`, offsets) × (image, last input number, prediction) → usable or not; message numbers (§1) | message numbers | `mapUsable()`, message numbers |
 | `text.json` | §11.4: raw input → messages | value rules accept every output | `normalise()` |
 | `gestures.json` | timed touch/mouse sequences → messages (taps with `ms`, wheels at most one per 33 ms with exact sums, pinch `x0..y1`, no tap during a prediction) | — | the gesture state machine driven by a fake clock |
 | `mapping.json` | frame px + scale → CDP coordinates; pinch → CDP calls; `tap` staleness cases; key events (DESIGN §6.5); `date` digits and `choose` keys | `InputMapper` | — |

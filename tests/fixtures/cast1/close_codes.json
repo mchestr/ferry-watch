@@ -1,0 +1,250 @@
+{
+  "protocol": "fw.cast1", "delays": [0.5, 1, 2, 5, 10],
+  "cases": [
+    {
+      "id": "code-1000", "sec": "3.6",
+      "steps": [
+        {"opened": true, "ready": true, "code": 1000, "action": {"do": "reconnect", "delay": 0.5}, "prominent": false}
+      ]
+    },
+    {
+      "id": "code-1006", "sec": "3.6",
+      "steps": [
+        {"opened": true, "ready": true, "code": 1006, "action": {"do": "reconnect", "delay": 0.5}, "prominent": false}
+      ]
+    },
+    {
+      "id": "code-1009", "sec": "3.6",
+      "steps": [
+        {"opened": true, "ready": true, "code": 1009, "action": {"do": "reconnect", "delay": 1}, "prominent": false}
+      ],
+      "note": "as 4400"
+    },
+    {
+      "id": "code-4000", "sec": "3.6",
+      "steps": [
+        {"opened": true, "ready": true, "code": 4000, "action": {"do": "stop", "show": "ended"}, "prominent": false}
+      ]
+    },
+    {
+      "id": "code-4001", "sec": "3.6",
+      "steps": [
+        {"opened": true, "ready": true, "code": 4001, "action": {"do": "stop", "show": "elsewhere"},
+         "prominent": false}
+      ],
+      "note": "with \"Show it here\""
+    },
+    {
+      "id": "code-4002", "sec": "3.6",
+      "steps": [
+        {"opened": true, "ready": true, "code": 4002, "action": {"do": "stop", "show": "revoked"}, "prominent": false}
+      ]
+    },
+    {
+      "id": "code-4003", "sec": "3.6",
+      "steps": [
+        {"opened": true, "ready": true, "code": 4003, "action": {"do": "stop", "show": "ended"}, "prominent": false}
+      ]
+    },
+    {"id": "code-4004", "sec": "3.6",
+     "steps": [{"opened": true, "ready": true, "code": 4004, "action": {"do": "stop"}, "prominent": false}]},
+    {"id": "code-4005", "sec": "3.6",
+     "steps": [{"opened": true, "ready": true, "code": 4005, "action": {"do": "classic"}, "prominent": false}],
+     "note": "as \"Use the classic viewer\" (§8.10)"},
+    {
+      "id": "code-4400", "sec": "3.6",
+      "steps": [
+        {"opened": true, "ready": true, "code": 4400, "action": {"do": "reconnect", "delay": 1}, "prominent": false}
+      ]
+    },
+    {
+      "id": "code-4408", "sec": "3.6",
+      "steps": [
+        {"opened": true, "ready": false, "code": 4408, "action": {"do": "reconnect", "delay": 0.5},
+         "prominent": false}
+      ]
+    },
+    {
+      "id": "code-4429", "sec": "3.6",
+      "steps": [
+        {"opened": true, "ready": true, "code": 4429, "action": {"do": "reconnect", "delay": 2}, "prominent": false}
+      ]
+    },
+    {
+      "id": "code-4500", "sec": "3.6",
+      "steps": [
+        {"opened": true, "ready": true, "code": 4500, "action": {"do": "reconnect", "delay": 0.5}, "prominent": false}
+      ]
+    },
+    {
+      "id": "code-other-1001", "sec": "3.6",
+      "steps": [
+        {"opened": true, "ready": true, "code": 1001, "action": {"do": "reconnect", "delay": 0.5}, "prominent": false}
+      ],
+      "note": "a proxy going away"
+    },
+    {
+      "id": "code-other-1011", "sec": "3.6",
+      "steps": [
+        {"opened": true, "ready": true, "code": 1011, "action": {"do": "reconnect", "delay": 0.5}, "prominent": false}
+      ]
+    },
+    {
+      "id": "code-other-4999", "sec": "3.6",
+      "steps": [
+        {"opened": true, "ready": true, "code": 4999, "action": {"do": "reconnect", "delay": 0.5}, "prominent": false}
+      ]
+    },
+    {
+      "id": "backoff-from-load", "sec": "3.7",
+      "steps": [
+        {"opened": false, "ready": false, "code": 1006, "action": {"do": "reconnect", "delay": 0.5},
+         "prominent": false},
+        {"opened": false, "ready": false, "code": 1006, "action": {"do": "reconnect", "delay": 1}, "prominent": false},
+        {"opened": false, "ready": false, "code": 1006, "action": {"do": "reconnect", "delay": 2}, "prominent": true},
+        {"opened": false, "ready": false, "code": 1006, "action": {"do": "reconnect", "delay": 5}, "prominent": true},
+        {"opened": false, "ready": false, "code": 1006, "action": {"do": "reconnect", "delay": 10}, "prominent": true},
+        {"opened": false, "ready": false, "code": 1006, "action": {"do": "reconnect", "delay": 10}, "prominent": true}
+      ],
+      "note": "the page's first connection counts; after 3 that never opened, classic is offered prominently"
+    },
+    {
+      "id": "backoff-reset-by-ready", "sec": "3.7",
+      "steps": [
+        {"opened": true, "ready": true, "code": 1006, "action": {"do": "reconnect", "delay": 0.5}, "prominent": false},
+        {"opened": false, "ready": false, "code": 1006, "action": {"do": "reconnect", "delay": 1}, "prominent": false},
+        {"opened": false, "ready": false, "code": 1006, "action": {"do": "reconnect", "delay": 2}, "prominent": false},
+        {"opened": true, "ready": true, "code": 1006, "action": {"do": "reconnect", "delay": 0.5}, "prominent": false}
+      ]
+    },
+    {
+      "id": "open-without-ready-keeps-backoff", "sec": "3.7",
+      "steps": [
+        {"opened": true, "ready": true, "code": 1006, "action": {"do": "reconnect", "delay": 0.5}, "prominent": false},
+        {"opened": true, "ready": false, "code": 4500, "action": {"do": "reconnect", "delay": 1}, "prominent": false},
+        {"opened": true, "ready": false, "code": 1006, "action": {"do": "reconnect", "delay": 2}, "prominent": false}
+      ]
+    },
+    {
+      "id": "open-ends-never-open-run", "sec": "3.7",
+      "steps": [
+        {"opened": false, "ready": false, "code": 1006, "action": {"do": "reconnect", "delay": 0.5},
+         "prominent": false},
+        {"opened": false, "ready": false, "code": 1006, "action": {"do": "reconnect", "delay": 1}, "prominent": false},
+        {"opened": true, "ready": false, "code": 1006, "action": {"do": "reconnect", "delay": 2}, "prominent": false},
+        {"opened": false, "ready": false, "code": 1006, "action": {"do": "reconnect", "delay": 5}, "prominent": false}
+      ]
+    },
+    {
+      "id": "prominent-ends-on-ready", "sec": "3.7",
+      "steps": [
+        {"opened": false, "ready": false, "code": 1006, "action": {"do": "reconnect", "delay": 0.5},
+         "prominent": false},
+        {"opened": false, "ready": false, "code": 1006, "action": {"do": "reconnect", "delay": 1}, "prominent": false},
+        {"opened": false, "ready": false, "code": 1006, "action": {"do": "reconnect", "delay": 2}, "prominent": true},
+        {"opened": true, "ready": true, "code": 1006, "action": {"do": "reconnect", "delay": 0.5}, "prominent": false}
+      ]
+    },
+    {
+      "id": "4400-twice", "sec": "3.6",
+      "steps": [
+        {"opened": true, "ready": true, "code": 4400, "action": {"do": "reconnect", "delay": 1}, "prominent": false},
+        {"opened": true, "ready": true, "code": 4400, "action": {"do": "stop"}, "prominent": true}
+      ],
+      "note": "the second stops and offers the classic viewer"
+    },
+    {
+      "id": "4400-twice-apart", "sec": "3.6",
+      "steps": [
+        {"opened": true, "ready": true, "code": 4400, "action": {"do": "reconnect", "delay": 1}, "prominent": false},
+        {"opened": true, "ready": true, "code": 1006, "action": {"do": "reconnect", "delay": 0.5}, "prominent": false},
+        {"opened": true, "ready": true, "code": 4400, "action": {"do": "stop"}, "prominent": true}
+      ],
+      "note": "twice in the page's life, not necessarily in a row"
+    },
+    {
+      "id": "1009-then-4400", "sec": "3.6",
+      "steps": [
+        {"opened": true, "ready": true, "code": 1009, "action": {"do": "reconnect", "delay": 1}, "prominent": false},
+        {"opened": true, "ready": true, "code": 4400, "action": {"do": "stop"}, "prominent": true}
+      ]
+    },
+    {
+      "id": "4500-twice", "sec": "3.6",
+      "steps": [
+        {"opened": true, "ready": true, "code": 4500, "action": {"do": "reconnect", "delay": 0.5}, "prominent": false},
+        {"opened": true, "ready": true, "code": 4500, "action": {"do": "reconnect", "delay": 0.5}, "prominent": true},
+        {"opened": true, "ready": true, "code": 1006, "action": {"do": "reconnect", "delay": 0.5}, "prominent": false}
+      ]
+    },
+    {
+      "id": "4500-not-in-a-row", "sec": "3.6",
+      "steps": [
+        {"opened": true, "ready": true, "code": 4500, "action": {"do": "reconnect", "delay": 0.5}, "prominent": false},
+        {"opened": true, "ready": true, "code": 1006, "action": {"do": "reconnect", "delay": 0.5}, "prominent": false},
+        {"opened": true, "ready": true, "code": 4500, "action": {"do": "reconnect", "delay": 0.5}, "prominent": false}
+      ]
+    },
+    {
+      "id": "4500-before-ready", "sec": "3.6",
+      "steps": [
+        {"opened": true, "ready": false, "code": 4500, "action": {"do": "reconnect", "delay": 0.5},
+         "prominent": false},
+        {"opened": true, "ready": false, "code": 4500, "action": {"do": "reconnect", "delay": 1}, "prominent": true}
+      ]
+    },
+    {
+      "id": "4429-counts-as-an-attempt", "sec": "3.7",
+      "steps": [
+        {"opened": true, "ready": true, "code": 4429, "action": {"do": "reconnect", "delay": 2}, "prominent": false},
+        {"opened": false, "ready": false, "code": 1006, "action": {"do": "reconnect", "delay": 1}, "prominent": false},
+        {"opened": false, "ready": false, "code": 1006, "action": {"do": "reconnect", "delay": 2}, "prominent": false}
+      ],
+      "note": "its fixed delay replaces the first; the next attempt is the second"
+    },
+    {
+      "id": "deadline-reconnect", "sec": "3.7",
+      "steps": [
+        {"opened": true, "ready": true, "code": 1006, "deadline_passed": true, "action": {"do": "gone"},
+         "prominent": false}
+      ]
+    },
+    {
+      "id": "deadline-never-opened", "sec": "3.7",
+      "steps": [
+        {"opened": false, "ready": false, "code": 1006, "deadline_passed": true, "action": {"do": "gone"},
+         "prominent": false}
+      ]
+    },
+    {
+      "id": "deadline-4429", "sec": "3.7",
+      "steps": [
+        {"opened": true, "ready": true, "code": 4429, "deadline_passed": true, "action": {"do": "gone"},
+         "prominent": false}
+      ]
+    },
+    {
+      "id": "deadline-4400", "sec": "3.7",
+      "steps": [
+        {"opened": true, "ready": true, "code": 4400, "deadline_passed": true, "action": {"do": "gone"},
+         "prominent": false}
+      ]
+    },
+    {
+      "id": "deadline-4000", "sec": "3.7",
+      "steps": [
+        {"opened": true, "ready": true, "code": 4000, "deadline_passed": true,
+         "action": {"do": "stop", "show": "ended"}, "prominent": false}
+      ],
+      "note": "a stop is shown as such"
+    },
+    {
+      "id": "deadline-4005", "sec": "3.7",
+      "steps": [
+        {"opened": true, "ready": true, "code": 4005, "deadline_passed": true, "action": {"do": "classic"},
+         "prominent": false}
+      ],
+      "note": "the classic viewer goes to /gone.html itself"
+    }
+  ]
+}

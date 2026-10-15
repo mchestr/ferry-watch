@@ -9,7 +9,7 @@ the same pull request. `tests/test_cast_pack.py` checks that the files match the
 ## Conventions
 
 - Each file is one JSON object: `"protocol": "fw.cast1"`, one or more arrays of cases (named below), and in some
-  files shared data (`context`, `rate_table`, `drop_limit`).
+  files shared data (`context`, `rate_table`, `drop_limit`, `delays`).
 - Every case is an object with:
   - `id`: unique within its file. Ids starting `round1-` are round 1's 15 valid and 22 invalid messages (its
     `proto/fuzz_protocol.py`, DESIGN §14), brought up to date where round 2 changed the protocol (the `note` says
@@ -20,7 +20,7 @@ the same pull request. `tests/test_cast_pack.py` checks that the files match the
     file's table below names a check for that side.
 - Messages appear as the JSON values they are on the wire (objects with `t`).
 - Units are PROTOCOL's: frame px, the viewer's CSS px, milliseconds for times inside a case (`at`, `end`, `ms`,
-  `wait_ms`), seconds where PROTOCOL counts seconds.
+  `wait_ms`), seconds where PROTOCOL counts seconds (`delays`, `delay`).
 - Numbers compare with an absolute tolerance of 1e-6. Integer fields hold JSON integers. Header floats are exact in
   f32.
 - Strings are UTF-8, but control, format, combining and non-ASCII space characters are written as `\uXXXX` so that
@@ -44,8 +44,13 @@ the same pull request. `tests/test_cast_pack.py` checks that the files match the
 | | `autocomplete` | §5.3.1, §8.5 | `input` → `ac` | `ac` → the proxy's `autocomplete` |
 | `headers.json` | `cases`, `malformed` | §4 | pack | parse; refuse the malformed |
 | `rects.json` | `cases` | §1, §5.3.1-5.3.3, §11.3 | `frame_rect()` | — |
+| `hits.json` | `cases` | §8.3 | — | `fieldAt()`, `overlayFor()` |
+| `usable.json` | `numbering` | §1, §8.3 | message numbers (`n`) | message numbers |
+| | `cases` | §8.3 | — | `mapUsable()` |
 | `text.json` | `cases` | §8.7, §11.4 | every output passes the value rules | `normalise()` and splitting |
+| `gestures.json` | `cases` | §6.6, §8.1-8.4 | — | the gesture state machine, on a fake clock |
 | `mapping.json` | `inputs`, `keys`, `date_keys`, `choose_keys` | §1, §3.5, §6.4-6.12, §11.2-11.3 | `InputMapper`, with a fake CDP | — |
+| `close_codes.json` | `cases` | §3.6, §3.7 | — | `nextAction()` |
 
 ## messages.json
 
@@ -160,6 +165,35 @@ bytes. `malformed` cases hold a whole binary message in `hex` that the viewer mu
 
 The values are exact: no rounding.
 
+## hits.json
+
+| Field | Type | Meaning |
+|---|---|---|
+| `map` | message | a `fields` message |
+| `oks` | array | the `fields_ok` messages received after it |
+| `image` | object | the drawn image's header fields: `page`, `seq`, `w`, `h`, `scale`, `sx`, `sy` |
+| `last_input` | integer | the number of the viewer's latest input message (§8.3) |
+| `shifted` | boolean | a prediction shift or a local zoom is drawn |
+| `taps` | array | `{x, y, field, note?}`: a point in frame px of the image, and the id of the field it hits or null |
+| `overlays` | array | `{field, overlay}` for every field of the map: the native overlay shown for it (`"select"`, `"date"` or `"time"`) or null |
+
+The map's usability (§8.3) is part of the answer: an unusable map hits nothing and shows no overlay.
+
+## usable.json
+
+`numbering`:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `sent` | array of strings | the `t` of each message the viewer sends, from `hello` |
+| `numbers` | array | each one's number (§1); null for `ack` |
+| `last_input` | integer | the number of the latest of `tap`, `wheel`, `pinch`, `key`, `text`, `compose`, `choose`, `date`, `dialog`, `page` and `resize`; 0 if none |
+
+The viewer numbers what it sends this way; the agent's `n`, once it has carried out all of them, is the last
+number.
+
+`cases`: `map`, `oks`, `image`, `last_input` and `shifted` as in hits.json, and `usable`, a boolean.
+
 ## text.json
 
 | Field | Type | Meaning |
@@ -172,6 +206,40 @@ The values are exact: no rounding.
 
 The agent checks that every message passes its value rules (§6), and so does a `dialog` answer
 `{"t": "dialog", "id": 1, "ok": true, "s": s}`.
+
+## gestures.json
+
+| Field | Type | Meaning |
+|---|---|---|
+| `viewport` | `[w, h]` | the viewer's `innerWidth`, `innerHeight` |
+| `image` | object | the image drawn at the start: `page`, `seq`, `w`, `h`, `scale`, `sx`, `sy` |
+| `events` | array | in time order, each with `at` (ms) and `type`, below |
+| `end` | integer | the time the clock runs to after the last event |
+| `expect` | object | below |
+
+Events:
+- `touchstart`, `touchmove`, `touchend`: `touches`, the touches down after the event as `[x, y]` in the viewer's
+  CSS px, each finger at the same index throughout (a `touchend` lists the fingers still down);
+- `pointermove`, `pointerdown`, `pointerup`: `x`, `y`; a mouse (`pointerType` `"mouse"`), primary button;
+- `wheel`: `x`, `y`, `dx`, `dy`, `mode` (`deltaMode`: 0 pixels, 1 lines);
+- `image`: `image`, a new image drawn (fields as `image` above; acks play no part here).
+
+Before each event the harness moves a fake clock to its `at`, running the timers and animation frames due on the way
+(frames at most 16 ms apart); after the last, it moves the clock to `end`.
+
+`expect` has the keys `taps`, `pinches`, `wheels` and `moves`; no message of a type without its key may be sent
+(`{}`: nothing at all).
+- `taps`, `pinches`: the exact messages, in order (a missing `ms` counts as 0).
+- `wheels`: every wheel has this `page`, `x` and `y` (the gesture's start point, frame px); consecutive wheels are
+  at least 33 ms apart; `dx` is the exact sum of their `dx`; `dy` the exact sum of their `dy`, except after a flick,
+  where `dy_more_than` replaces it (the sum has its sign and a larger magnitude: the coast adds to the finger's
+  travel) and `coast_after` says that at least one wheel is sent after that time; `none_after` (optional): no wheel
+  is sent after that time.
+- `moves`: every move has this `page`; consecutive moves are at least 33 ms apart; the last one sent is at `last`,
+  `[x, y]`.
+
+The momentum constants are tuned on devices (DESIGN §7.4): the flick cases hold for any decay that ends a coast
+within 3.5 s.
 
 ## mapping.json
 
@@ -199,6 +267,24 @@ tears down (§3.5); `events`, the params of each `Input.dispatchKeyEvent` in ord
 
 `choose_keys`: `opts` (`[label, disabled]` pairs) and `i` → `keys`, the named keys pressed once the select has focus
 (§6.11 step 5), or `error` (`"failed"`, step 1) and no key.
+
+## close_codes.json
+
+`delays` is §3.7's backoff, `[0.5, 1, 2, 5, 10]` seconds, the last repeating. Each case is one page's successive
+connections:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `steps` | array | `{opened, ready, code, deadline_passed?, action, prominent}` for each connection, in order |
+
+- `opened`, `ready`: whether the connection reached `open` and `ready`; `code`: how it closed (1006 for an upgrade
+  that failed);
+- `deadline_passed` (default false): the device record's `hard_deadline` had passed when it closed;
+- `action`: `{"do": "reconnect", "delay": seconds}`; `{"do": "stop", "show"?}` with `show` naming §3.6's screen
+  (`"ended"`: "This checkout has ended"; `"elsewhere"`: "Opened elsewhere on this device" with "Show it here";
+  `"revoked"`: checkout access withdrawn; absent where §3.6 names none); `{"do": "classic"}`: switch to the classic
+  viewer now (§8.10); `{"do": "gone"}`: go to `/gone.html`;
+- `prominent`: whether the classic viewer option is shown prominently after this close.
 
 ## Not in the pack
 
