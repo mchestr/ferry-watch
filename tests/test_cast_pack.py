@@ -188,7 +188,7 @@ SCHEMAS: dict[str, dict[str, dict[str, Check]]] = {
             "msg": message,
             "calls": list_of(call),
             "wait_ms?": integer,
-            "error?": one_of("stale"),
+            "error?": one_of("stale", "invalid"),
         },
         "keys": {"msgs": messages, "teardown?": boolean, "events": list_of(obj)},
         "date_keys": {"k": one_of("date", "time"), "v": text, "chars": text},

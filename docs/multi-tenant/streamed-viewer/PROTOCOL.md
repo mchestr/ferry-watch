@@ -574,9 +574,16 @@ Text frames only, each one JSON object of at most **4096 bytes** UTF-8. The agen
 
 Coordinates `x`, `y` (and `x0`, `y0`, `x1`, `y1`) are frame px in `[0, w]`×`[0, h]` of the image the message
 refers to (`w`, `h` from its header: the image named by `seq` for `tap` and `pinch`, otherwise the latest binary
-message the agent sent for that page); outside: `error invalid`. A `tap` or `pinch` whose `seq` the agent no
-longer remembers (§4.2) passes this step and is answered `error stale` when carried out (§6.4 step 1); a `move` or
-`wheel` for a page the agent has sent no image for is ignored.
+message the agent sent for that page); outside: `error invalid`. A `tap` or `pinch` whose `seq` is newer than any
+binary message the agent has sent is `error invalid` too: a viewer can only aim at an image it was sent. One whose
+`seq` the agent no longer remembers (§4.2) passes this step and is answered `error stale` when carried out (§6.4
+step 1); a `move` or `wheel` for a page the agent has sent no image for passes it too.
+
+When the agent carries a message out, it checks the points again, before anything reaches the page, against the
+image it acts on then (the one `seq` names; for `move` and `wheel`, the page's latest, which may have changed since
+the message arrived): a `tap` or `pinch` with a point outside it is answered `error invalid`, and a `move` or
+`wheel` is ignored, as one for a page with no image is. A call the agent's CDP allowlist refuses (DESIGN §5.2,
+C34) sends nothing and is answered `error invalid`; it never ends the session.
 
 ### 6.1 `hello`
 

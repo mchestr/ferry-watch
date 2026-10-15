@@ -75,10 +75,12 @@ class ImageRing:
     def __init__(self) -> None:
         self._kept: deque[ImageInfo] = deque(maxlen=KEPT_IMAGES)
         self._latest: dict[int, ImageInfo] = {}
+        self.newest = 0  # the newest one's seq (0 before the first)
 
     def add(self, image: ImageInfo) -> None:
         self._kept.append(image)
         self._latest[image.page] = image
+        self.newest = max(self.newest, image.seq)
 
     def get(self, seq: int) -> ImageInfo | None:
         return next((i for i in self._kept if i.seq == seq), None)
@@ -94,6 +96,11 @@ class _Key:
     vk: int
     text: str | None = None  # a keyDown's text: the character, or "\r" for Enter
     unmodified: str | None = None
+
+
+def _inside(image: ImageInfo, *points: tuple[float, float]) -> bool:
+    """Every point in [0, w] x [0, h] of the image (PROTOCOL §6)."""
+    return all(0 <= x <= image.w and 0 <= y <= image.h for x, y in points)
 
 
 def _named(name: str) -> _Key:
@@ -170,9 +177,9 @@ class InputMapper:
     # ---- pointer
 
     async def tap(self, message: Tap) -> ErrorCode | None:
-        scale = await self._aimed(message.page, message.seq)
-        if scale is None:
-            return "stale"
+        scale = await self._aimed(message.page, message.seq, (message.x, message.y))
+        if isinstance(scale, str):
+            return scale
         x, y = message.x / scale, message.y / scale
         cdp = self._session()
         await cdp.send("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": x, "y": y})
@@ -184,22 +191,25 @@ class InputMapper:
         return None
 
     async def move(self, message: Move) -> None:
+        """A point outside the page's latest image is dropped, as one for a page with no image: when the move arrived
+        the image may have been another, or none."""
         image = self._images.latest(message.page)
-        if message.page != self._front or image is None:
+        if message.page != self._front or image is None or not _inside(image, (message.x, message.y)):
             return
         x, y = message.x / image.scale, message.y / image.scale
         await self._session().send("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": x, "y": y})
 
     async def wheel(self, message: Wheel) -> None:
+        """As `move`."""
         image = self._images.latest(message.page)
-        if message.page != self._front or image is None:
+        if message.page != self._front or image is None or not _inside(image, (message.x, message.y)):
             return
         await self._wheel(message.x / image.scale, message.y / image.scale, message.dx, message.dy)
 
     async def pinch(self, message: Pinch) -> ErrorCode | None:
-        scale = await self._aimed(message.page, message.seq)
-        if scale is None:
-            return "stale"
+        scale = await self._aimed(message.page, message.seq, (message.x0, message.y0), (message.x1, message.y1))
+        if isinstance(scale, str):
+            return scale
         await self._session().send(
             "Input.synthesizePinchGesture",
             {
@@ -223,14 +233,19 @@ class InputMapper:
         await self._button(cdp, "mousePressed", x, y)
         await self._button(cdp, "mouseReleased", x, y)
 
-    async def _aimed(self, page: int, seq: int) -> float | None:
-        """The live scale, if image `seq` shows the front page as it is now (§6.4 steps 1-2); else None."""
+    async def _aimed(self, page: int, seq: int, *points: tuple[float, float]) -> float | ErrorCode:
+        """The live scale, if image `seq` shows the front page as it is now (§6.4 steps 1-2) and every point is in
+        it; else what to answer: `stale`, or `invalid` for a point outside the image. The points were checked when
+        the message arrived only if the image was known then, so they are checked again here, before anything is
+        sent: nothing reaches the page outside what the viewer was shown."""
         image = self._images.get(seq)
         if self._cdp is None or page != self._front or image is None or image.page != self._front:
-            return None
+            return "stale"
+        if not _inside(image, *points):
+            return "invalid"
         live = await self.live()
         moved = abs(image.sx - live.page_x) > MOVED_CSS_PX or abs(image.sy - live.page_y) > MOVED_CSS_PX
-        return None if moved or abs(image.scale - live.scale) > MOVED_SCALE else live.scale
+        return "stale" if moved or abs(image.scale - live.scale) > MOVED_SCALE else live.scale
 
     async def _wheel(self, x: float, y: float, dx: float, dy: float) -> None:
         await self._session().send(

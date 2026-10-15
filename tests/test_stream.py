@@ -480,6 +480,44 @@ async def test_no_input_is_carried_out_once_the_verdict_says_no(rig: Rig) -> Non
     assert input_calls(rig.page) == []
 
 
+async def test_a_tap_at_an_image_not_sent_yet_is_refused_and_never_carried_out(rig: Rig) -> None:
+    """Found in review: a point was checked only against an image known when the message arrived, so a tap naming
+    the next image, queued behind slow taps, went unchecked once that image existed; with a point past the
+    allowlist's bound it ended the session 4500, and otherwise clicked outside anything the viewer was shown."""
+    viewer = await rig.opened()
+    seq = viewer.latest.seq
+    rig.page.input_hold = asyncio.Event()  # slow work ahead of it: the tap waits in the queue
+    await viewer.send({"t": "tap", "page": 1, "seq": seq, "x": 5, "y": 5, "ms": 0})
+    await eventually(lambda: input_calls(rig.page))
+    for far in ({"x": 9e9, "y": 10}, {"x": 890, "y": 964}):
+        await viewer.send({"t": "tap", "page": 1, "seq": seq + 1, **far, "ms": 0})
+    assert await viewer.message("error") == {"t": "error", "code": "invalid", "ref": "tap"}
+    rig.frame(1)  # image seq + 1 exists now
+    await viewer.image(seq)
+    rig.page.input_hold.set()
+    number = await viewer.send({"t": "wheel", "page": 1, "x": 10, "y": 10, "dx": 0, "dy": 1})
+    await eventually(lambda: rig.sessions[0]._numbers.n >= number)
+    points = {(p["x"], p["y"]) for _, p in input_calls(rig.page)}
+    assert points == {(5, 5), (10, 10)}
+    assert not viewer.ws.closed
+
+
+async def test_a_call_the_allowlist_refuses_is_answered_invalid_and_the_session_goes_on(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    viewer = await rig.opened()
+
+    async def refused(_: Any) -> None:
+        raise cast_cdp.NotAllowed("Input.dispatchMouseEvent isn't allowed with these parameters")
+
+    monkeypatch.setattr(rig.sessions[0]._input, "tap", refused)
+    await viewer.send({"t": "tap", "page": 1, "seq": viewer.latest.seq, "x": 5, "y": 5})
+    assert await viewer.message("error") == {"t": "error", "code": "invalid", "ref": "tap"}
+    number = await viewer.send({"t": "wheel", "page": 1, "x": 10, "y": 10, "dx": 0, "dy": 1})
+    await eventually(lambda: rig.sessions[0]._numbers.n >= number)
+    assert not viewer.ws.closed
+
+
 async def test_a_tap_at_an_image_the_page_moved_away_from_sends_nothing(rig: Rig) -> None:
     viewer = await rig.opened()
     rig.page.page_y = 120.0  # it scrolled since image 1

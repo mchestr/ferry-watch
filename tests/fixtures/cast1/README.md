@@ -254,7 +254,7 @@ within 3.5 s.
 | `msg` | message | the message carried out |
 | `calls` | array | the `Input` calls made, in order: `{method, params}` |
 | `wait_ms` | integer | `tap` only: the pause between `mousePressed` and `mouseReleased` |
-| `error` | string | the `error` code answered instead (`"stale"`); `calls` is then empty |
+| `error` | string | the `error` code answered instead (`"stale"`, or `"invalid"` for a point outside the image it names, checked again when carried out); `calls` is then empty. A `move` or `wheel` answers nothing: dropped, its `calls` are empty |
 
 Every listed param must be there with this value; an implementation may add others, except that a missing
 `modifiers` counts as 0 and a missing `autoRepeat` as false, and a present one must match.

@@ -247,6 +247,9 @@ class Known(Protocol):
     def image(self, seq: int) -> tuple[int, int] | None:
         """`w`, `h` of a binary message the agent still remembers (the last 16), or None."""
 
+    def newest(self) -> int:
+        """The `seq` of the newest binary message sent (0 before the first)."""
+
     def latest(self, page: int) -> tuple[int, int] | None:
         """`w`, `h` of the latest binary message sent for this page, or None if none was."""
 
@@ -288,11 +291,17 @@ def _size_ok(w: int, h: int, dpr: float) -> bool:
 
 
 def _on(size: tuple[int, int] | None, *points: tuple[float, float]) -> bool:
-    """Points in [0, w] x [0, h] of an image; any point when the image isn't known (§6)."""
+    """Points in [0, w] x [0, h] of an image; any point when the image isn't known (§6): the agent checks them
+    again when it carries the message out, against the image it uses then (cast_input)."""
     if size is None:
         return True
     w, h = size
     return all(0 <= x <= w and 0 <= y <= h for x, y in points)
+
+
+def _sent(seq: int, known: Known | None) -> bool:
+    """A `seq` the agent has sent: a viewer can only aim at an image it was sent (§6)."""
+    return known is None or seq <= known.newest()
 
 
 def _hello(m: Hello, _known: Known | None) -> str | None:
@@ -314,6 +323,8 @@ def _tap(m: Tap, known: Known | None) -> str | None:
         return "page or seq"
     if not _within(m.ms, 0, MAX_TAP_MS):
         return "ms"
+    if not _sent(m.seq, known):
+        return "seq"
     size = known.image(m.seq) if known is not None else None
     return None if _on(size, (m.x, m.y)) else "point"
 
@@ -343,6 +354,8 @@ def _pinch(m: Pinch, known: Known | None) -> str | None:
         return "page or seq"
     if not _within(m.scale, 0.25, 4):
         return "scale"
+    if not _sent(m.seq, known):
+        return "seq"
     size = known.image(m.seq) if known is not None else None
     return None if _on(size, (m.x0, m.y0), (m.x1, m.y1)) else "point"
 

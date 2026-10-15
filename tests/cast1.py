@@ -32,6 +32,7 @@ class PackKnown:
     sizes: dict[int, tuple[int, int]] = field(default_factory=dict)
     latest_of: dict[int, tuple[int, int]] = field(default_factory=dict)
     kinds: dict[tuple[int, int], str] = field(default_factory=dict)
+    newest_seq: int = 0
 
     @classmethod
     def from_context(cls, context: Mapping[str, Any]) -> PackKnown:
@@ -39,12 +40,16 @@ class PackKnown:
         for image in context["images"]:  # oldest first: the last one of a page is its latest
             known.sizes[image["seq"]] = (image["w"], image["h"])
             known.latest_of[image["page"]] = (image["w"], image["h"])
+            known.newest_seq = max(known.newest_seq, image["seq"])
         for f in context["fields"]:
             known.kinds[(context["rev"], f["id"])] = f["k"]
         return known
 
     def image(self, seq: int) -> tuple[int, int] | None:
         return self.sizes.get(seq)
+
+    def newest(self) -> int:
+        return self.newest_seq
 
     def latest(self, page: int) -> tuple[int, int] | None:
         return self.latest_of.get(page)

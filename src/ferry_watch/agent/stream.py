@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Any, Final, Literal, Protocol, cast
 
 from aiohttp import WSMsgType, web
 
-from .cast_cdp import CALL_SECONDS, Cdp, CdpError, Worlds, open_session
+from .cast_cdp import CALL_SECONDS, Cdp, CdpError, NotAllowed, Worlds, open_session
 from .cast_fields import FieldMapper, FocusReporter, Front
 from .cast_frames import FramePump
 from .cast_input import MOVED_SCALE, PINCH_SPEED, ImageRing, InputMapper
@@ -365,6 +365,9 @@ class _Known:
     def image(self, seq: int) -> tuple[int, int] | None:
         image = self._images.get(seq)
         return (image.w, image.h) if image is not None else None
+
+    def newest(self) -> int:
+        return self._images.newest
 
     def latest(self, page: int) -> tuple[int, int] | None:
         image = self._images.latest(page)
@@ -776,6 +779,9 @@ class CastSession:
             except CdpError as e:
                 log.debug("A %s wasn't carried out: %s", message_type(message), e)
                 self._error("failed", message_type(message))
+            except NotAllowed:  # nothing was sent: an input the value rules should have refused, not a broken session
+                log.warning("The CDP allowlist refused a %s", message_type(message))  # never the call's arguments
+                self._error("invalid", message_type(message))
             finally:
                 self._numbers.done(*waiting.numbers)
             if isinstance(message, _MAP_AFTER):
