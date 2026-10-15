@@ -302,6 +302,7 @@ const RECEIVED = {
     page: take.integer,
     kind: take.string,
     origin: take.string,
+    "main?": take.boolean, // absent: a frame inside the page (§5.5), never the page itself
     msg: take.string,
     def: take.string,
   }),

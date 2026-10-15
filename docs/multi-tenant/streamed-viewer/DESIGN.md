@@ -427,8 +427,16 @@ the pod "is this a field?" during `touchend`, so it must already know.
 **Dialogs** (security review 3).
 - The dialog message carries the opening frame's origin (`Page.javascriptDialogOpening.url` on the page's session
   with the Page domain enabled; Playwright's `Dialog` has only the page). The iframe's alert carried
-  `http://pay.test:8002/card.html` (`round2/s2b`).
-- The sheet's heading is "`<origin>` says:", or "An embedded page at `<origin>` says:", as Chrome's.
+  `http://pay.test:8002/card.html` (`round2/s2b`). It also says whether that frame is the page's main frame
+  (`frameId` against the page target's id, from `Target.getTargetInfo`).
+- The sheet's heading is "`<origin>` says:", or "An embedded page at `<origin>` says:", as Chrome's. Only the main
+  frame is ever "This page says:"; a frame inside the page whose URL gives no origin is "An embedded page on this
+  page says:". Found in review: the agent took the origin from the frame's URL and the viewer headed any dialog
+  without one "This page says:", so a cross-site frame could make a child at about:srcdoc, blob: or data: and ask
+  for a card's password as the checkout itself. A `blob:` URL now gives the origin that made it; about:srcdoc,
+  about:blank and data: give none (their origin is their maker's, which the URL doesn't say, and a frame's
+  `securityOrigin` in CDP reads `://` for them, measured on Chromium 141), and the agent never guesses one from a
+  parent: a frame inside the page that the agent can't place is shown as one.
 - The sheet is styled as page content, never as Ferry Watch's own controls, and its prompt input follows the
   password rules. A cross-site frame therefore can't pass a "re-enter your Ferry Watch password" prompt off as ours.
 
@@ -534,7 +542,7 @@ The rest is also unchanged:
 | C38 | **Viewer page hardening**: CSP `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src wss://<checkout host>; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; require-trusted-types-for 'script'; trusted-types 'none'`; page-derived strings via `textContent` only; `Referrer-Policy: no-referrer`, `nosniff`, `no-store` | XSS from page-derived strings; exfiltration | vnc-edge |
 | C39 | **Page data bounded in the page**: every isolated-world script caps counts, string lengths, time (30 ms) and serialized size before returning; `Runtime.evaluate` with `timeout: 100`; at most 8 frames per map; worlds and sessions of detached frames dropped; titles from `Target.getTargetInfo` | A page (or any third party in it) pushing hundreds of MB into the agent and OOM-killing the pod mid-hold (R8: an OOM skips the drain) | `cast_scripts.py`, `cast_cdp.py`, `cast_fields.py`, `cast_pages.py` |
 | C40 | **Click safety for `choose`/`date`**: click only a point hit-tested to the element through every ancestor frame; no key until the element has focus | Clicks and Enter reaching a covering "Pay" button the user never touched | `cast_input.py` (PROTOCOL §6.11-6.12) |
-| C41 | **Credential isolation**: the proxy and the prompt input are never `type=password` and never carry credential `autocomplete` tokens; dialogs carry and show their frame's origin; the escape hatch can't be hidden by page content | The user's saved chestr.dev (Authelia) login offered into a pod page; a page impersonating Ferry Watch's UI | agent (token stripping), viewer |
+| C41 | **Credential isolation**: the proxy and the prompt input are never `type=password` and never carry credential `autocomplete` tokens; dialogs carry and show their frame's origin, and only the page's main frame is headed as the page (a frame inside it, or one the agent can't place, never reads "This page says:"); the escape hatch can't be hidden by page content | The user's saved chestr.dev (Authelia) login offered into a pod page; a page impersonating Ferry Watch's UI | agent (token stripping), viewer |
 | C42 | **Pod-side kill switch**: `cast_allowed` in the operator's `configure` (default false); the gate refuses `fw.cast1` without it and closes a live stream with 4005 when it turns false | A bug in the stream surface staying reachable on running pods for up to 26 h after the switch is flipped or the release rolled back | gate, `watch.py`, ferry-control |
 
 **C34's allowlist.** The session's CDP wrapper refuses any other method or parameter shape:
@@ -709,7 +717,7 @@ class CloseCode(IntEnum):  # in cast_protocol.py
    newest.
 5. **Dialogs.** `opened = dialogs.attach(session)`: the gate's admission already started keeping; `opened` (with this
    session's ids, oldest first) is announced after `clock`, and later ones arrive as `dialog_opened`/`dialog_closed`
-   callbacks. Each `dialog` message is `cast_protocol.dialog_message(id, page id, kind, url, message, default)`.
+   callbacks. Each `dialog` message is `cast_protocol.dialog_message(id, page id, kind, url, main, message, default)`.
 6. **Front page.**
    - `bring_to_front()`.
    - `DOM.enable` on its session.

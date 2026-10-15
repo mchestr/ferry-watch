@@ -1198,31 +1198,35 @@
      "msg": {"t": "focus", "page": 1, "seq": 343, "n": 60, "f": null, "popup": false}, "outcome": "accept"},
     {
       "id": "out-dialog-alert", "sec": "5.5",
-      "msg": {"t": "dialog", "id": 3, "page": 1, "kind": "alert", "origin": "https://pay.example",
+      "msg": {"t": "dialog", "id": 3, "page": 1, "kind": "alert", "origin": "https://pay.example", "main": false,
        "msg": "Leave checkout?\nYou'll lose it.", "def": ""},
       "outcome": "accept"
     },
     {
       "id": "out-dialog-confirm", "sec": "5.5",
-      "msg": {"t": "dialog", "id": 4, "page": 1, "kind": "confirm", "origin": "https://pay.example",
+      "msg": {"t": "dialog", "id": 4, "page": 1, "kind": "confirm", "origin": "https://pay.example", "main": false,
        "msg": "Leave checkout?\nYou'll lose it.", "def": ""},
       "outcome": "accept"
     },
     {
       "id": "out-dialog-prompt", "sec": "5.5",
-      "msg": {"t": "dialog", "id": 5, "page": 1, "kind": "prompt", "origin": "https://pay.example",
+      "msg": {"t": "dialog", "id": 5, "page": 1, "kind": "prompt", "origin": "https://pay.example", "main": false,
        "msg": "Leave checkout?\nYou'll lose it.", "def": "FERRY10"},
       "outcome": "accept"
     },
     {
       "id": "out-dialog-beforeunload", "sec": "5.5",
-      "msg": {"t": "dialog", "id": 6, "page": 1, "kind": "beforeunload", "origin": "https://pay.example",
+      "msg": {"t": "dialog", "id": 6, "page": 1, "kind": "beforeunload", "origin": "https://pay.example", "main": false,
        "msg": "Leave checkout?\nYou'll lose it.", "def": ""},
       "outcome": "accept"
     },
     {"id": "out-dialog-no-origin", "sec": "5.5",
-     "msg": {"t": "dialog", "id": 9, "page": 2, "kind": "alert", "origin": "", "msg": "", "def": ""},
-     "outcome": "accept"},
+     "msg": {"t": "dialog", "id": 9, "page": 2, "kind": "alert", "origin": "", "main": true, "msg": "", "def": ""},
+     "outcome": "accept", "note": "the page's own main frame, at a URL with no origin (an about:blank pop-up)"},
+    {"id": "out-dialog-embedded-no-origin", "sec": "5.5",
+     "msg": {"t": "dialog", "id": 10, "page": 1, "kind": "prompt", "origin": "", "main": false,
+       "msg": "Re-enter your card's password", "def": ""},
+     "outcome": "accept", "note": "a frame inside the page whose URL gives no origin (about:srcdoc, data:)"},
     {"id": "out-dialog-closed", "sec": "5.6", "msg": {"t": "dialog_closed", "id": 3}, "outcome": "accept"},
     {"id": "out-error-invalid", "sec": "5.7", "msg": {"t": "error", "code": "invalid", "ref": "text"},
      "outcome": "accept"},

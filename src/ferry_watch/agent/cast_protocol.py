@@ -646,6 +646,7 @@ class Dialog(_Out, tag="dialog", frozen=True, kw_only=True):
     page: Id
     kind: DialogKind
     origin: Origin
+    main: bool  # the page's main frame opened it (§5.5): only then may the viewer say "This page says"
     msg: Message
     default: PromptDefault = msgspec.field(name="def", default="")
 
@@ -745,15 +746,26 @@ def strip_credential_tokens(autocomplete: str) -> str:
     return " ".join(kept)
 
 
+def frame_origin(url: str) -> str:
+    """The origin a frame at this URL has, as far as its URL tells (§5.5): an http(s) URL's, or a `blob:` URL's (the
+    origin that made the blob, which the URL carries). "" for any other: about:srcdoc, about:blank and data: frames
+    take their origin from whoever made them, which the URL doesn't say, so they are never given one."""
+    if url[:5].lower() == "blob:":
+        url = url[5:]
+    return origin_of(url)
+
+
 def dialog_message(
-    number: int, page: int, kind: DialogKind, origin_url: str, message: str, default: str = ""
+    number: int, page: int, kind: DialogKind, frame_url: str, main: bool, message: str, default: str = ""
 ) -> Dialog:
-    """A `dialog` (§5.5) from what the page gave: origin from the opening frame's URL, text capped and cleaned."""
+    """A `dialog` (§5.5) from what the page gave: the opening frame's origin (from its URL) and whether it is the
+    page's main frame; text capped and cleaned."""
     return Dialog(
         id=number,
         page=page,
         kind=kind,
-        origin=origin_of(origin_url),
+        origin=frame_origin(frame_url),
+        main=main,
         msg=clean(message, MAX_DIALOG_MESSAGE, keep_lf=True),
         default=clean(default, MAX_PROMPT_DEFAULT) if kind == "prompt" else "",
     )

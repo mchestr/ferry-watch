@@ -38,9 +38,13 @@ class Emitter:
 
 
 class FakePage(Emitter):
+    ids = 0
+
     def __init__(self, url: str) -> None:
         super().__init__()
         self.url = url
+        FakePage.ids += 1
+        self.target_id = f"{FakePage.ids:032X}"  # the page's target's id, which is its main frame's
 
     def close(self) -> None:
         self.emit("close", self)
@@ -86,6 +90,8 @@ class FakeSession(Emitter):
         self.sent.append(method)
         if method == "Page.enable":
             await self.enable.wait()  # doesn't return while a dialog is open
+        if method == "Target.getTargetInfo":  # the browser answers it, dialog or not
+            return {"targetInfo": {"targetId": self.page.target_id, "type": "page"}}
         return {}
 
     async def detach(self) -> None:
@@ -122,7 +128,9 @@ class FakeContext(Emitter):
         """A dialog opens: Playwright's event and the CDP one, in either order."""
         page = page or self.pages[0]
         dialog = FakeDialog(page, kind, message, "D" if kind == "prompt" else "")
-        opening = {"url": frame or page.url, "message": message, "type": kind, "hasBrowserHandler": True}
+        frame_id = f"{hash(frame):032X}"[-32:] if frame else page.target_id  # a frame inside the page, or its main
+        opening = {"url": frame or page.url, "frameId": frame_id, "message": message, "type": kind,
+                   "hasBrowserHandler": True}  # fmt: skip
         sessions = [s for s in self.sessions if s.page is page and not s.detached]
         if cdp_first:
             for s in sessions:
@@ -188,7 +196,7 @@ async def test_once_kept_a_dialog_waits_for_its_viewer(context: FakeContext, kee
     confirm = await context.dialog("confirm", "Proceed to payment?")
     assert confirm.answers == []
     assert [d.message for d in keeper.open_dialogs] == ["Proceed to payment?"]
-    assert context.sessions[0].sent == ["Page.enable"]
+    assert context.sessions[0].sent == ["Target.getTargetInfo", "Page.enable"]
 
 
 async def test_each_dialog_carries_its_frames_url_whichever_event_comes_first(
@@ -199,10 +207,33 @@ async def test_each_dialog_carries_its_frames_url_whichever_event_comes_first(
     await context.dialog("alert", "From the card", frame="http://pay.test:8002/card.html", cdp_first=True)
     context.closed()  # answered on the screen
     await context.dialog("alert", "From the shop", cdp_first=False)
-    assert [(n, d.message, d.url) for n, d in sink.opened] == [
-        (1, "From the card", "http://pay.test:8002/card.html"),
-        (2, "From the shop", "https://www.bcferries.com/checkout"),
+    assert [(n, d.message, d.url, d.main) for n, d in sink.opened] == [
+        (1, "From the card", "http://pay.test:8002/card.html", False),
+        (2, "From the shop", "https://www.bcferries.com/checkout", True),
     ]
+
+
+async def test_only_the_pages_main_frame_is_the_page(context: FakeContext, keeper: DialogKeeper) -> None:
+    """A dialog is the page's own only when its frame is the page's main frame (the page target's id): a frame
+    inside it, whatever its URL, a dialog whose frame isn't known, or a page whose main frame isn't, never is."""
+    sink = Sink()
+    keeper.attach(sink)
+    shop = context.pages[0].url
+    await context.dialog("alert", "A child at the shop's own URL", frame=shop)
+    await context.dialog("alert", "A srcdoc child", frame="about:srcdoc")
+    popup = context.open_page("https://bank.example/3ds")
+    await opened()
+    await context.dialog("alert", "The bank", page=popup)
+    context.sessions[0].detached = True  # no CDP event will come for the shop's next one
+    await context.dialog("alert", "Unplaced")
+    await asyncio.sleep(ORIGIN_WAIT_SECONDS + 0.1)
+    assert [(d.message, d.main) for _, d in sink.opened] == [
+        ("A child at the shop's own URL", False),
+        ("A srcdoc child", False),
+        ("The bank", True),
+        ("Unplaced", False),
+    ]
+    assert all("Target.getTargetInfo" in s.sent for s in context.sessions)
 
 
 async def test_a_dialog_without_its_frames_url_is_shown_after_a_moment(
@@ -214,7 +245,7 @@ async def test_a_dialog_without_its_frames_url_is_shown_after_a_moment(
     await context.dialog("alert", "Hello")
     assert sink.opened == []
     await asyncio.sleep(ORIGIN_WAIT_SECONDS + 0.1)
-    assert [(n, d.url) for n, d in sink.opened] == [(1, "")]
+    assert [(n, d.url, d.main) for n, d in sink.opened] == [(1, "", False)]  # shown as a frame inside the page
 
 
 async def test_dialogs_stay_open_across_sessions_with_new_ids(context: FakeContext, keeper: DialogKeeper) -> None:

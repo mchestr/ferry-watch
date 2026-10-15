@@ -96,7 +96,8 @@ class FakeDialogs:
 
 
 def dialog(page: FakePage, kind: str = "confirm", message: str = "Leave checkout?") -> KeptDialog:
-    return KeptDialog(cast(Any, page), cast(Any, kind), message, "", cast(Any, None), page.url)
+    """One the page's main frame opened."""
+    return KeptDialog(cast(Any, page), cast(Any, kind), message, "", cast(Any, None), page.url, main=True)
 
 
 @dataclass
@@ -540,6 +541,7 @@ async def test_a_dialog_open_at_the_start_is_shown_before_any_image_and_input_wa
         "page": 1,
         "kind": "confirm",
         "origin": "https://shop.example",
+        "main": True,
         "msg": "Leave checkout?",
         "def": "",
     }

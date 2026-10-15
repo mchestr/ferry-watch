@@ -1081,7 +1081,16 @@ async def test_a_dialog_says_which_page_opened_it_and_takes_the_answer(phone: Vi
     session, _ = await started(phone, checkout)
     main_origin = PAGES["pages"][0]["origin"]
     await session.send(
-        {"t": "dialog", "id": 1, "page": 1, "kind": "alert", "origin": main_origin, "msg": "Hi\nthere", "def": ""}
+        {
+            "t": "dialog",
+            "id": 1,
+            "page": 1,
+            "kind": "alert",
+            "origin": main_origin,
+            "main": True,
+            "msg": "Hi\nthere",
+            "def": "",
+        }
     )
     await session.send(
         {
@@ -1090,6 +1099,7 @@ async def test_a_dialog_says_which_page_opened_it_and_takes_the_answer(phone: Vi
             "page": 1,
             "kind": "confirm",
             "origin": "https://pay.example",
+            "main": False,
             "msg": "Pay?",
             "def": "",
         }
@@ -1114,8 +1124,27 @@ async def test_a_dialog_says_which_page_opened_it_and_takes_the_answer(phone: Vi
     assert answers == [{"t": "dialog", "id": 1, "ok": True}, {"t": "dialog", "id": 2, "ok": False}]
     assert await phone.page.is_hidden("#dialog")
 
+    # A frame inside the page whose URL gives no origin (a third party's srcdoc or data: child) is never the page.
     await session.send(
-        {"t": "dialog", "id": 3, "page": 1, "kind": "prompt", "origin": "", "msg": "Code?", "def": "FERRY10"}
+        {"t": "dialog", "id": 3, "page": 1, "kind": "alert", "origin": "", "main": False, "msg": "Lure", "def": ""}
+    )
+    shown = await dialog_shown(phone)
+    assert (shown["origin"], shown["message"]) == ("An embedded page on this page says:", "Lure")
+    await phone.page.tap("#dialog-ok")
+    await until(lambda: phone.page.is_hidden("#dialog"), bool)
+    await session.wait_for("dialog", count=3)
+
+    await session.send(
+        {
+            "t": "dialog",
+            "id": 4,
+            "page": 1,
+            "kind": "prompt",
+            "origin": "",
+            "main": True,
+            "msg": "Code?",
+            "def": "FERRY10",
+        }
     )
     shown = await dialog_shown(phone)
     assert (shown["origin"], shown["input"]) == ("This page says:", "FERRY10")
@@ -1130,28 +1159,48 @@ async def test_a_dialog_says_which_page_opened_it_and_takes_the_answer(phone: Vi
     )
     await phone.page.fill("#dialog-input", "SAVE\t5")
     await phone.page.tap("#dialog-ok")
-    answers = await session.wait_for("dialog", count=3)
-    assert answers[2] == {"t": "dialog", "id": 3, "ok": True, "s": "SAVE5"}
+    answers = await session.wait_for("dialog", count=4)
+    assert answers[3] == {"t": "dialog", "id": 4, "ok": True, "s": "SAVE5"}
 
     await session.send(
-        {"t": "dialog", "id": 4, "page": 1, "kind": "beforeunload", "origin": main_origin, "msg": "", "def": ""}
+        {
+            "t": "dialog",
+            "id": 5,
+            "page": 1,
+            "kind": "beforeunload",
+            "origin": main_origin,
+            "main": True,
+            "msg": "",
+            "def": "",
+        }  # fmt: skip
     )
     shown = await dialog_shown(phone)
     assert await phone.page.text_content("#dialog-ok") == "Leave"
-    await session.send({"t": "dialog_closed", "id": 4})
+    await session.send({"t": "dialog_closed", "id": 5})
     assert await until(lambda: phone.page.is_hidden("#dialog"), bool)
-    assert len(sent(session, "dialog")) == 3
+    assert len(sent(session, "dialog")) == 4
 
 
 async def test_a_computer_answers_a_dialog_from_the_keyboard(browser: Browser, checkout: Edge) -> None:
     async with device_viewer(browser, "desktop") as desktop:
         session, _ = await started(desktop, checkout)
         await session.send(
-            {"t": "dialog", "id": 1, "page": 1, "kind": "confirm", "origin": "", "msg": "Sure?", "def": ""}
+            {
+                "t": "dialog",
+                "id": 1,
+                "page": 1,
+                "kind": "confirm",
+                "origin": "",
+                "main": True,
+                "msg": "Sure?",
+                "def": "",
+            }  # fmt: skip
         )
         await dialog_shown(desktop)
         await desktop.page.keyboard.press("Escape")
-        await session.send({"t": "dialog", "id": 2, "page": 1, "kind": "prompt", "origin": "", "msg": "", "def": ""})
+        await session.send(
+            {"t": "dialog", "id": 2, "page": 1, "kind": "prompt", "origin": "", "main": True, "msg": "", "def": ""}
+        )
         await dialog_shown(desktop)
         await desktop.page.keyboard.type("OK10")
         await desktop.page.keyboard.press("Enter")
@@ -1280,7 +1329,16 @@ async def test_what_the_checkouts_pages_say_is_shown_as_text(phone: Viewer, chec
     await asyncio.sleep(0.35)
     await phone.page.tap("#options .close")
     await session.send(
-        {"t": "dialog", "id": 1, "page": 1, "kind": "alert", "origin": MARKUP[:100], "msg": MARKUP, "def": ""}
+        {
+            "t": "dialog",
+            "id": 1,
+            "page": 1,
+            "kind": "alert",
+            "origin": MARKUP[:100],
+            "main": False,
+            "msg": MARKUP,
+            "def": "",
+        }  # fmt: skip
     )
     shown = await dialog_shown(phone)
     assert shown["message"] == MARKUP

@@ -483,7 +483,9 @@ class CastSession:
         entry.dialogs += 1
         self._dialog_opened.set()
         # The page sends no frames now and answers almost nothing: images, the map and input wait (entry.blocked).
-        message = dialog_message(number, entry.id, dialog.kind, dialog.url or "", dialog.message, dialog.default)
+        message = dialog_message(
+            number, entry.id, dialog.kind, dialog.url or "", dialog.main, dialog.message, dialog.default
+        )
         if self._ready:
             self._spawn(self._send(message))
         else:

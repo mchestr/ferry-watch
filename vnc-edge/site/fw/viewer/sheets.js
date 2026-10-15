@@ -376,9 +376,14 @@ export class DialogSheet {
   }
 }
 
-/** The dialog's heading, as the browser words it (§8.8). */
+/**
+ * The dialog's heading, as the browser words it (§8.8). Only the page's main frame is the page: a frame inside it
+ * (a third party's, or a child it made at a URL with no origin) is never "This page says:", and is the page's origin
+ * only when it has that origin.
+ */
 export function heading(dialog, pages) {
-  if (!dialog.origin) return "This page says:";
+  if (dialog.main === true) return dialog.origin ? `${dialog.origin} says:` : "This page says:";
+  if (!dialog.origin) return "An embedded page on this page says:";
   const page = pages?.pages.find((each) => each.id === dialog.page);
   return page && page.origin === dialog.origin
     ? `${dialog.origin} says:`

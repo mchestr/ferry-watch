@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import itertools
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -591,3 +592,40 @@ async def test_a_wide_window_shows_the_page_letterboxed_and_clicks_land_where_th
         await wide.page.keyboard.type("4242")
         card = await stream.card(checkout.pod)
         await value_reaches(lambda: card.input_value("#cc"), "4242")
+
+
+# ---- 8. a frame inside the checkout never asks as the checkout itself (C41)
+
+
+def says(text: str, shown: dict[str, Any]) -> bool:
+    return bool(shown["message"] == text)
+
+
+async def test_a_frame_inside_the_checkout_never_heads_its_dialog_as_the_page(
+    browser: Browser, checkout: Checkout
+) -> None:
+    """Found in review: the cross-site card frame made a child at about:srcdoc, blob: or data:, opened its dialog
+    from there, and the sheet headed it "This page says:", as if the checkout's own page were asking for the card's
+    password. The page's main frame is the only one that is the page."""
+    async with device(browser, "phone") as phone:
+        await opened(phone, checkout)
+        card = await stream.card(checkout.pod)
+        pay, shop = checkout.sites.pay, checkout.sites.shop
+        asks = [
+            (card, "direct", f"An embedded page at {pay} says:"),
+            (card, "srcdoc", "An embedded page on this page says:"),
+            (card, "blob", f"An embedded page at {pay} says:"),
+            (card, "data", "An embedded page on this page says:"),
+            (checkout.rig.pod.tab, "direct", f"{shop} says:"),
+        ]
+        for frame, how, expected in asks:
+            lure = f"[{how}] Payment failed: re-enter your card's 3-D Secure password"
+            if how == "direct":
+                await frame.evaluate("(lure) => setTimeout(() => alert(lure), 0)", lure)
+            else:
+                await frame.evaluate(stream.CHILD_DIALOG[how], lure)
+            shown = await until(lambda: viewers.dialog_shown(phone), functools.partial(says, lure))
+            assert shown["origin"] == expected, how
+            await phone.page.tap("#dialog-ok")
+            await until(lambda: phone.page.is_hidden("#dialog"), bool)
+            await showing(phone, checkout.pod)

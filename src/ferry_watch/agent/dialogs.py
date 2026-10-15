@@ -14,10 +14,15 @@ dismissed (a beforeunload accepted, as Playwright does) and new ones are dismiss
 own navigation afterwards (emptying the cart) can't stall behind one.
 
 The keeper has a CDP session with the Page domain enabled on each page of the context. That gives each dialog
-its frame's URL (`Page.javascriptDialogOpening`; Playwright's Dialog only knows the page), and says when one
+its frame's URL and id (`Page.javascriptDialogOpening`; Playwright's Dialog only knows the page), and says when one
 closes without us (`Page.javascriptDialogClosed`: answered on the screen, or the page navigated away), which
 Playwright doesn't notice. Page.enable doesn't return while a dialog is open on that page, so sessions are opened
 in the background, as soon as keeping starts and as pages open, before there's a dialog to wait for.
+
+A dialog is the page's own only when its frame is the page's main frame, whose id is the page target's
+(`Target.getTargetInfo`, answered by the browser even while a dialog blocks the page). A frame inside the page can
+always say what it likes, and a third party's frame can make children whose URLs carry no origin (about:srcdoc,
+blob:, data:): so whatever is unknown is a frame inside the page, never the page itself (C41).
 """
 
 from __future__ import annotations
@@ -42,6 +47,7 @@ CALL_SECONDS: Final = 2.0  # each browser call the keeper makes
 ORIGIN_WAIT_SECONDS: Final = 0.5  # for a dialog's frame URL, before it's shown without one
 STALE_OPENING_SECONDS: Final = 5.0  # a frame URL nothing claimed in this long is dropped
 MAX_URL: Final = 4096
+MAX_FRAME_ID: Final = 64  # Chromium's are 32 hex digits
 MAX_NUMBER: Final = 65535  # dialog ids in one stream session (PROTOCOL §5.5)
 _KINDS: Final = frozenset({"alert", "confirm", "prompt", "beforeunload"})
 
@@ -56,6 +62,7 @@ class KeptDialog:
     default: str  # a prompt's default text, else ""
     handle: Dialog
     url: str | None = None  # of the frame that opened it; "" when unknown, None until known
+    main: bool = False  # that frame is the page's main frame (False when unknown)
     _waiting: asyncio.TimerHandle | None = field(default=None, repr=False)
 
 
@@ -74,6 +81,7 @@ class _Opening:
     kind: str
     message: str
     url: str
+    frame: str  # its frame's id ("" if the event had none)
     at: float
 
 
@@ -88,6 +96,7 @@ class DialogKeeper:
         self._answered: dict[Page, int] = {}  # closings of our own answers, still to come
         self._watched: set[Page] = set()
         self._sessions: dict[Page, CDPSession] = {}
+        self._main_frames: dict[Page, str] = {}  # each page's main frame id (its target's id)
         self._watching: set[asyncio.Task[None]] = set()  # opening a page's session
         self._tasks: set[asyncio.Task[None]] = set()  # anything else, each bounded
         self._sink: DialogSink | None = None
@@ -148,6 +157,7 @@ class DialogKeeper:
             task.cancel()  # a session still opening is detached when it comes (cast_cdp.open_session)
         sessions, self._sessions = list(self._sessions.values()), {}
         self._watched.clear()
+        self._main_frames.clear()
         await asyncio.gather(self.dismiss_all(), *(self._call(session.detach()) for session in sessions))
         self._openings.clear()
         self._answered.clear()
@@ -209,12 +219,14 @@ class DialogKeeper:
         self._changed()
         opening = self._claim_opening(page, handle.type, handle.message)
         if opening is not None:
-            self._located(dialog, opening.url)
-        else:
-            dialog._waiting = asyncio.get_running_loop().call_later(ORIGIN_WAIT_SECONDS, self._located, dialog, "")
+            self._located(dialog, opening.url, opening.frame)
+        else:  # shown without its frame: as a frame inside the page, with no origin
+            later = asyncio.get_running_loop().call_later(ORIGIN_WAIT_SECONDS, self._located, dialog, "", "")
+            dialog._waiting = later
 
     def _on_opening(self, page: Page, event: dict[str, Any]) -> None:
         kind, message, url = str(event.get("type", "")), str(event.get("message", "")), str(event.get("url", ""))
+        frame = str(event.get("frameId", ""))
         waiting = next(
             (
                 d
@@ -224,11 +236,11 @@ class DialogKeeper:
             None,
         )
         if waiting is not None:
-            self._located(waiting, url)
+            self._located(waiting, url, frame)
             return
         now = time.monotonic()
         queued = [o for o in self._openings.get(page, []) if now - o.at < STALE_OPENING_SECONDS]
-        self._openings[page] = [*queued, _Opening(kind, message, url[:MAX_URL], now)]
+        self._openings[page] = [*queued, _Opening(kind, message, url[:MAX_URL], frame[:MAX_FRAME_ID], now)]
 
     def _claim_opening(self, page: Page, kind: str, message: str) -> _Opening | None:
         queued = self._openings.get(page, [])
@@ -238,11 +250,13 @@ class DialogKeeper:
                 return opening
         return None
 
-    def _located(self, dialog: KeptDialog, url: str) -> None:
+    def _located(self, dialog: KeptDialog, url: str, frame: str) -> None:
         if dialog._waiting is not None:
             dialog._waiting.cancel()
             dialog._waiting = None
         dialog.url = url[:MAX_URL]
+        main = self._main_frames.get(dialog.page)
+        dialog.main = bool(frame) and frame == main
         if dialog in self._open and self._sink is not None:
             number = self._number(dialog)
             if number is not None:
@@ -269,6 +283,7 @@ class DialogKeeper:
             self._drop(dialog, ours=False, tell=True)
         self._watched.discard(page)
         self._sessions.pop(page, None)
+        self._main_frames.pop(page, None)
         self._openings.pop(page, None)
         self._answered.pop(page, None)
 
@@ -281,8 +296,17 @@ class DialogKeeper:
         self._sessions[page] = session
         session.on("Page.javascriptDialogOpening", lambda event: self._on_opening(page, event))
         session.on("Page.javascriptDialogClosed", lambda _: self._on_closed(page))
+        # The page's main frame id is its target's. The browser answers this even while a dialog is open, and before
+        # Page.enable below, so it's known by the time any dialog is reported.
+        await self._call(self._main_frame(session, page))
         # Waits while a dialog is open on the page; the request carries on and the events start afterwards.
         await self._call(session.send("Page.enable"))
+
+    async def _main_frame(self, session: CDPSession, page: Page) -> None:
+        info = (await session.send("Target.getTargetInfo")).get("targetInfo")
+        target = info.get("targetId") if isinstance(info, dict) else None
+        if isinstance(target, str) and 0 < len(target) <= MAX_FRAME_ID and page in self._watched:
+            self._main_frames[page] = target
 
     # ---- bookkeeping
 

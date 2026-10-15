@@ -31,6 +31,7 @@ from ferry_watch.agent.cast_protocol import (
     decode,
     dialog_message,
     encode,
+    frame_origin,
     origin_of,
     strip_credential_tokens,
     typed_text_ok,
@@ -146,13 +147,34 @@ def test_page_text_is_cleaned_and_capped() -> None:
 
 
 def test_dialogs_carry_their_frames_origin_and_bounded_text() -> None:
-    message = dialog_message(3, 1, "prompt", "http://pay.test:8002/card.html", "Code?\n" + "x" * 1000, "D" * 20_000)
+    url = "http://pay.test:8002/card.html"
+    message = dialog_message(3, 1, "prompt", url, False, "Code?\n" + "x" * 1000, "D" * 20_000)
     assert message.origin == "http://pay.test:8002"
+    assert not message.main
     assert len(message.msg) == MAX_DIALOG_MESSAGE
     assert message.msg.startswith("Code?\n")
     assert message.default == "D" * MAX_PROMPT_DEFAULT
     assert json.loads(encode(message))["def"] == "D" * MAX_PROMPT_DEFAULT
-    assert dialog_message(4, 1, "confirm", "about:blank", "Sure?", "ignored").default == ""
+    assert json.loads(encode(message))["main"] is False
+    assert dialog_message(4, 1, "confirm", "about:blank", True, "Sure?", "ignored").default == ""
+
+
+@pytest.mark.parametrize(
+    ("url", "origin"),
+    [
+        ("https://www.bcferries.com/checkout", "https://www.bcferries.com"),
+        ("blob:https://pay.example/0d2c7d9e-7d44-4e3b-a4a8-31ad3b6f0f37", "https://pay.example"),  # who made it
+        ("BLOB:http://pay.test:8002/0d2c", "http://pay.test:8002"),
+        ("blob:null/0d2c", ""),  # made by an opaque origin
+        ("blob:blob:https://pay.example/0d2c", ""),
+        ("about:srcdoc", ""),  # its origin is its parent's, or opaque when sandboxed: the URL doesn't say
+        ("about:blank", ""),
+        ("data:text/html,<script>prompt(1)</script>", ""),
+        ("https://www.bcferries.com." + "a" * 100 + ".example/", ""),
+    ],
+)
+def test_a_dialogs_origin_is_its_frames_as_far_as_the_url_tells(url: str, origin: str) -> None:
+    assert frame_origin(url) == origin
 
 
 @pytest.mark.parametrize(

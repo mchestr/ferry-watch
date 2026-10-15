@@ -586,7 +586,7 @@ release.
 | C38 | Viewer page hardening: its own CSP with no inline code, Trusted Types with no policy, and a socket only to the checkout host; page-derived strings as text only (§7.9) | XSS from page-derived strings; exfiltration | vnc-edge | 0.7.0 |
 | C39 | Page data bounded inside the page: every isolated-world script caps counts, string lengths, time (30 ms) and serialized size (48 KiB) before it returns, under the 100 ms evaluation timeout; at most 8 frames, 3 deep, per field map; worlds and CDP sessions of detached frames dropped; page titles from `Target.getTargetInfo`, which Chromium caps | A page (or any third party on it) pushing hundreds of MB into the agent and OOM-killing the pod mid-hold (an OOM skips the drain, R8) | agent (`cast_scripts.py`, `cast_cdp.py`, `cast_fields.py`) | 0.7.0 |
 | C40 | Click safety: for the viewer's native pickers (`choose`, `date`) the agent clicks only a point hit-tested to the field through every ancestor frame and inside the visible viewport, presses no key until the field (and each iframe leading to it) has focus, and presses Escape when a step fails; a tap or pinch aimed at an image from before the page scrolled or zoomed is refused, with nothing sent | Clicks and Enter reaching a covering "Pay" button the user never touched | agent (`cast_input.py`) | 0.7.0 |
-| C41 | Credential isolation: the viewer's keyboard proxy and prompt input are never `type=password` and never carry credential `autocomplete` tokens (the agent strips them, and the viewer again); dialogs carry and show the origin of the frame that opened them; the escape hatch to the classic viewer can't be hidden by page content | The user's saved `auth.chestr.dev` login offered into a pod page; a page impersonating Ferry Watch's UI | agent, viewer | 0.7.0 |
+| C41 | Credential isolation: the viewer's keyboard proxy and prompt input are never `type=password` and never carry credential `autocomplete` tokens (the agent strips them, and the viewer again); dialogs carry and show the origin of the frame that opened them, and only the page's main frame is headed as the page; the escape hatch to the classic viewer can't be hidden by page content | The user's saved `auth.chestr.dev` login offered into a pod page; a page impersonating Ferry Watch's UI | agent, viewer | 0.7.0 |
 | C42 | Pod-side kill switch: `cast_allowed` in the operator's `configure` (default false, sent only to agents ≥ 0.7.0); the gate refuses `fw.cast1` without it and closes a live stream with 4005, which moves the viewer to the classic one | A bug in the stream surface staying reachable on running pods for up to 26 h after `checkout.streamViewer` is turned off or the release is rolled back | gate, agent (`watch.py`), ferry-control | 0.7.0 |
 
 ### 4.5 Blast radius if each component is compromised
@@ -988,13 +988,14 @@ stream also when `cast_allowed` turns false. After a viewed hold the pod exits.
   every JavaScript dialog the moment it opened, so a `confirm()` in the checkout returned false and an `alert()`
   vanished, unseen by the classic viewer. From the gate's first admission of a viewer of either kind in a pod's
   life, dialogs are kept open for the viewer: a stream viewer answers them in its own sheet, headed with the
-  opening frame's origin (C41); a classic viewer answers them on the pod's screen, where Chromium draws them. On a
-  classic viewer narrower than Chromium's 500 px minimum window (a phone), the screen is 500 px wide while a
-  dialog is open, so the whole dialog is on it, and the viewer's own size again once it is answered. They stay
-  open across reconnects and switches between kinds. When the gate closes with 4000, 4002 or 4003 they are
-  dismissed and no longer kept, so the agent's own browsing afterwards (emptying the cart) can't wait on one. A
-  hold that ends stops being offered to viewers before its viewer is closed, so none is let in again (and none
-  keeps dialogs again) while the cart is emptied.
+  opening frame's origin, and as the page itself only when the page's main frame opened it (C41); a classic viewer
+  answers them on the pod's screen, where Chromium draws them. On a classic viewer narrower than Chromium's 500 px
+  minimum window (a phone), the screen is 500 px wide while a dialog is open, so the whole dialog is on it, and the
+  viewer's own size again once it is answered. They stay open across reconnects and switches between kinds. When
+  the gate closes with 4000, 4002 or 4003 they are dismissed (all at once, bounded by one browser call however many
+  pages there are) and no longer kept, so the agent's own browsing afterwards (emptying the cart) can't wait on
+  one. A hold that ends stops being offered to viewers before its viewer is closed, so none is let in again (and
+  none keeps dialogs again) while the cart is emptied.
 
 **Rate and usage:** viewer seconds are reported in `state` and charged to `vncMinutesPerDay`. The gate
 refuses more than 5 *failed* upgrade attempts per minute; successful reconnects are not counted.
@@ -2292,8 +2293,10 @@ narrow, validated input protocol.
   them again): a password field gets exactly what KasmVNC's own hidden input has. A password-typed input on
   `ferry-checkout.chestr.dev` would invite the browser to offer the user's saved `auth.chestr.dev` login. The
   checkout's JavaScript dialogs are headed with the origin of the frame that opened them, as Chrome words it, and
-  drawn like the browser's own dialogs, never like Ferry Watch's controls, so a page can't pass a prompt off as
-  ours; the prompt's input follows the password rules.
+  only a dialog from the page's main frame is ever headed as the page ("This page says:"): a frame inside it, such
+  as a third party's or a child it made at about:srcdoc, blob: or data:, can't pass its prompt off as the checkout's
+  own. They are drawn like the browser's own dialogs, never like Ferry Watch's controls, so a page can't pass a
+  prompt off as ours either; the prompt's input follows the password rules.
 - **Nothing typed is kept** (C37): no storage, URL or log ever holds what is typed. In a name, an address or a
   sentence the proxy holds the last 64 characters typed since the field was tapped, because the phone's keyboard
   decides capitals from the text before the caret; it is emptied whenever the pod's caret may have moved.

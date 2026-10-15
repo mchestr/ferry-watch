@@ -753,6 +753,32 @@ async def answer(viewer: Viewer, message: dict[str, Any]) -> None:
     await viewer.send(message)
 
 
+# A frame makes a child whose URL gives no origin (or the blob's maker's) and opens a dialog from it: the review's
+# way to strip a third party's name from its dialog. Each takes the dialog's message.
+CHILD_DIALOG = {
+    "srcdoc": """(lure) => {
+      const frame = document.createElement("iframe");
+      frame.srcdoc = `<script>alert(${JSON.stringify(lure)})<\\/script>`;
+      document.body.append(frame);
+    }""",
+    "blob": """(lure) => {
+      const blob = new Blob([`<script>alert(${JSON.stringify(lure)})<\\/script>`], { type: "text/html" });
+      const frame = document.createElement("iframe");
+      frame.src = URL.createObjectURL(blob);
+      document.body.append(frame);
+    }""",
+    "data": """(lure) => {
+      const frame = document.createElement("iframe");
+      frame.src = "data:text/html," + encodeURIComponent(`<script>prompt(${JSON.stringify(lure)})<\\/script>`);
+      document.body.append(frame);
+    }""",
+}
+
+
+def saying(text: str, message: dict[str, Any]) -> bool:
+    return bool(message["msg"] == text)
+
+
 async def test_dialogs_show_with_their_frames_origin_and_wait_across_a_reconnect(rig: Rig) -> None:
     await rig.pod.at(f"{rig.sites.shop}/index.html")
     viewer = await rig.connect(PHONE)
@@ -760,10 +786,11 @@ async def test_dialogs_show_with_their_frames_origin_and_wait_across_a_reconnect
 
     await press_button(viewer, rig, "#alertbtn")
     alert = await viewer.message("dialog")
-    assert {k: alert[k] for k in ("page", "kind", "origin", "msg", "def")} == {
+    assert {k: alert[k] for k in ("page", "kind", "origin", "main", "msg", "def")} == {
         "page": 1,
         "kind": "alert",
         "origin": rig.sites.shop,
+        "main": True,
         "msg": "Your session will expire soon",
         "def": "",
     }
@@ -783,8 +810,18 @@ async def test_dialogs_show_with_their_frames_origin_and_wait_across_a_reconnect
     # From the cross-site card frame: the sheet must say it's that site talking, not the shop.
     await press_button(viewer, rig, "#cardalert", "#card")
     from_card = await viewer.message("dialog", where=lambda m: m["msg"].startswith("Card declined"))
-    assert from_card["origin"] == rig.sites.pay
+    assert (from_card["origin"], from_card["main"]) == (rig.sites.pay, False)
     await answer(viewer, {"t": "dialog", "id": from_card["id"], "ok": True})
+
+    # Found in review: the card frame makes a child whose URL carries no origin and asks from there. It's still a
+    # frame inside the page, never the page: a blob: child carries the card frame's origin, the others none.
+    card_frame = await card(rig.pod)
+    for child, origin in (("srcdoc", ""), ("blob", rig.sites.pay), ("data", "")):
+        lure = f"[{child}] Payment failed: re-enter your card's password"
+        await card_frame.evaluate(CHILD_DIALOG[child], lure)
+        from_child = await viewer.message("dialog", where=functools.partial(saying, lure))
+        assert (from_child["origin"], from_child["main"]) == (origin, False), child
+        await answer(viewer, {"t": "dialog", "id": from_child["id"], "ok": True})
 
     # A confirm left open across a reconnect (the bank app, a screen lock) is announced again, and answered.
     await press_button(viewer, rig, "#confirmbtn")

@@ -506,7 +506,7 @@ is answered or closed. Then a screenshot-based image follows at once (with flag 
 first, §3.2), and images, the map and input resume.
 
 ```json
-{"t": "dialog", "id": 3, "page": 1, "kind": "confirm", "origin": "https://pay.example", "msg": "Leave checkout?", "def": ""}
+{"t": "dialog", "id": 3, "page": 1, "kind": "confirm", "origin": "https://pay.example", "main": false, "msg": "Leave checkout?", "def": ""}
 ```
 
 | Field | Type | Limits |
@@ -514,7 +514,8 @@ first, §3.2), and images, the map and input resume.
 | `id` | integer | 1-65535, unique per session (a dialog still open from an earlier session gets a new id) |
 | `page` | integer | the page showing it |
 | `kind` | string | `alert` \| `confirm` \| `prompt` \| `beforeunload` |
-| `origin` | string | ≤ 100 code points: `scheme://host[:port]` of the URL of the **frame** that opened the dialog (`Page.javascriptDialogOpening.url` on the page's CDP session, which has the Page domain enabled for this), or "" if unknown |
+| `origin` | string | ≤ 100 code points: `scheme://host[:port]`, the origin of the **frame** that opened the dialog as far as its URL tells (`Page.javascriptDialogOpening.url` on the page's CDP session, which has the Page domain enabled for this): an http(s) URL's origin, or a `blob:` URL's (the origin that made the blob). "" for any other URL (about:srcdoc, about:blank and data: frames take their origin from whoever made them, which the URL doesn't say), for an origin over 100 code points, or when the frame isn't known |
+| `main` | boolean | true only when that frame is the page's own main frame (`Page.javascriptDialogOpening.frameId` equals the id of the page's target, read with `Target.getTargetInfo`); false for any frame inside the page, and whenever the agent can't tell. A viewer treats a `dialog` without it as false |
 | `msg` | string | ≤ 500 code points, clean text except U+000A (line feed) is kept |
 | `def` | string | ≤ 256 code points, clean text: the prompt's default ("" otherwise) |
 
@@ -926,10 +927,15 @@ is committed by `text`) and to `dialog.s` (without TAB and LF; cut at 256). Test
 
 Titles, origins, option labels, dialog messages and prompt defaults MUST be rendered only with `textContent` or as
 attribute values of the viewer's own form controls, never as HTML (the CSP also enforces Trusted Types). The dialog
-sheet MUST show the dialog's origin as its heading, as Chrome does: "`<origin>` says:" when it equals the page's
-origin in `pages`, "An embedded page at `<origin>` says:" when it differs, and "This page says:" when it is "";
-and MUST look like page content, not like the viewer's own controls (it never carries the Ferry Watch name, logo or
-the viewer's button style).
+sheet MUST head each dialog as Chrome does, and only the page's main frame is the page:
+- `main` true: "`<origin>` says:", or "This page says:" when `origin` is "";
+- otherwise (a frame inside the page, or `main` absent): "`<origin>` says:" when `origin` equals the page's origin in
+  `pages`, "An embedded page at `<origin>` says:" when it differs, and "An embedded page on this page says:" when it
+  is "".
+A dialog that isn't `main` MUST NOT be headed "This page says:" (found in review: a cross-site frame made a child at
+about:srcdoc, blob: or data: and asked from there, and the sheet headed it "This page says:", as if the checkout's
+own page were asking). The sheet MUST look like page content, not like the viewer's own controls (it never carries
+the Ferry Watch name, logo or the viewer's button style).
 
 ### 8.9 Storage
 
