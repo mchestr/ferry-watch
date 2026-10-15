@@ -118,18 +118,27 @@
 
 // Keep the client's own controls off the checkout. It opens its side panel on load and closes it 2 s after
 // connecting, but on a phone the panel covers most of the screen, and a tap on it in those 2 s keeps it open:
-// close it as the client connects (its handle still opens it). The client also names its stream mode in large
-// type over the top of the screen for a few seconds.
+// close it as the client connects (its handle still opens it). The client's own close would then take the focus
+// back from the phone's keyboard, if the keyboard button had been tapped in those 2 s, so it's cancelled as the
+// client cancels it when the panel is in use: an `input` event on the panel. The client arms it on every
+// connect, reconnects included. It's cancelled only once the panel has opened with the class this removes: if
+// the client named it differently, cancelling its close would leave the panel open. The client also names its
+// stream mode in large type over the top of the screen for a few seconds.
 (() => {
   "use strict";
   const root = document.documentElement;
-  const watch = new MutationObserver(() => {
-    if (!root.classList.contains("noVNC_connected")) return;
-    watch.disconnect();
+  let known = false;
+  let connected = false;
+  new MutationObserver(() => {
     const panel = document.getElementById("noVNC_control_bar");
-    if (panel) panel.classList.remove("noVNC_open");
-  });
-  watch.observe(root, { attributes: true, attributeFilter: ["class"] });
+    known = known || Boolean(panel && panel.classList.contains("noVNC_open"));
+    const now = root.classList.contains("noVNC_connected");
+    if (now && !connected && known) {
+      panel.dispatchEvent(new Event("input")); // the panel's own listeners only: it doesn't bubble
+      panel.classList.remove("noVNC_open");
+    }
+    connected = now;
+  }).observe(root, { attributes: true, attributeFilter: ["class"] });
   document.addEventListener("DOMContentLoaded", () => {
     const toast = document.getElementById("noVNC_notification_overlay");
     if (toast) toast.style.setProperty("display", "none", "important");

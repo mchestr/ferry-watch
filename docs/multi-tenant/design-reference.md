@@ -2134,7 +2134,11 @@ fails CI.
   tap on a checkout field focuses only the pod's field, so the button is how the keyboard opens.
 - **The side panel out of the way.** The client opens its side panel on load and closes it 2 s after connecting,
   but on a phone the panel covers most of the screen, and a tap on it in those 2 s keeps it open. The shim
-  closes it as `<html>` gets `noVNC_connected`; its handle still opens it. The shim also hides
+  closes it as `<html>` gets `noVNC_connected`; its handle still opens it. The client's own close would still
+  come 2 s later and take the focus back, closing a keyboard opened in the meantime, so the shim cancels it as
+  the client does when its panel is in use (an `input` event on the panel). It does this on every connect,
+  since the client arms its close on reconnects too, and only once the panel has opened with the `noVNC_open`
+  class the shim removes: with a renamed class, the closing stays the client's. The shim also hides
   `#noVNC_notification_overlay`, which names the stream mode ("JPEG/WEBP (Images)") in 30 px type across the
   top of the screen for 3.5 s.
 - **One finger scrolls.** The client turns touches into `gesturestart`/`gesturemove`/`gestureend` events on its

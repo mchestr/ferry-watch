@@ -357,6 +357,12 @@ async def test_on_a_phone_the_checkout_is_the_phones_size_and_scrolls_like_a_pag
     # The client's side panel opens on load, over the field, and the client closes it 2 s after connecting, unless
     # a tap lands on it first. It's closed as the client connects, so the first tap reaches the checkout.
     assert not await phone.is_visible("#noVNC_control_bar.noVNC_open"), "the side panel is open over the checkout"
+    # Nor does the client's own close, 2 s after connecting, take back the keyboard the user has opened by then.
+    await phone.tap("#noVNC_keyboard_control_handle")
+    await asyncio.sleep(2.5)
+    keyboard = await phone.evaluate("document.activeElement.id")
+    assert keyboard == "noVNC_keyboardinput", "the phone's keyboard closed 2 s after connecting"
+    await phone.tap("#noVNC_keyboard_control_handle")
 
     # The screen is the phone's own viewport, not 1.5 times it, so the checkout lays out for a phone, at full size.
     width, height = PHONE["viewport"]["width"], PHONE["viewport"]["height"]
