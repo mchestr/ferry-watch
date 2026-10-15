@@ -848,16 +848,17 @@ dedupes on `(pod_uid, boot, seq)`.
 | A→C | `bye` | `reason` enum (hold_ended, drained, deadline, recycle, startup_failed, lockdown_failed, fatal, smoke_done, short_check_done), `outcome` enum (booked, released, expired, expired_by_site, payment_left_to_site, none), `cart_emptied`, `release_check` enum (cart_empty, landing_url, none), `viewer_was_connected` |
 | C→A | `hello_ack` | `server_time`, `accepted_proto`, `resend_from` |
 | C→A | `cart_claim_result` | `claim` (the claim's `seq`), `granted`, `reason` enum (ok, holding_elsewhere, no_holds_left, quiet_hours, carting_paused, limit). A granted claim lapses after 2 min without `cart_held` or `cart_failed` (the agent must start carting within 30 s of the grant, and `add_to_cart` takes at most 40 s). |
-| C→A | `configure` | `rev`, `trip` (`Trip.to_json`; the agent re-validates with `Trip.from_json` and requires `id == FW_TRIP_ID`), `active`, `mode` enum (warm, short_check; round 3), `interval_s`, `auto_cart`, `checkout_mode` enum (v1 defines only `guest`; reserved so an account mode is a protocol addition, not a change of meaning), `hold{unclaimed_s, session_s, viewer_gone_s, hard_s}`, `alerted[]`, `offered[]`, `vnc_allowed`, `brake{multiplier, paused}`, `breaker` (closed/open) |
+| C→A | `configure` | `rev`, `trip` (`Trip.to_json`; the agent re-validates with `Trip.from_json` and requires `id == FW_TRIP_ID`), `active`, `mode` enum (warm, short_check; round 3), `interval_s`, `auto_cart`, `checkout_mode` enum (v1 defines only `guest`; reserved so an account mode is a protocol addition, not a change of meaning), `hold{unclaimed_s, session_s, viewer_gone_s, hard_s}`, `alerted[]`, `offered[]`, `vnc_allowed`, `brake{multiplier, paused}`, `breaker` (closed/open), `cast_allowed` (0.7.0: whether the gate may serve the streamed viewer, from `checkout.streamViewer` and the owner's `is_admin`; absent is false, and ferry-control leaves it out for agents before 0.7.0, which refuse unknown fields) |
 | C→A | `command` | `id`, `op`: `check_now` \| `release{cart_id}` \| `dismiss{cart_id}` \| `drain{reason}` \| `vnc_revoke{reason}` |
 | C→A | `ack` | `seq` |
 
 **Deliberately absent:** navigate, URL, base_url, eval, selector, screenshot, cookies, storage_state,
 credentials, log level, tracing, Chromium flags, file transfer, "extend hold", and anything that grants VNC.
-ferry-control can only *revoke* VNC (`vnc_allowed=false`, `vnc_revoke`). The agent fetches the terminal list
-itself (`terminals.py`), so labels from the control plane never feed navigation. The draft's `reauth`
-message and 5-minute re-review are dropped: the token is checked at connect, and in one process the fleet
-loop closes a pod's socket itself when it deletes the pod.
+ferry-control can only *revoke* VNC (`vnc_allowed=false`, `vnc_revoke`); `cast_allowed` only narrows which
+viewer a ticket may open. The agent fetches the terminal list itself (`terminals.py`), so labels from the
+control plane never feed navigation. The draft's `reauth` message and 5-minute re-review are dropped: the
+token is checked at connect, and in one process the fleet loop closes a pod's socket itself when it deletes
+the pod.
 
 `src/ferry_watch/protocol.py` implements this table, including the round-3 additions (`mode`,
 `short_check_done` and the `cart_claim` pair). Two field names differ from the
