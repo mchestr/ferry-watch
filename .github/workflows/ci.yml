@@ -156,6 +156,10 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      # The streamed checkout viewer's DOM-free modules, against the fw.cast1 conformance pack. No npm packages.
+      - name: vnc-edge viewer modules
+        working-directory: .
+        run: node --test vnc-edge/tests/*.test.mjs
 
   image:
     name: Image ${{ matrix.target }} (build, smoke test, push)
