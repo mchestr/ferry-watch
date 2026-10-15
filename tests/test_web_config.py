@@ -45,12 +45,21 @@ def test_minimal_config(tmp_path: Path) -> None:
     assert config.policy().horizon.days == 30
 
 
+def test_the_streamed_viewer_is_off_unless_the_deployment_offers_it(tmp_path: Path) -> None:
+    assert load(write(tmp_path, MINIMAL)).checkout.stream_viewer == "off"  # the kill switch is the default
+    for value in ("off", "admins", "everyone"):
+        checkout = MINIMAL["checkout"] | {"streamViewer": value}
+        assert load(write(tmp_path, MINIMAL | {"checkout": checkout})).checkout.stream_viewer == value
+
+
 @pytest.mark.parametrize(
     "change",
     [
         {"kofiUrl": "https://evil.example/kofi"},
         {"checkout": {"origin": "http://ferry-checkout.chestr.dev", "keyId": "k1"}},
         {"checkout": {"origin": "https://ferry-checkout.chestr.dev/path", "keyId": "k1"}},
+        # Only the three values; YAML reads a bare `off` as false, which must stop startup, not mean anything.
+        *({"checkout": MINIMAL["checkout"] | {"streamViewer": v}} for v in ("on", "Admins", False, True, None)),
         {"oidc": MINIMAL["oidc"] | {"algorithms": ["HS256"]}},  # never a shared-secret signature
         {"identity": {"reverifyHours": 48}},
         {"surprise": 1},

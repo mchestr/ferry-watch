@@ -22,6 +22,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat, PublicFormat
 
 from ferry_watch.control.config import ConfigError, LimitsConfig, PollingConfig, poll_policy, user_limits
+from ferry_watch.control.configure import StreamViewer
 from ferry_watch.control.limits import Limits
 from ferry_watch.polling import PollPolicy
 
@@ -66,6 +67,9 @@ class CheckoutConfig(_Config, kw_only=True):
     origin: str
     # Only for a key stored without its id; `ferry-web keys` stores `<id>:<key>`, so a rotation is one change.
     key_id: Annotated[str, msgspec.Meta(pattern=r"^[a-z0-9]{1,16}$")] = "k1"
+    # Who sees the "New checkout viewer (beta)" switch and gets stream links. The same value as ferry-control's
+    # `checkout.streamViewer`; "off" is the kill switch.
+    stream_viewer: StreamViewer = "off"
 
 
 class SmtpConfig(_Config, kw_only=True):

@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime
+from typing import Literal
 
 import msgspec
 
@@ -27,6 +28,14 @@ from ferry_watch.protocol import (
 
 PUSH_CHANGE = 0.10  # a new interval is pushed only if it differs by more than this
 MAX_CHECKS_PER_MINUTE = 40  # the owner's ceiling for the budget
+
+# `checkout.streamViewer`: who is offered the streamed checkout viewer (beta). "off" is its kill switch.
+StreamViewer = Literal["off", "admins", "everyone"]
+
+
+def stream_viewer_offered(setting: StreamViewer, *, is_admin: bool) -> bool:
+    """Whether a user may use the streamed checkout viewer: offered to everyone, or to admins and they are one."""
+    return setting == "everyone" or (setting == "admins" and is_admin)
 
 
 @dataclass(frozen=True, slots=True)

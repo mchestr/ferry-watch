@@ -120,6 +120,7 @@ source_modules = [
   "ferry_watch.holds",
   "ferry_watch.tickets",
   "ferry_watch.models",
+  "ferry_watch.versions",
   "ferry_watch.bcferries.urls",
   "ferry_watch.bcferries.terminals",
   "ferry_watch.bcferries.errors",
