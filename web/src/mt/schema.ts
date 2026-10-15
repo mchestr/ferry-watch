@@ -19,6 +19,12 @@ export const QuietHoursSchema = z.object({ start: timeOfDay, end: timeOfDay });
 /** Everyone's quiet hours until they change them: the ferries sail from about 5 am to 10 pm. */
 export const DEFAULT_QUIET_HOURS: z.infer<typeof QuietHoursSchema> = { start: "22:00", end: "05:00" };
 
+/**
+ * Which viewer opens a checkout: KasmVNC ("classic", everyone's until they choose), or the streamed viewer beta.
+ * Classic from a server too old to say, or saying something this build doesn't know.
+ */
+const CheckoutViewerSchema = z.enum(["classic", "stream"]).catch("classic").default("classic");
+
 export const FareInfoSchema = z.object({ name: z.string(), price: z.string().nullable(), selectable: z.boolean() });
 
 export const SailingInfoSchema = z.object({
@@ -114,6 +120,9 @@ export const MyStateSchema = z.object({
       quiet_hours: QuietHoursSchema.nullable()
         .default(null)
         .transform((quiet) => quiet ?? DEFAULT_QUIET_HOURS),
+      checkout_viewer: CheckoutViewerSchema,
+      // Whether the streamed viewer beta is offered to this user, and with it the Settings switch.
+      stream_viewer_offered: z.boolean().catch(false).default(false),
     })
     .default({ quiet_hours: null }),
   // The same quiet hours, and whether it's quiet now; null from a server too old to say.
@@ -135,7 +144,11 @@ export const MyStateSchema = z.object({
 
 export const LiveMessageSchema = z.object({ type: z.literal("state"), state: MyStateSchema });
 
-export const CheckoutSchema = z.object({ url: z.string().url().startsWith("https://"), ttl: z.number() });
+export const CheckoutSchema = z.object({
+  url: z.string().url().startsWith("https://"),
+  ttl: z.number(),
+  viewer: CheckoutViewerSchema, // the one this link opens
+});
 
 export type SailingInfo = z.infer<typeof SailingInfoSchema>;
 export type CartInfo = z.infer<typeof CartInfoSchema>;
@@ -143,4 +156,5 @@ export type Browser = z.infer<typeof BrowserSchema>;
 export type MyTrip = z.infer<typeof MyTripSchema>;
 export type Hold = z.infer<typeof HoldSchema>;
 export type MyState = z.infer<typeof MyStateSchema>;
+export type CheckoutViewer = z.infer<typeof CheckoutViewerSchema>;
 export type QuietHours = z.infer<typeof QuietHoursSchema>;
