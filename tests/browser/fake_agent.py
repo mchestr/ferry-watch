@@ -310,6 +310,11 @@ class Session:
     close_code: int | None = None
     _arrived: asyncio.Condition = field(default_factory=asyncio.Condition)
 
+    @property
+    def number(self) -> int:
+        """How many of the viewer's numbered messages have arrived (PROTOCOL.md §1): `n` once all are carried out."""
+        return 1 + sum(1 for m in self.received if m.get("t") != "ack")
+
     async def start(self, *, dsf: int | None = None, front: int = 1) -> None:
         """`ready` for the viewer's hello, then `pages` and `clock` as the conformance pack has them."""
         assert self.hello is not None
@@ -380,6 +385,12 @@ class Session:
         async with asyncio.timeout(WAIT_S), self._arrived:
             await self._arrived.wait_for(arrived)
         return [m for m in self.received if m.get("t") == t][:count]
+
+    async def arrived(self, count: int) -> list[dict[str, Any]]:
+        """Everything the viewer has sent after `hello`, once that is at least `count` messages."""
+        async with asyncio.timeout(WAIT_S), self._arrived:
+            await self._arrived.wait_for(lambda: len(self.received) >= count)
+        return list(self.received)
 
     async def acked(self, seq: int) -> None:
         async with asyncio.timeout(WAIT_S), self._arrived:

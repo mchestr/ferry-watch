@@ -79,12 +79,16 @@ export class Gestures {
     this.changed();
   }
 
-  /** What to draw over the image: the prediction's shift (frame px, up) and the local zoom, if any. */
+  /**
+   * What to draw over the image: the prediction's shift (frame px, up), the local zoom, if any, and whether the
+   * picture is moving (cheaper drawing will do).
+   */
   view(now = this.clock.now()) {
     const drawn = this.screen();
     const shift = drawn ? this.prediction.offset(now, drawn.image, this.contentHeight()) : 0;
     const zoom = this.zoomed(now) ? { c0: this.zoom.c0, c1: this.zoom.c1, f: this.zoom.f } : null;
-    return { shift, zoom };
+    const gesture = this.touch !== null && this.touch.kind !== "pending" && this.touch.kind !== "none";
+    return { shift, zoom, moving: gesture || this.coast !== null || shift !== 0 || zoom !== null };
   }
 
   /** Whether a touch beginning now would be no tap (§8.2). */
@@ -95,7 +99,7 @@ export class Gestures {
 
   /** A gesture is under way, or its picture drawn: native pickers stay hidden meanwhile. */
   get busy() {
-    return (this.touch !== null && this.touch.kind !== "pending") || this.blocked();
+    return this.view().moving;
   }
 
   zoomed(now) {
@@ -176,7 +180,10 @@ export class Gestures {
       if (touch.kind === "pending") this.tapEnded(touch, now);
       else if (touch.kind === "scroll") this.released(touch, now);
     }
-    if (touches.length === 0) this.touch = null;
+    if (touches.length === 0) {
+      this.touch = null;
+      this.changed();
+    }
   }
 
   /** The system took the touches (a call, a gesture of its own): nothing is sent for them. */
@@ -220,6 +227,7 @@ export class Gestures {
     coast.vy *= decay;
     if (Math.hypot(coast.vx, coast.vy) < STOP_SPEED) {
       this.coast = null;
+      this.changed();
       return;
     }
     this.queueWheel(coast.page, coast.origin, (coast.vx * dt) / coast.k, (coast.vy * dt) / coast.k, true);

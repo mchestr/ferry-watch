@@ -75,3 +75,21 @@ export function composeMessages(input) {
 export function dialogAnswer(input) {
   return [...normalise(input, { lines: false })].slice(0, MAX_DIALOG).join("");
 }
+
+/**
+ * How `after` differs from `before`, as typing at the end of `before` would make it: how many code points to
+ * delete, then what to insert. For an edit the browser made itself to text the viewer kept in the proxy.
+ */
+export function edit(before, after) {
+  const was = [...before];
+  const now = [...after];
+  let same = 0;
+  while (same < was.length && same < now.length && was[same] === now[same]) same += 1;
+  return { removed: was.length - same, added: now.slice(same).join("") };
+}
+
+/** The last `max` code points of `s`. */
+export function tail(s, max) {
+  const points = [...s];
+  return points.length > max ? points.slice(-max).join("") : s;
+}
