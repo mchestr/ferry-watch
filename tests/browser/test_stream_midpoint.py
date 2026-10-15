@@ -180,11 +180,11 @@ def usable_map(seen: dict[str, Any]) -> dict[str, Any] | None:
     return latest if usable else None
 
 
-async def showing(viewer: Viewer, checkout: Checkout) -> dict[str, Any]:
-    """The image the viewer draws, once it shows the pod's page where it is now (scroll and zoom)."""
+async def showing(viewer: Viewer, pod: Pod) -> dict[str, Any]:
+    """The image the viewer draws, once it shows the pod's page (`pod.tab`) where it is now (scroll and zoom)."""
 
     async def matching() -> dict[str, Any] | None:
-        live = await checkout.tab("[visualViewport.pageLeft, visualViewport.pageTop, visualViewport.scale]")
+        live = await pod.tab.evaluate("[visualViewport.pageLeft, visualViewport.pageTop, visualViewport.scale]")
         image = drawn(await wire(viewer))
         if image is None:
             return None
@@ -196,18 +196,18 @@ async def showing(viewer: Viewer, checkout: Checkout) -> dict[str, Any]:
     return image
 
 
-async def field_for(viewer: Viewer, checkout: Checkout, selector: str, frame: str | None = None) -> dict[str, Any]:
-    """The usable map's field for this element of the pod's page, once the viewer has one (within 2 px of where the
-    element is, in frame px)."""
+async def field_for(viewer: Viewer, pod: Pod, selector: str, frame: str | None = None) -> dict[str, Any]:
+    """The usable map's field for this element of the pod's page (`pod.tab`, or the iframe `frame` in it), once the
+    viewer has one: within 2 px of where the element is, in frame px."""
 
     async def found() -> dict[str, Any] | None:
         map_ = usable_map(await wire(viewer))
         if map_ is None:
             return None
-        rect = await frame_rect(checkout.pod, selector, frame)
+        rect = await frame_rect(pod, selector, frame)
         return next((f for f in map_["f"] if all(abs(a - b) <= 2 for a, b in zip(f["r"], rect, strict=True))), None)
 
-    await showing(viewer, checkout)
+    await showing(viewer, pod)
     field: dict[str, Any] | None = await until(found, bool)
     assert field is not None, f"no usable map has {selector}"
     return field
@@ -220,7 +220,7 @@ async def opened(viewer: Viewer, checkout: Checkout, page: str = "index.html") -
     await viewer.page.goto(f"{checkout.url}{edge.LANDING}#v=s1&t={edge.ticket()}")
     await viewer.page.click("#open")
     await viewer.page.wait_for_url(f"{checkout.url}{edge.STREAM_VIEWER}")
-    image = await showing(viewer, checkout)
+    image = await showing(viewer, checkout.pod)
     await until(lambda: viewers.status(viewer), lambda s: not s["shown"])
     return image
 
@@ -257,7 +257,7 @@ async def test_taps_reach_the_page_and_the_card_frame_and_the_keyboard_opens_ins
         await opened(phone, checkout)
         await viewers.watch_touchend(phone)
 
-        field = await field_for(phone, checkout, "#name")
+        field = await field_for(phone, checkout.pod, "#name")
         await tap(phone, *middle(field["r"]))
         await focus_reaches(checkout, "name")
         seen = (await viewers.in_touchend(phone))[-1]
@@ -266,7 +266,7 @@ async def test_taps_reach_the_page_and_the_card_frame_and_the_keyboard_opens_ins
         assert seen["attributes"]["type"] == "text"
 
         await checkout.tab("scrollTo(0, 455)")
-        field = await field_for(phone, checkout, "#cc", "#card")
+        field = await field_for(phone, checkout.pod, "#cc", "#card")
         await tap(phone, *middle(field["r"]))
         await focus_reaches(checkout, "cc", "#card")
         assert await pod_focus(checkout) == "card"
@@ -302,7 +302,7 @@ async def test_a_computers_clicks_and_keys_reach_the_page_and_the_card_frame(
         assert keys[:2] == [["keydown", "name", 0, 1, "Shift"], ["keydown", "name", 0, 1, "M"]]
 
         await checkout.tab("scrollTo(0, 300)")
-        await showing(desktop, checkout)
+        await showing(desktop, checkout.pod)
         await desktop.page.mouse.click(*middle(await frame_rect(checkout.pod, "#cvc", "#card")))
         await focus_reaches(checkout, "cvc", "#card")
         await desktop.page.keyboard.type("123")
@@ -347,7 +347,7 @@ async def test_a_tap_after_a_pinch_with_a_pan_lands_on_the_zoomed_field(browser:
         assert abs((point[1] - top) * scale - 260) <= 2
 
         # The map's rectangles are the zoomed page's: the postal code field, twice its size, cut by the image.
-        field = await field_for(phone, checkout, "#postal")
+        field = await field_for(phone, checkout.pod, "#postal")
         assert field["r"][2] == pytest.approx(351 * scale, abs=2)
         assert field["c"][0] == 0
         await viewers.watch_touchend(phone)
@@ -368,7 +368,7 @@ async def test_a_pasted_line_break_is_a_space_in_an_input_and_kept_in_a_textarea
         address = "123 Main St\\r\\nVictoria BC\\n"
 
         # The menu's Paste, into the postal code field the user tapped.
-        await tap(phone, *middle((await field_for(phone, checkout, "#postal"))["r"]))
+        await tap(phone, *middle((await field_for(phone, checkout.pod, "#postal"))["r"]))
         await focus_reaches(checkout, "postal")
         await phone.evaluate(f"navigator.clipboard.writeText('{address}')")
         await phone.page.tap("#menu-handle")
@@ -379,7 +379,7 @@ async def test_a_pasted_line_break_is_a_space_in_an_input_and_kept_in_a_textarea
 
         # The browser's own paste into the keyboard proxy, for the notes the user tapped.
         await until(lambda: phone.page.is_hidden("#menu"), bool)
-        await tap(phone, *middle((await field_for(phone, checkout, "#notes"))["r"]))
+        await tap(phone, *middle((await field_for(phone, checkout.pod, "#notes"))["r"]))
         await focus_reaches(checkout, "notes")
         assert await phone.evaluate("document.activeElement.id") == "proxy"
         await phone.evaluate("navigator.clipboard.writeText('Ramp\\npl\\u00e9ase')")
@@ -461,7 +461,7 @@ async def test_the_pickers_set_clear_fields_and_a_covered_field_is_refused(
 ) -> None:
     async with device(browser, "phone") as phone:
         await opened(phone, checkout, "occl.html")
-        await field_for(phone, checkout, "#s3")
+        await field_for(phone, checkout.pod, "#s3")
         # The selects and the date field clear of the "Pay now" footer get pickers; the half-covered select, the
         # covered one and the date under the footer don't (PROTOCOL.md §8.3).
         clear = [["SELECT", "60px"], ["INPUT", "120px"], ["SELECT", "180px"]]
@@ -505,7 +505,7 @@ async def test_a_reconnect_from_the_same_phone_keeps_the_page_as_it_was(browser:
         await checkout.tab("window.__sizes = []; addEventListener('resize', () => __sizes.push(innerWidth))")
         keys = await viewers.cdp(phone)
         for selector, typed in (("#name", "Mike"), ("#cc", "4242")):
-            await tap(phone, *middle((await field_for(phone, checkout, selector))["r"]))
+            await tap(phone, *middle((await field_for(phone, checkout.pod, selector))["r"]))
             await focus_reaches(checkout, selector[1:])
             for c in typed:
                 await keys.send("Input.insertText", {"text": c})
@@ -547,7 +547,7 @@ async def test_a_wide_window_shows_the_page_letterboxed_and_clicks_land_where_th
 
         for selector, frame in (("#name", None), ("#cc", "#card")):
             x, y = middle(await frame_rect(checkout.pod, selector, frame))
-            await showing(wide, checkout)
+            await showing(wide, checkout.pod)
             await wide.page.mouse.click(left + x, y)
             await focus_reaches(checkout, selector[1:], frame)
         taps = [m["msg"] for m in (await wire(wide))["sent"] if m["msg"]["t"] == "tap"]
