@@ -267,6 +267,8 @@ class Gate:
         async with self._swap:
             if self._checkout_cart() != cart_id or self._cast_verdict(cart_id) is not None:
                 raise Refused(409, "the hold ended or the stream was withdrawn")
+            if request.transport is None or request.transport.is_closing():
+                raise Refused(400, "the viewer left while it waited its turn")  # don't replace anyone for it
             await self._replace()
             if self._dialogs is not None:
                 await self._dialogs.keep()  # the stream session shows them in its own sheet

@@ -626,3 +626,31 @@ async def test_a_stream_admitted_while_the_hold_ends_is_turned_away(cast_rig: Ca
     cast_rig.cart[0] = None  # ... and the hold ends meanwhile
     assert await waiting == 409
     await stream.close()
+
+
+async def test_a_stream_that_leaves_while_it_waits_replaces_nobody(
+    aiohttp_client: Callable[..., Any], tmp_path: Path
+) -> None:
+    async with make_cast_rig(aiohttp_client, tmp_path)() as rig:
+        # Served as the agent serves it: aiohttp goes on with a handler whose client has left (test servers don't).
+        runner = web.AppRunner(rig.gate.app(), handler_cancellation=False)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        url = f"http://127.0.0.1:{runner.addresses[0][1]}/ws"
+        try:
+            async with aiohttp.ClientSession() as http:
+                stream = await http.ws_connect(url, protocols=cast_protocols(tkt=ticket()), origin=ORIGIN)
+                await until(lambda: "session 1 runs" in rig.log)
+                upgrade = asyncio.create_task(http.ws_connect(url, protocols=cast_protocols(), origin=ORIGIN))
+                await asyncio.sleep(0.2)  # waiting its turn (one start a second) ...
+                upgrade.cancel()  # ... when the device gives up
+                with contextlib.suppress(asyncio.CancelledError):
+                    await upgrade
+                await asyncio.sleep(1.2)
+                assert len(rig.sessions) == 1
+                await stream.send_str("still here")
+                assert (await asyncio.wait_for(stream.receive(), 5)).data == "still here"
+                await stream.close()
+        finally:
+            await runner.cleanup()
