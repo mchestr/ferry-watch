@@ -1340,14 +1340,15 @@ Any disagreement between A and B is fixed in PROTOCOL.md and the pack first, the
   its `dialog_closed`). Input for it meanwhile is answered `error stale`, or ignored for `move` and `wheel`
   (PROTOCOL §5.5): queueing it would replay taps aimed at an image from before the dialog. The dialog keeper's own `Page.enable` therefore runs in the
   background, and the stream's per-page sessions don't call it (§6.3).
-- **A click into a cross-site frame that opens a dialog isn't acknowledged until the dialog is answered** (found
-  in integration, `tests/browser/test_checkout_stream_e2e.py`: the card frame's "Card declined" `alert()`). The
-  `Input.dispatchMouseEvent` that the measurement above saw acknowledged was for a dialog of the main frame's; the
-  `mouseReleased` whose click makes an out-of-process frame open one gets no answer until it closes. The session
-  carried messages out strictly one at a time, so the dialog's answer, the viewer's next message, waited 2 s behind
-  the call's bound, the tap was answered `error failed`, and a viewer that reconnected meanwhile lost the answer.
-  Now a message whose input opens a dialog counts as carried out once the dialog opens; the rest of it finishes
-  after the answer, before any later input (PROTOCOL §3.4). The answer reaches the page in about 65 ms.
+- **The click that opens a dialog isn't acknowledged until the dialog is answered** (found in integration,
+  `tests/browser/test_checkout_stream_e2e.py`, with the card frame's "Card declined" `alert()`, then measured for
+  the main frame's too: `Input.dispatchMouseEvent` `mouseReleased` had no answer in 3 s while its dialog was open).
+  The acknowledged `Input.dispatchMouseEvent` above was a later event, sent to a page whose dialog was already open.
+  The session carried messages out strictly one at a time, so the dialog's answer, the viewer's next message,
+  waited 2 s behind the call's bound, the tap was answered `error failed`, and a viewer that reconnected meanwhile
+  lost the answer. Now a message whose input opens a dialog counts as carried out once the dialog opens; the rest
+  of it finishes after the answer, before any later input (PROTOCOL §3.4). The answer reaches the page in about
+  65 ms. Dialogs can therefore come faster than the 4 answers a second that §7.1 allows; a person reads each first.
 - **`everyNthFrame` 2 loses the last frame of a change** (found building the browser tier,
   `tests/browser/test_checkout_stream.py`). With 2, the screencast can skip the final frame of a short change (one
   wheel step) and then, the page being still, sends nothing more: the viewer kept showing the page one step behind

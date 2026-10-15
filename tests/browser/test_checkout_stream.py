@@ -725,6 +725,13 @@ async def press_button(viewer: Viewer, rig: Rig, selector: str, frame: str | Non
     await tap(viewer, rig.pod, middle(await frame_rect(rig.pod, selector, frame)))
 
 
+async def answer(viewer: Viewer, message: dict[str, Any]) -> None:
+    """A person reads a dialog before answering it (and the viewer may answer only 4 a second, PROTOCOL §7.1: a
+    click that opens a dialog is done when it opens, so dialogs can come faster than that here)."""
+    await asyncio.sleep(0.3)
+    await viewer.send(message)
+
+
 async def test_dialogs_show_with_their_frames_origin_and_wait_across_a_reconnect(rig: Rig) -> None:
     await rig.pod.at(f"{rig.sites.shop}/index.html")
     viewer = await rig.connect(PHONE)
@@ -739,16 +746,16 @@ async def test_dialogs_show_with_their_frames_origin_and_wait_across_a_reconnect
         "msg": "Your session will expire soon",
         "def": "",
     }
-    await viewer.send({"t": "dialog", "id": alert["id"], "ok": True})
+    await answer(viewer, {"t": "dialog", "id": alert["id"], "ok": True})
     await _until(lambda: rig.tab("window.__dialogs.length"), lambda n: n == 1)
 
     await press_button(viewer, rig, "#confirmbtn")
     confirm = await viewer.message("dialog", where=lambda m: m["kind"] == "confirm")
-    await viewer.send({"t": "dialog", "id": confirm["id"], "ok": True})
+    await answer(viewer, {"t": "dialog", "id": confirm["id"], "ok": True})
     await press_button(viewer, rig, "#promptbtn")
     prompt = await viewer.message("dialog", where=lambda m: m["kind"] == "prompt")
     assert prompt["def"] == "none"
-    await viewer.send({"t": "dialog", "id": prompt["id"], "ok": True, "s": "FERRY10"})
+    await answer(viewer, {"t": "dialog", "id": prompt["id"], "ok": True, "s": "FERRY10"})
     answers = await _until(lambda: rig.tab("window.__dialogs"), lambda d: len(d) == 3)
     assert answers == [["alert"], ["confirm", True], ["prompt", "FERRY10"]]
 
@@ -756,7 +763,7 @@ async def test_dialogs_show_with_their_frames_origin_and_wait_across_a_reconnect
     await press_button(viewer, rig, "#cardalert", "#card")
     from_card = await viewer.message("dialog", where=lambda m: m["msg"].startswith("Card declined"))
     assert from_card["origin"] == rig.sites.pay
-    await viewer.send({"t": "dialog", "id": from_card["id"], "ok": True})
+    await answer(viewer, {"t": "dialog", "id": from_card["id"], "ok": True})
 
     # A confirm left open across a reconnect (the bank app, a screen lock) is announced again, and answered.
     await press_button(viewer, rig, "#confirmbtn")
@@ -766,7 +773,7 @@ async def test_dialogs_show_with_their_frames_origin_and_wait_across_a_reconnect
     reopened = await again.message("dialog")
     assert reopened["kind"] == "confirm"
     assert not again.images, "an image of a page a dialog blocks"  # it can't be captured until it's answered
-    await again.send({"t": "dialog", "id": reopened["id"], "ok": True})
+    await answer(again, {"t": "dialog", "id": reopened["id"], "ok": True})
     answers = await _until(lambda: rig.tab("window.__dialogs"), lambda d: len(d) == 4)
     assert answers[-1] == ["confirm", True]
     header, _ = await again.image()

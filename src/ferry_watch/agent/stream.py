@@ -683,9 +683,8 @@ class CastSession:
 
     async def _until_a_dialog(self, work: Coroutine[Any, Any, None]) -> None:
         """Carries a message out, or as much of it as comes before a JavaScript dialog it opens. Chromium doesn't
-        acknowledge a click or key in a cross-site frame until the dialog that the frame opened for it is answered,
-        and the answer is the viewer's next message: the rest of this one waits in the background, and later input
-        waits for it (§3.4)."""
+        acknowledge the click or key that opened a dialog until the dialog is answered, and the answer is the
+        viewer's next message: the rest of this one waits in the background, and later input waits for it (§3.4)."""
         self._dialog_opened.clear()
         task = asyncio.ensure_future(work)
         opened = asyncio.ensure_future(self._dialog_opened.wait())
