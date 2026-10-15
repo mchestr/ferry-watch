@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import gc
 import itertools
 import json
 import logging
@@ -28,7 +29,7 @@ from ferry_watch.agent.dialogs import KeptDialog
 from ferry_watch.agent.stream import CastPod, CastSession, InboundQueue
 from ferry_watch.holds import HoldLimits, HoldState, release_due
 from tests.castclient import Viewer
-from tests.castfakes import FakeContext, FakePage, jpeg
+from tests.castfakes import FakeCdp, FakeContext, FakePage, jpeg
 
 PHONE = {"t": "hello", "v": 1, "w": 390, "h": 664, "dpr": 3}
 CARD_NUMBER = "4242 4242 4242 4242"
@@ -723,6 +724,16 @@ async def test_teardown_releases_keys_stops_the_screencast_and_detaches_bounded(
     assert rig.screen.applied == [(390, 664, 2)]  # no restore: the same device may come straight back
     assert rig.page.handlers.get("close") == []
     assert rig.context.handlers.get("page") == []
+
+
+async def test_a_frame_that_arrives_as_the_session_ends_leaves_no_call_unawaited() -> None:
+    """Chromium can send a screencast frame just as the teardown stops the pump, which then cancels the frame's ack
+    before it has run. Nothing may be left behind that was never awaited (the warning fails the test)."""
+    pump = cast_frames.FramePump(lambda _: asyncio.sleep(0, True), ImageRing())
+    cdp = Cdp(cast(Any, FakeCdp(FakePage())))
+    pump._on_frame(cdp, {"sessionId": 1})
+    await pump.stop()
+    gc.collect()
 
 
 async def test_typed_text_is_never_logged(rig: Rig, caplog: pytest.LogCaptureFixture) -> None:

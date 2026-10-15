@@ -334,7 +334,7 @@ class FramePump:
     def _on_frame(self, cdp: Cdp, event: dict[str, Any]) -> None:
         session_id = event.get("sessionId")
         if isinstance(session_id, int):  # acked at once, whatever becomes of it
-            self._aside(_quietly(cdp.send("Page.screencastFrameAck", {"sessionId": session_id})))
+            self._aside(_ack(cdp, session_id))
         entry = self._entry
         if cdp is not self._casting or entry is None or self.mode != "live" or not self._visible:
             return
@@ -417,6 +417,8 @@ def _jpeg(data: object) -> bytes | None:
     return jpeg if 0 < len(jpeg) <= MAX_JPEG_BYTES else None
 
 
-async def _quietly(work: Awaitable[Any]) -> None:
+async def _ack(cdp: Cdp, session_id: int) -> None:
+    """Acks a screencast frame. The call is made here, not by the caller: a teardown that cancels this before it
+    starts then leaves no call behind that was never awaited."""
     with contextlib.suppress(CdpError):
-        await work
+        await cdp.send("Page.screencastFrameAck", {"sessionId": session_id})
