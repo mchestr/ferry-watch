@@ -592,7 +592,8 @@ else 1 (a Mac's two scale factors). A `hello` that breaks any of these rules clo
 `{"t": "resize", "w": 844, "h": 390, "dpr": 3}`: same fields and limits as `hello` (values outside: `error
 invalid`). Sent when the viewer's layout viewport changes (rotation, a desktop window resize), never for the
 on-screen keyboard. The agent applies the latest after 300 ms without another, as in §3.2 step 3, at most 16
-distinct sizes per session (further ones: `error rate`).
+distinct sizes per session (further ones: `error rate`). A size the pod's screen can't be changed to (its X server
+refused) is answered `error failed`, and the screen goes back to the size it had; the session goes on.
 
 ### 6.3 `ack`
 

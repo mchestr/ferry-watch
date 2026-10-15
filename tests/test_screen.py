@@ -1,34 +1,90 @@
 """The streamed viewer's screen (agent/screen.py) against stand-in xrandr and xsettingsd on PATH.
 
 Each stand-in writes a line to a log for every run: xrandr its arguments and the DPI config as it was at that
-moment (so the order of DPI and mode shows), xsettingsd its start and the signals it gets.
+moment (so the order of DPI and mode shows), xsettingsd its start and the signals it gets. xrandr also keeps the
+X server's modes and refuses what Xvnc refuses (measured on KasmVNC 1.5.0's).
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import stat
+import sys
 import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from ferry_watch.agent.screen import MAX_MODES, Screen, ScreenError
 from ferry_watch.agent.settings import AgentSettings
 
-XRANDR = """#!/bin/sh
-log="$FW_TEST_DIR/log"
-echo "xrandr $* | dpi=$(cat "$FW_TEST_DIR/xsettings/xsettingsd.conf" 2>/dev/null)" >> "$log"
-if [ -e "$FW_TEST_DIR/hang" ]; then echo "hung $$" >> "$log"; exec sleep 60; fi
-if [ -e "$FW_TEST_DIR/fail" ]; then exit 1; fi
-if [ "$1" = "--query" ]; then
-  echo "Screen 0: minimum 32 x 32, current 1280 x 1000, maximum 32768 x 32768"
-  echo "VNC-0 connected primary 1280x1000+0+0 0mm x 0mm"
-  echo "   1280x1000     60.00*"
-fi
+# The X server as Xvnc starts it: its own mode of the pod's size, on its one output and in use.
+LAUNCH: dict[str, Any] = {"modes": {"1280x1000": [1280, 1000]}, "output": ["1280x1000"], "current": "1280x1000"}
+
+# xrandr as Xvnc answers it, for what the screen does: the modes on the X server and on its one output, the one in
+# use, and the refusals that matter (a name taken, a mode in use, one that isn't there). State in xrandr.json.
+XRANDR = f"""#!{sys.executable} -I
+import json, os, sys, time
+from pathlib import Path
+
+root = Path(os.environ["FW_TEST_DIR"])
+config = root / "xsettings" / "xsettingsd.conf"
+dpi = config.read_text().strip() if config.exists() else ""
+args = sys.argv[1:]
+with open(root / "log", "a") as log:
+    log.write(f"xrandr {{' '.join(args)}} | dpi={{dpi}}\\n")
+if (root / "hang").exists():
+    with open(root / "log", "a") as log:
+        log.write(f"hung {{os.getpid()}}\\n")
+    time.sleep(60)
+if (root / "fail").exists():
+    sys.exit(1)
+path = root / "xrandr.json"
+state = json.loads(path.read_text()) if path.exists() else {LAUNCH!r}
+modes, output = state["modes"], state["output"]
+
+
+def refuse(why):
+    sys.exit(f"X Error of failed request: {{why}}")
+
+
+if args == ["--query"]:
+    w, h = modes[state["current"]]
+    print(f"Screen 0: minimum 32 x 32, current {{w}} x {{h}}, maximum 32768 x 32768")
+    print(f"VNC-0 connected primary {{w}}x{{h}}+0+0 0mm x 0mm")
+    for name in output:
+        print(f"   {{name}}       60.00{{'*' if name == state['current'] else ' '}}")
+    for name in [n for n in modes if n not in output]:
+        print(f"  {{name}} (0x237) 60.000MHz")
+        print(f"        h: width  {{modes[name][0]}} start  {{modes[name][0]}}")
+        print(f"        v: height {{modes[name][1]}} start  {{modes[name][1]}}")
+elif args[0] == "--newmode":
+    if args[1] in modes:
+        refuse("BadName")
+    modes[args[1]] = [int(args[3]), int(args[7])]
+elif args[0] == "--addmode":
+    if args[2] not in modes:
+        refuse("cannot find mode")
+    if args[2] not in output:
+        output.append(args[2])
+elif args[0] == "--delmode":
+    if args[2] not in output or args[2] == state["current"]:
+        refuse("BadMatch")
+    output.remove(args[2])
+elif args[0] == "--rmmode":
+    if args[1] not in modes or args[1] in output:
+        refuse("BadAccess")
+    del modes[args[1]]
+elif args[0] == "--output":
+    if args[3] not in output:
+        refuse("cannot find mode")
+    state["current"] = args[3]
+path.write_text(json.dumps(state))
 """
 
 XSETTINGSD = """#!/bin/sh
@@ -59,6 +115,15 @@ class Tools:
 
     def forget(self) -> None:
         (self.root / "log").unlink(missing_ok=True)
+
+    def x_server(self) -> dict[str, Any]:
+        """The stand-in's modes, the output's and the one in use."""
+        path = self.root / "xrandr.json"
+        state: dict[str, Any] = json.loads(path.read_text()) if path.exists() else LAUNCH
+        return state
+
+    def ours(self) -> list[str]:
+        return [name for name in self.x_server()["modes"] if name.startswith("fw")]
 
 
 @pytest.fixture
@@ -167,10 +232,10 @@ async def test_restore_puts_back_the_pods_own_screen(tools: Tools) -> None:
     assert calls == [
         "xsettingsd term",
         "xrandr --output VNC-0 --mode 1280x1000",
+        "xrandr --delmode VNC-0 fw1280x800",  # least recently used first
+        "xrandr --rmmode fw1280x800",
         "xrandr --delmode VNC-0 fw780x1328",
         "xrandr --rmmode fw780x1328",
-        "xrandr --delmode VNC-0 fw1280x800",
-        "xrandr --rmmode fw1280x800",
     ]
     assert tools.screen.current is None
     changed.append(tools.screen.changed)
@@ -218,13 +283,31 @@ async def test_a_failed_apply_raises_and_is_tried_again(tools: Tools) -> None:
     assert "xrandr --output VNC-0 --mode fw780x1328" in tools.calls()
 
 
-async def test_at_most_16_modes(tools: Tools) -> None:
+async def test_any_number_of_sizes_with_at_most_16_modes_the_oldest_making_room(tools: Tools) -> None:
+    """A pod's life can see any number of viewer sizes (a window resized again and again, zoom, rotation, other
+    devices): each new one replaces the mode used least recently, never the one on the screen."""
     for i in range(MAX_MODES):
         await tools.screen.apply(400 + i, 700, 1)
-    with pytest.raises(ScreenError):
-        await tools.screen.apply(500, 700, 1)
+    assert len(tools.ours()) == MAX_MODES
+    tools.forget()
+    assert await tools.screen.apply(400, 700, 1)  # the first size again: used now, so not the one to go
+    assert tools.calls() == ["xrandr --output VNC-0 --mode fw400x700"]
+    tools.forget()
+    assert await tools.screen.apply(500, 700, 1)
+    assert tools.calls() == [
+        "xrandr --delmode VNC-0 fw401x700",
+        "xrandr --rmmode fw401x700",
+        "xrandr --newmode fw500x700 60 500 500 500 500 700 700 700 700",
+        "xrandr --addmode VNC-0 fw500x700",
+        "xrandr --output VNC-0 --mode fw500x700",
+    ]
+    for i in range(24):  # and on and on, at 1x and 2x
+        assert await tools.screen.apply(600 + i, 700 + i % 3, 1 + i % 2)
+        assert tools.screen.current == (600 + i, 700 + i % 3, 1 + i % 2)
+        assert len(tools.ours()) <= MAX_MODES
+        assert tools.x_server()["current"] == f"fw{(600 + i) * (1 + i % 2)}x{(700 + i % 3) * (1 + i % 2)}"
     await tools.screen.restore()
-    assert await tools.screen.apply(500, 700, 1)  # a restore clears them
+    assert tools.ours() == []
 
 
 @pytest.mark.parametrize(("w", "h", "dsf"), [(390, 664, 3), (0, 664, 1), (1921, 1601, 2), (-390, 664, 2)])

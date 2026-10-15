@@ -26,6 +26,7 @@ from ferry_watch.agent.cast_fields import FieldRef
 from ferry_watch.agent.cast_input import ImageRing, InputMapper
 from ferry_watch.agent.cast_protocol import REPEAT, Clock, CloseCode, Wheel
 from ferry_watch.agent.dialogs import KeptDialog
+from ferry_watch.agent.screen import ScreenError
 from ferry_watch.agent.stream import CastPod, CastSession, InboundQueue
 from ferry_watch.holds import HoldLimits, HoldState, release_due
 from tests.castclient import Viewer
@@ -41,11 +42,15 @@ class FakeScreen:
         self.applied: list[tuple[int, int, int]] = []
         self.current: tuple[int, int, int] | None = None
         self.hold: asyncio.Event | None = None
+        self.failing: set[tuple[int, int, int]] = set()
 
     async def apply(self, w: int, h: int, dsf: int) -> bool:
         if self.hold is not None:
             await self.hold.wait()
         self.applied.append((w, h, dsf))
+        if (w, h, dsf) in self.failing:
+            self.current = None  # as screen.Screen: half done, to be applied again
+            raise ScreenError("xrandr --output failed (1)")
         if self.current == (w, h, dsf):
             return False
         self.current = (w, h, dsf)
@@ -616,6 +621,22 @@ async def test_a_resize_waits_for_quiet_and_sizes_are_limited(rig: Rig, monkeypa
         "code": "rate",
         "ref": "resize",
     }
+
+
+async def test_a_resize_the_screen_cant_take_is_answered_and_the_session_goes_on(rig: Rig) -> None:
+    viewer = await rig.opened()
+    rig.screen.failing.add((664, 390, 2))
+    await viewer.send({"t": "resize", "w": 664, "h": 390, "dpr": 3})
+    assert await viewer.message("error", where=lambda m: m["ref"] == "resize") == {
+        "t": "error",
+        "code": "failed",
+        "ref": "resize",
+    }
+    assert rig.screen.applied == [(390, 664, 2), (664, 390, 2), (390, 664, 2)]  # back as it was, DPI and all
+    assert rig.screen.current == (390, 664, 2)
+    await viewer.send({"t": "resize", "w": 500, "h": 600, "dpr": 3})  # and the next works
+    await viewer.until(lambda: rig.screen.current == (500, 600, 2))
+    assert not viewer.ws.closed
 
 
 async def test_the_field_map_is_sent_on_its_schedule_and_unchanged_is_fields_ok(rig: Rig) -> None:

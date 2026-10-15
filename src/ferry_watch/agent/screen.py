@@ -6,7 +6,8 @@ and at 2x `xsettingsd` serves `Xft/DPI` 192, which Chromium follows live (device
 
 - `apply()` does nothing when the screen already has that size and scale factor, so a phone reconnecting
   changes nothing the page can see. Otherwise it sets the DPI first and then the mode, without waiting in
-  between, which moves the page's width monotonically from the old one to the new.
+  between, which moves the page's width monotonically from the old one to the new. At most MAX_MODES of our
+  modes are on the X server at once; a new size replaces the one used least recently.
 - `restore()` puts back the pod's own screen (its launch size at 1x, xsettingsd stopped, our modes deleted). The
   gate calls it only before it bridges a classic (KasmVNC) viewer, which therefore finds the pod exactly as
   0.6.4 left it. It's bounded and never raises.
@@ -32,13 +33,14 @@ DPI_PER_SCALE: Final = 96 * 1024  # Xft/DPI is in 1024ths of a dot per inch
 XRANDR_TIMEOUT_SECONDS: Final = 2.0
 RESTORE_SECONDS: Final = 3.0
 XSETTINGSD_STOP_SECONDS: Final = 1.0
-MAX_MODES: Final = 16  # of ours on the X server at once
+MAX_MODES: Final = 16  # of ours on the X server at once: a new one replaces the least recently used
 MAX_PIXELS: Final = (3840, 3200)  # 1920x1600 CSS px at 2x, the most a hello can ask for
 CONFIG_NAME: Final = "xsettingsd.conf"
 
 
 class ScreenError(Exception):
-    """The screen couldn't be changed (the stream session closes with 4500)."""
+    """The screen couldn't be changed: a session that can't start closes with 4500, a resize is answered `error
+    failed`."""
 
 
 class Screen:
@@ -51,7 +53,8 @@ class Screen:
         self._work = work
         self._env = {**env, "DISPLAY": display}
         self._output: str | None = None
-        self._modes: dict[str, bool] = {}  # our modes on the X server: name -> added to the output
+        self._modes: dict[str, bool] = {}  # ours on the X server, least recently used first: name -> on the output
+        self._showing: str | None = None  # ours that we last switched the output to
         self._xsettingsd: asyncio.subprocess.Process | None = None
         self._dsf = 1  # what Chromium is told
         self._touched = False  # anything to restore
@@ -67,17 +70,10 @@ class Screen:
         self.current = None  # until it's all done: a failure leaves it to be applied again
         self._touched = True
         output = await self._output_name()
-        name = f"fw{width}x{height}"
-        if name not in self._modes:
-            if len(self._modes) >= MAX_MODES:
-                raise ScreenError(f"already {MAX_MODES} modes")
-            await self._xrandr("--newmode", name, "60", *[str(width)] * 4, *[str(height)] * 4)
-            self._modes[name] = False
-        if not self._modes[name]:
-            await self._xrandr("--addmode", output, name)
-            self._modes[name] = True
+        name = await self._ours(output, width, height)
         await self._set_scale(dsf)  # DPI first, then the mode, with no wait in between
         await self._xrandr("--output", output, "--mode", name)
+        self._showing = name
         self.current = (w, h, dsf)
         return True
 
@@ -96,12 +92,9 @@ class Screen:
                 width, height = self._default
                 await self._set_scale(1)  # as apply(): DPI, then the mode, with no wait in between
                 await self._xrandr("--output", output, "--mode", f"{width}x{height}")
-                for name, added in list(self._modes.items()):
-                    if added:
-                        await self._xrandr("--delmode", output, name)
-                        self._modes[name] = False
-                    await self._xrandr("--rmmode", name)
-                    del self._modes[name]
+                self._showing = None
+                for name in list(self._modes):
+                    await self._remove(output, name)
         except Exception as e:  # noqa: BLE001 - a classic viewer is waiting: it gets the screen as it is
             log.warning("Couldn't restore the pod's screen: %s", type(e).__name__)
         finally:
@@ -113,6 +106,35 @@ class Screen:
     async def close(self) -> None:
         """Stop xsettingsd (the agent is exiting)."""
         await self._stop_xsettingsd()
+
+    # ---- our modes
+
+    async def _ours(self, output: str, width: int, height: int) -> str:
+        """Our mode of this size, on the output and now the most recently used. Making a new one first removes the
+        least recently used of ours while there are MAX_MODES: a pod's life sees any number of viewer sizes (window
+        resizes, zoom, rotation, reconnects from other devices)."""
+        name = f"fw{width}x{height}"
+        if name in self._modes:
+            self._modes[name] = self._modes.pop(name)
+        else:
+            while len(self._modes) >= MAX_MODES:
+                await self._remove(output, next(n for n in self._modes if n != self._showing))
+            await self._xrandr("--newmode", name, "60", *[str(width)] * 4, *[str(height)] * 4)
+            self._modes[name] = False
+        if not self._modes[name]:
+            await self._xrandr("--addmode", output, name)
+            self._modes[name] = True
+        return name
+
+    async def _remove(self, output: str, name: str) -> None:
+        """One of our modes off the output and off the X server (it mustn't be the one shown)."""
+        if self._modes[name]:
+            await self._xrandr("--delmode", output, name)
+            self._modes[name] = False
+        await self._xrandr("--rmmode", name)
+        del self._modes[name]
+        if self._showing == name:
+            self._showing = None
 
     # ---- the tools
 

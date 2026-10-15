@@ -76,6 +76,7 @@ from .cast_protocol import (
     scale_factor,
 )
 from .cast_scripts import VIEWPORT
+from .screen import ScreenError
 
 if TYPE_CHECKING:
     from playwright.async_api import BrowserContext, Frame, Page
@@ -883,7 +884,13 @@ class CastSession:
         dsf = scale_factor(message.w, message.h, message.dpr)
         if (message.w, message.h, dsf) not in self._screen.sizes and len(self._screen.sizes) >= MAX_SIZES:
             return "rate"
-        await self._apply(message.w, message.h, dsf)
+        try:
+            await self._apply(message.w, message.h, dsf)
+        except ScreenError as e:
+            log.warning("Couldn't resize the checkout's screen: %s", e)
+            with contextlib.suppress(ScreenError):  # as it was, the DPI too: the session goes on at that size
+                await self._apply(self._screen.w, self._screen.h, self._screen.dsf)
+            return "failed"
         return None
 
     # ---- outbound
