@@ -682,7 +682,8 @@ class CloseCode(IntEnum):  # in cast_protocol.py
    - `bring_to_front()`.
    - `DOM.enable` on its session.
    - The seeded screenshot image (flag bit 0), then `startScreencast`, dropping images whose
-     `deviceWidth/deviceHeight` don't match the applied size for up to 1 s after a change.
+     `deviceWidth/deviceHeight` don't match the applied size for up to 1 s after a change. While a dialog is open on
+     the front page, none of this can happen (the page answers no CDP, §13): it waits for the dialog's answer.
 7. **Messages out.** `ready`, `pages`, `clock`, `dialog`s, the seeded image, then `FramePump`. Every outbound
    message passes `verdict()` first. The field map follows PROTOCOL §5.3.4, and focus reports PROTOCOL §5.4.
 8. **Inbound loop.**
@@ -1304,6 +1305,16 @@ Any disagreement between A and B is fixed in PROTOCOL.md and the pack first, the
   hold.
 - **The screencast's first frame** (found while verifying the lazy restore). `Page.startScreencast` sends nothing
   on a static page, so a seeded screenshot is required (§4.5).
+- **A page with an open JavaScript dialog answers almost no CDP** (found while building the dialog keeper, on the
+  pod screen, a dialog kept open by a listener). On that page's session `Runtime.evaluate` (even in an isolated
+  world, `timeout: 100`), `Page.getLayoutMetrics`, `Page.captureScreenshot`, `Page.getFrameTree`,
+  `Page.startScreencast`, `DOM.enable` and a new session's `Page.enable` all got no answer in 2 s; the screencast
+  sent no frame; `Target.getTargetInfo` (3 ms) and `Input.dispatchMouseEvent` (acknowledged, 3 ms) answered. So a
+  stream session that starts, or switches pages, while a dialog is open there must send `ready`, `pages`, `clock`
+  and the `dialog`s without waiting on the page, bound every page call (2 s), and seed the image, start the
+  screencast, map fields and carry out input for that page only once the dialog is answered (the keeper's
+  `answer()` returning, or its `dialog_closed`). The dialog keeper's own `Page.enable` therefore runs in the
+  background, and the stream's per-page sessions don't call it (§6.3).
 
 ## 14. Evidence index
 

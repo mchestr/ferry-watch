@@ -143,7 +143,9 @@ values, an open JavaScript dialog) and the pod's screen size persist across conn
 4. It sends, in this order: `ready` (§5.1), `pages` (§5.2), `clock` (§5.8), a `dialog` (§5.5) for each JavaScript
    dialog already open on a page of the checkout, then a first image (§4) taken with `Page.captureScreenshot`,
    with header flag bit 0 set. (Chromium's screencast sends nothing until the page changes, so without this a
-   static page would never be shown.)
+   static page would never be shown.) While a dialog is open on the front page, that page can't be captured at
+   all (DESIGN §13): the first image then follows the dialog's answer, and a viewer MUST be able to show a
+   `dialog` before it has any image.
 5. Images follow (§4); `fields`, `fields_ok` and `focus` follow whenever they apply.
 
 The viewer MUST NOT send any message other than `hello` before it receives `ready`; the agent closes **4400** if
