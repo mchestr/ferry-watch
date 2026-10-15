@@ -1012,7 +1012,7 @@ is harmless: nothing can cart or open the gate before a check has launched Chrom
 **Xvnc flags** replace `entrypoint.sh:20-26`:
 `:99 -geometry 1280x1000 -depth 24 -rfbunixpath /tmp/kasm/rfb.sock -rfbunixmode 0600 -SecurityTypes None
 -DisableBasicAuth -NeverShared -DisconnectClients=0 -SendCutText=0 -AcceptCutText=1 -DLP_ClipAcceptMax 256
--IgnoreClientSettingsKasm -FrameRate 15 -MaxVideoResolution 1920x1080 -MaxConnectionTime 6000
+-IgnoreClientSettingsKasm -FrameRate 15 -DetectScrolling -MaxVideoResolution 1920x1080 -MaxConnectionTime 6000
 -AcceptSetDesktopSize -publicIP 127.0.0.1 -Log *:stderr:10`.
 
 - With `-rfbunixpath` set, KasmVNC creates only the unix listener and no WebSocket or TCP listener
@@ -1024,6 +1024,10 @@ is harmless: nothing can cart or open the gate before a check has launched Chrom
   there is no WebSocket or HTTP listener, so there is no basic auth to turn off; access stays the socket's
   0600 mode and the gate. Two tests run the real Xvnc with these flags and fail on a black or deaf screen:
   `tests/browser/test_checkout_screen.py` and the browser image's smoke test (`docker/browser/selftest.py`).
+- **Added:** `-DetectScrolling`. Xvnc sends a scrolled region as a copy of pixels the viewer already has
+  instead of new ones. On the pod's real screen with a 390x664 phone viewer, a 300 px one-finger drag (about
+  400 px of page) took about 60 KB instead of 620-750 KB, and a two-finger scroll about 65 KB instead of
+  250-300 KB, with no measurable change in Xvnc's CPU time. It changes only how frames are encoded.
 - **Removed:** `-AlwaysShared`, `-interface`, `-websocketPort`, `-httpd`, `-sslOnly`,
   `-IdleTimeout` (the gate's ping replaces it; idle-dropping a user who is reading the page only forces a
   reconnect), and `-DLP_KeyRateLimit` (KasmVNC drops any key-down within `1000/limit` ms of the previous key
@@ -2144,6 +2148,8 @@ fails CI.
   forwards), the drag stays the client's. Taps, long press (a right click), two-finger scrolling, pinch
   (Ctrl+wheel) and the mouse are untouched. The cost: a one-finger mouse drag (a slider, drag-to-select) is no
   longer possible on a touch screen; nothing in a guest checkout needs one.
+- **Scrolling costs less.** Xvnc's `-DetectScrolling` (§5.6) sends a scrolled region as a copy of what the
+  viewer already has: a one-finger scroll takes about a tenth of the bytes, which a phone on cellular notices.
 - **What the pod's automation sees.** The screen keeps a viewer's size after it leaves (Xvnc doesn't restore
   it), so after a phone viewer the pod's Chromium is phone-sized; before this change it stayed 585 px wide. It
   doesn't matter: a pod that had a checkout viewer only empties the cart (a navigation to a fixed URL) and exits

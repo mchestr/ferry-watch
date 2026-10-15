@@ -241,6 +241,11 @@ def test_xvnc_lets_the_gates_client_see_the_screen_and_use_it() -> None:
     assert "-DisableBasicAuth" in xvnc_argv(":99", (1280, 1000), Path("/tmp/kasm/rfb.sock"))
 
 
+def test_xvnc_sends_a_scroll_as_a_copy_of_what_the_viewer_already_has() -> None:
+    # A quarter to a tenth of the bytes per scroll of the checkout, which a phone on cellular notices.
+    assert "-DetectScrolling" in xvnc_argv(":99", (1280, 1000), Path("/tmp/kasm/rfb.sock"))
+
+
 def test_matchbox_has_no_key_bindings() -> None:
     # Its default kbdconfig closes the window on Alt+C, under the checkout viewer's keys.
     assert MATCHBOX_ARGV[MATCHBOX_ARGV.index("-kbdconfig") + 1] == "/dev/null"
