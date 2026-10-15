@@ -1,0 +1,25 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>App-shell checkout (inner scroller)</title>
+<style>
+ html,body{margin:0;height:100%;overflow:hidden;font-family:system-ui}
+ header{height:56px;background:#0b4f8a;color:#fff;display:flex;align-items:center;padding:0 12px}
+ main{position:absolute;top:56px;bottom:0;left:0;right:0;overflow:auto;padding:12px}
+ input,select{font-size:16px;padding:8px;margin:4px 0 14px;width:100%;box-sizing:border-box}
+ .filler{height:220px;background:linear-gradient(#f4f8ff,#dde8f6);margin:8px 0}
+ button{font-size:16px;padding:10px;width:100%}
+</style></head><body>
+<header>Checkout (the page itself never scrolls; &lt;main&gt; does)</header>
+<main id="main">
+ <label>Name <input id="name" autocomplete="name"></label>
+ <label>Email <input id="email" type="email" autocomplete="email"></label>
+ <label>Province <select id="prov"><option>BC</option><option>AB</option><option>ON</option></select></label>
+ <div class="filler">filler 1</div>
+ <label>Phone <input id="tel" type="tel" autocomplete="tel"></label>
+ <button id="pay" type="button">Pay now (0)</button>
+ <div class="filler">filler 2</div><div class="filler">filler 3</div><div class="filler">filler 4</div><div class="filler">filler 5</div>
+ <label>Postal <input id="postal" autocomplete="postal-code"></label>
+ <div class="filler">filler 6</div><div class="filler">filler 7</div>
+</main>
+<script>let n=0;document.getElementById('pay').addEventListener('click',e=>{e.target.textContent=`Pay now (${++n})`});
+window.__clicks=[];addEventListener('click',e=>__clicks.push(e.target.id||e.target.tagName),true);</script>
+</body></html>

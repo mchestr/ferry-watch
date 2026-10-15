@@ -1056,8 +1056,9 @@ The vnc-edge **Dockerfile** is unchanged.
 
 **The fixture.**
 - The scratch sites become `tests/fixtures/checkout-site/{shop,pay}`, plus `occl.html`/`card3.html` from round 2
-  and `inner.html`, `anim.html`, `swap.html` from the feasibility review. They are served on two ports with
-  `--host-resolver-rules`.
+  and `inner.html`, `anim.html`, `swap.html` from the feasibility review. The shop is served on 127.0.0.1 and the
+  card on 127.0.0.2: two sites, so the card iframe is out of process with PodBrowser's own arguments (no
+  `--host-resolver-rules`).
 - Assert the card iframe is its own CDP target, or the test is meaningless.
 
 **Tests:**
@@ -1080,16 +1081,22 @@ The vnc-edge **Dockerfile** is unchanged.
 9. **Field map**: rectangles within 2 px of the truth at scale 1 and at scale 2 with a visual viewport offset, main
    and iframe (PROTOCOL §11.3's vectors); covered fields absent; `inner.html` scrolled by the client → a new map whose
    rectangles moved; `anim.html` → a map within 500 ms despite the spinner.
-10. **Bounds**: the bomb pages (100k labels, 5,000 inputs, 200,000 inputs) → each JSON message ≤ 64 KiB, `trunc`,
-    agent RSS growth under 20 MB, evaluation wall time under 150 ms; a 20 M-character title → `pages` title of 80.
+10. **Bounds**: the bomb pages (100k labels, 5,000 inputs with 20,000-character `autocomplete`s, 5,000 inputs) →
+    each JSON message ≤ 64 KiB, `trunc`, agent RSS growth under 20 MB, evaluation wall time under 150 ms (500 ms
+    for the first evaluation in a new document, which creates the worlds: 172 ms measured), timed once the page
+    has loaded (an evaluation while it loads waits for a busy renderer: 0.7 s measured with the `autocomplete`
+    page, still within the 2 s call bound); a 20 M-character title → `pages` title of 80. A 200,000-input page
+    didn't finish loading on the headed pod screen in 2 minutes, so it can't be part of the tier; the script's scan
+    stops at 500 candidates whatever the page holds.
 11. **Still mode**: `anim.html` with no input for 2 s → images ≤ 2/s, and Chromium CPU over 5 s under 40% of a
     core; a tap → live again.
 12. alert/confirm/prompt from the main page and the iframe, with the right `origin`; a dialog open across a
     reconnect is announced again and answerable.
 13. Pop-ups: `window.open`, `target=_blank`, from the iframe; OTP typing; `page close`.
 14. **Then the stock KasmVNC client through the shim reconnects with the same nonce**: DPR 1 and 1280x1000 before
-    its resize, xsettingsd stopped, no fw modes left, and `test_checkout_screen.py`'s fitted/click/type assertions
-    pass.
+    its resize (the page reports it among its sizes before the client's own; the restore's first event can be the
+    DPR change alone), xsettingsd stopped, no fw modes left, and `test_checkout_screen.py`'s fitted/click/type
+    assertions pass.
 15. Hold end: `gate.close` → 4000 and open dialogs dismissed.
 
 `tests/browser/test_checkout_screen.py` stays as is and must pass. `docker/browser/selftest.py` gains a screen

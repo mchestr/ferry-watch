@@ -5,7 +5,8 @@
 # vars) with no network at all, then checks: the probes answer; the policy is in all three directories
 # and only Chromium ships; xrandr and xsettingsd (a streamed viewer's screen) are installed; the agent's
 # lockdown self-test passes against a real Chromium; the agent's Xvnc shows that Chromium to a client on its
-# unix socket and takes its clicks and keys; SIGTERM ends it cleanly with one enum-only termination line.
+# unix socket and takes its clicks and keys; a streamed viewer's screen (a phone's size at 2x) comes and goes;
+# SIGTERM ends it cleanly with one enum-only termination line.
 set -euo pipefail
 
 image="${1:?usage: smoke-test.sh <image>}"
