@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from datetime import time as clock_time
 from pathlib import Path
-from typing import Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from ferry_watch.bcferries.errors import BookingError, SessionExpired, describe
 from ferry_watch.bcferries.urls import CheckoutView
@@ -60,7 +60,11 @@ from ferry_watch.protocol import CartStatus as WireCartStatus
 from ferry_watch.protocol import FarePreference as WireFarePreference
 from ferry_watch.state import Cart, CartStatus
 
+from .cast_protocol import CloseCode
 from .store import OneTripStore
+
+if TYPE_CHECKING:
+    from .gate import ViewerKind
 
 log = logging.getLogger(__name__)
 
@@ -178,7 +182,7 @@ class TripWatcher:
         *,
         deadline_at: float,
         lockdown_ok: Callable[[], bool],
-        close_viewer: Callable[[str], Awaitable[None]],
+        close_viewer: Callable[[str, CloseCode], Awaitable[None]],
         clock: Callable[[], float] = time.time,
         rng: random.Random | None = None,
     ) -> None:
@@ -228,6 +232,7 @@ class TripWatcher:
         self._sign_in_reported = False
         self._viewer = _Viewer()
         self._viewer_ever = False
+        self._cast_allowed = False  # the streamed viewer's kill switch, as last seen during the hold
         self._drain_reason: ByeReason | None = None
 
     # ---- what the rest of the agent reads
@@ -261,6 +266,27 @@ class TripWatcher:
         if release_due(self.hold, self._limits(), self._clock()) is not None:
             return None
         return self.cart.id
+
+    def checkout_target(self) -> Page | None:
+        """The window holding the cart a viewer may open now, or None."""
+        return self._page if self.checkout_cart() is not None else None
+
+    def viewer_verdict(self, cart_id: str, kind: ViewerKind) -> CloseCode | None:
+        """Whether the viewer of `cart_id` may go on (None), or the code to close it with (PROTOCOL §7.2).
+
+        The gate admits with it, and a stream asks before everything it carries out or sends and every second,
+        so it reads only what is in memory, the hold clocks on the clock rather than on this loop's schedule.
+        """
+        latest = self._store.latest
+        if self._drain_reason is not None:
+            return CloseCode.DRAINING
+        if latest is None or not latest.vnc_allowed or not self._lockdown_ok():
+            return CloseCode.REVOKED
+        if kind == "cast" and not latest.cast_allowed:
+            return CloseCode.WITHDRAWN
+        if self.checkout_cart() != cart_id:
+            return CloseCode.ENDED
+        return None
 
     def viewer_changed(self, connected: bool) -> None:
         """The gate: a checkout viewer connected or left."""
@@ -358,7 +384,7 @@ class TripWatcher:
         self._wake.set()
 
     async def revoke_viewer(self, reason: str) -> None:
-        await self._close_viewer(reason)
+        await self._close_viewer(reason, CloseCode.REVOKED)
 
     # ---- the loop
 
@@ -611,6 +637,8 @@ class TripWatcher:
         now = self._clock()
         self.cart = Cart(CartStatus.READY, sailing.depart, fare=fare, since=now)
         self.hold = HoldState(ready_at=now)
+        latest = self._store.latest
+        self._cast_allowed = latest is not None and latest.cast_allowed
         self._cart_key = trip.search_key()
         self._sign_in_reported = False
         log.info("Holding %s (%s)", format_time(sailing.depart), fare.name)
@@ -636,7 +664,12 @@ class TripWatcher:
             return await self._end_hold("released", empty=True)
         latest = self._store.latest
         if self._viewer.connected_since is not None and (latest is None or not latest.vnc_allowed):
-            await self._close_viewer("checkout access withdrawn")
+            await self._close_viewer("checkout access withdrawn", CloseCode.REVOKED)
+        cast_allowed = latest is not None and latest.cast_allowed
+        if self._cast_allowed and not cast_allowed and self._viewer.connected_since is not None:
+            # The kill switch: a streamed viewer moves to the classic one (a classic viewer stays as it is).
+            await self._close_viewer("streamed viewer withdrawn", CloseCode.WITHDRAWN)
+        self._cast_allowed = cast_allowed
 
         verdict = evaluate(hold, self._limits(), now)
         if verdict.notice is not None:
@@ -670,7 +703,7 @@ class TripWatcher:
         cart, hold = self.cart, self.hold
         if cart is None or hold is None:
             return None
-        await self._close_viewer(f"hold ended ({outcome})")
+        await self._close_viewer(f"hold ended ({outcome})", CloseCode.ENDED)
         emptied, check = False, cast(ReleaseCheck, "none")
         if empty:
             emptied, check = await self._empty(cart)
@@ -711,14 +744,14 @@ class TripWatcher:
         if not viewed:
             self.alerted.discard(cart.depart)  # a fresh pod may cart it again; one someone viewed, never
         self.cart, self.hold = None, None
-        await self._close_viewer("browser lost")
+        await self._close_viewer("browser lost", CloseCode.ENDED)
         return Finish("fatal", viewer_was_connected=viewed)
 
     # ---- stopping
 
     async def _drain(self) -> Finish:
         reason = self._drain_reason or "drained"
-        await self._close_viewer("draining")
+        await self._close_viewer("draining", CloseCode.DRAINING)
         cart, hold = self.cart, self.hold
         viewed = hold is not None and hold.first_viewer_at is not None
         if cart is None or cart.status is CartStatus.FAILED:

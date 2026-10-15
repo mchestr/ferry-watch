@@ -11,6 +11,7 @@ from typing import Any
 import msgspec
 import pytest
 
+from ferry_watch.agent.cast_protocol import CloseCode
 from ferry_watch.agent.store import OneTripStore
 from ferry_watch.agent.watch import (
     FAIL_SLOW_INTERVAL_S,
@@ -127,6 +128,7 @@ class Rig:
     clock: Clock
     closed_viewers: list[str]
     lockdown: list[bool]
+    close_codes: list[CloseCode]
 
     async def step(self) -> Finish | None:
         return await self.watcher.step()
@@ -149,10 +151,12 @@ def rig() -> Rig:
     link = FakeLink()
     clock = Clock()
     closed: list[str] = []
+    codes: list[CloseCode] = []
     lockdown = [True]
 
-    async def close_viewer(reason: str) -> None:
+    async def close_viewer(reason: str, code: CloseCode) -> None:
         closed.append(reason)
+        codes.append(code)
 
     watcher = TripWatcher(
         store,
@@ -163,7 +167,7 @@ def rig() -> Rig:
         close_viewer=close_viewer,
         clock=clock,
     )
-    return Rig(watcher, store, site, link, clock, closed, lockdown)
+    return Rig(watcher, store, site, link, clock, closed, lockdown, codes)
 
 
 def phase(rig: Rig) -> Phase:
@@ -505,6 +509,73 @@ async def test_withdrawn_access_closes_the_viewer(rig: Rig) -> None:
     rig.store.apply(configure(rev=2, vnc_allowed=False))
     await rig.step()
     assert rig.closed_viewers == ["checkout access withdrawn"]
+
+
+async def test_the_viewers_verdict(rig: Rig) -> None:
+    """What a viewer may do, in order: draining, then revoked, then the streamed viewer withdrawn, then ended."""
+    assert rig.watcher.viewer_verdict("nothing", "rfb") is CloseCode.ENDED  # no hold
+    cart_id = await hold_one(rig)
+    assert rig.watcher.viewer_verdict(cart_id, "rfb") is None
+    assert rig.watcher.viewer_verdict(cart_id, "cast") is CloseCode.WITHDRAWN  # cast_allowed is false by default
+    rig.store.apply(configure(rev=2, cast_allowed=True))
+    assert rig.watcher.viewer_verdict(cart_id, "cast") is None
+    assert rig.watcher.viewer_verdict("another cart", "cast") is CloseCode.ENDED
+    rig.clock.advance(HOLD.unclaimed_s)
+    assert rig.watcher.viewer_verdict(cart_id, "cast") is CloseCode.ENDED  # on the clock, before the loop runs
+    rig.clock.advance(-HOLD.unclaimed_s)
+    rig.store.apply(configure(rev=3, cast_allowed=False, vnc_allowed=True))
+    assert rig.watcher.viewer_verdict(cart_id, "rfb") is None
+    assert rig.watcher.viewer_verdict(cart_id, "cast") is CloseCode.WITHDRAWN
+    rig.store.apply(configure(rev=4, cast_allowed=True, vnc_allowed=False))
+    assert rig.watcher.viewer_verdict(cart_id, "cast") is CloseCode.REVOKED
+    rig.store.apply(configure(rev=5, cast_allowed=True))
+    rig.lockdown[0] = False
+    assert rig.watcher.viewer_verdict(cart_id, "rfb") is CloseCode.REVOKED
+    rig.watcher.drain()
+    assert rig.watcher.viewer_verdict(cart_id, "rfb") is CloseCode.DRAINING
+    assert rig.watcher.checkout_target() is None
+
+
+async def test_the_checkout_target_is_the_held_carts_window(rig: Rig) -> None:
+    assert rig.watcher.checkout_target() is None
+    await hold_one(rig)
+    assert rig.watcher.checkout_target() is rig.site.session
+    rig.store.apply(configure(rev=2, vnc_allowed=False))
+    assert rig.watcher.checkout_target() is None
+
+
+async def test_the_kill_switch_closes_a_streamed_viewer(rig: Rig) -> None:
+    rig.store.apply(configure(rev=2, cast_allowed=True))
+    await hold_one(rig)
+    rig.watcher.viewer_changed(connected=True)
+    await rig.step()
+    assert rig.closed_viewers == []
+    rig.store.apply(configure(rev=3, cast_allowed=False))
+    await rig.step()
+    assert list(zip(rig.closed_viewers, rig.close_codes, strict=True)) == [
+        ("streamed viewer withdrawn", CloseCode.WITHDRAWN)
+    ]
+    await rig.step()  # once, when it turns off
+    assert rig.close_codes == [CloseCode.WITHDRAWN]
+
+
+async def test_each_way_a_hold_ends_has_its_close_code(rig: Rig) -> None:
+    await hold_one(rig)
+    await rig.watcher.revoke_viewer("revoked (suspended)")
+    rig.watcher.viewer_changed(connected=True)
+    rig.store.apply(configure(rev=2, vnc_allowed=False))
+    await rig.step()
+    rig.watcher.drain()
+    await rig.step()
+    assert rig.close_codes == [CloseCode.REVOKED, CloseCode.REVOKED, CloseCode.DRAINING]
+
+
+async def test_a_hold_that_ends_closes_the_viewer_as_ended(rig: Rig) -> None:
+    await hold_one(rig)
+    rig.watcher.viewer_changed(connected=True)
+    rig.watcher.release(rig.watcher.checkout_cart() or "")
+    await rig.step()
+    assert rig.close_codes == [CloseCode.ENDED]
 
 
 @pytest.mark.parametrize("viewed", [False, True])

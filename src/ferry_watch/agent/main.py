@@ -38,6 +38,7 @@ from ferry_watch.protocol import (
     encode,
 )
 
+from .cast_protocol import CloseCode
 from .gate import Gate, GateSettings
 from .hub import RECONNECT_BACKOFF_SECONDS, HubClient, Identity
 from .lockdown import Lockdown, self_test
@@ -103,6 +104,7 @@ class Agent:
             ),
             checkout_cart=self.watcher.checkout_cart,
             viewer_changed=self.watcher.viewer_changed,
+            verdict=self.watcher.viewer_verdict,
         )
         self.gate_port: int | None = None
         self.probe_port: int | None = None
@@ -169,8 +171,8 @@ class Agent:
         elif command.op == "vnc_revoke":
             await watcher.revoke_viewer(f"revoked ({command.reason})")
 
-    async def _close_viewer(self, reason: str) -> None:
-        await self.gate.close(reason)
+    async def _close_viewer(self, reason: str, code: CloseCode) -> None:
+        await self.gate.close(reason, code)
 
     async def _publish(self) -> None:
         """Send the trip's state when it changes (coalesced) and at least every 15 s."""
