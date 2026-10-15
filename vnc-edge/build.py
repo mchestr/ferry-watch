@@ -22,6 +22,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 SHIM = '<script src="/fw/shim.js"></script>'
+# Served together as fw/shim.js, vnc.html's one inserted script. session.js is also served on its own.
+SHIM_BUNDLE = ("fw/session.js", "fw/shim.js")
 CLIENT_DIRS = ("assets", "app", "core")  # what nginx serves from KasmVNC, besides vnc.html
 _HOST = re.compile(r"[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?")
 _ORIGIN = re.compile(r"https://[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?")
@@ -94,6 +96,9 @@ def build(kasmvnc_www: Path, out: Path, *, checkout_host: str, app_origin: str) 
             target.write_text(_fill(source.read_text(), values, source.name))
         else:
             shutil.copyfile(source, target)
+    (www / SHIM_BUNDLE[-1]).write_text(
+        "".join(_fill((HERE / "site" / name).read_text(), values, name) for name in SHIM_BUNDLE)
+    )
     policy = csp(script_hash, checkout_host)
     conf = out / "default.conf"
     conf.write_text(_fill((HERE / "default.conf.in").read_text(), {"__FW_CSP__": policy}, conf.name))
