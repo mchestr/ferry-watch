@@ -37,6 +37,13 @@ def test_defaults_are_the_documented_ones(tmp_path: Path) -> None:
     assert config.user_limits().value("maxTrips", {}) == 3
     assert config.fleet.max_browsers_total == 7
     assert config.pod_params().namespace == "ferry-watch-browsers"
+    assert settings.stream_viewer == "off"  # the streamed viewer's kill switch is on until a deployment says
+
+
+@pytest.mark.parametrize("value", ["off", "admins", "everyone"])
+def test_who_may_use_the_streamed_viewer(tmp_path: Path, value: str) -> None:
+    config = load(write(tmp_path, MINIMAL | {"checkout": {"streamViewer": value}}))
+    assert config.hub_settings().stream_viewer == value
 
 
 def test_values_override(tmp_path: Path) -> None:
@@ -80,6 +87,9 @@ def test_the_old_fleet_wide_quiet_hours_still_parse(tmp_path: Path) -> None:
         {"limits": {"defaults": {"maxEverything": 1}}},
         {"checksPerMinute": 41},
         {"surprise": True},
+        # Only the three values; YAML reads a bare `off` as false, which must stop startup, not mean anything.
+        *({"checkout": {"streamViewer": value}} for value in ("on", "Admins", False, None)),
+        {"checkout": {"streamViewer": "off", "origin": "https://ferry-checkout.chestr.dev"}},  # ferry-web's key
         {"pod": MINIMAL["pod"] | {"image": "ghcr.io/mchestr/ferry-watch-browser:latest"}},
     ],
 )

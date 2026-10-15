@@ -10,6 +10,7 @@ import pytest
 from ferry_watch.control.configure import (
     Allowance,
     HubSettings,
+    StreamViewer,
     Switches,
     TripRow,
     build_configure,
@@ -185,6 +186,34 @@ def test_configure_for_a_requested_hold() -> None:
     assert (asked.active, asked.auto_cart, asked.trip_spec.auto_cart) == (True, True, True)
     lapsed = configure(manual, night - 1)
     assert (lapsed.active, lapsed.auto_cart, lapsed.trip_spec.auto_cart) == (False, False, False)
+
+
+@pytest.mark.parametrize(
+    ("stream_viewer", "is_admin", "user_active", "allowed"),
+    [
+        ("off", True, True, False),  # the kill switch
+        ("admins", False, True, False),
+        ("admins", True, True, True),
+        ("everyone", False, True, True),
+        ("everyone", True, False, False),  # a suspended owner may view nothing
+    ],
+)
+def test_configure_says_whether_the_pod_may_stream(
+    stream_viewer: StreamViewer, is_admin: bool, user_active: bool, allowed: bool
+) -> None:
+    envelope: dict[str, object] = {"seq": 1, "trip": TRIP.id, "boot": "0" * 16, "rev": 3}
+    configure = build_configure(
+        envelope,
+        TripRow(TRIP, rev=3, enabled=True, paused_reason=None, owner_is_admin=is_admin),
+        mode="warm",
+        user_active=user_active,
+        allowance=PLENTY,
+        switches=Switches(),
+        settings=HubSettings(stream_viewer=stream_viewer),
+        stretch_by=1.0,
+        now=NOON.timestamp(),
+    )
+    assert configure.cast_allowed is allowed
 
 
 @pytest.mark.parametrize(

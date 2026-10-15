@@ -6,13 +6,14 @@ Rendering it needs helm and app-template: tests/apiserver and CI's deploy job do
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Any
 
 import msgspec
 import pytest
 
-from tests.deploy import EXTERNALSECRET, HELMRELEASE, flux_variables, helmrelease
+from tests.deploy import EXTERNALSECRET, HELMRELEASE, ROOT, flux_variables, helmrelease
 
 
 def test_flux_substitutes_nothing() -> None:
@@ -54,8 +55,21 @@ def test_every_key_the_pods_read_is_one_the_externalsecret_writes() -> None:
     assert read <= set(external_secret["spec"]["target"]["template"]["data"])
 
 
+def test_the_streamed_viewer_is_one_of_its_three_values() -> None:
+    """Read as YAML reads it: a bare `off` would be false, which both services refuse at startup (and the render
+    refuses first). This repo's copy keeps the beta off; a deployment offers it by changing only this value."""
+    value = helmrelease()["spec"]["values"]["ferry"]["checkout"]["streamViewer"]
+    assert value in ("off", "admins", "everyone")
+    if HELMRELEASE == ROOT / "deploy" / "helmrelease.yaml":
+        assert value == "off"
+
+
+# Who is offered the streamed viewer is each deployment's own choice: the one line the copies may differ in.
+_STREAM_VIEWER = re.compile(r'^( +streamViewer: )"(?:off|admins|everyone)"$', re.MULTILINE)
+
+
 @pytest.mark.skipif(not os.environ.get("FW_HOME_CLUSTER"), reason="FW_HOME_CLUSTER (a home-cluster checkout) isn't set")
 @pytest.mark.parametrize("ours", [HELMRELEASE, EXTERNALSECRET], ids=lambda p: p.name)
 def test_home_cluster_runs_this_copy(ours: Path) -> None:
     theirs = Path(os.environ["FW_HOME_CLUSTER"]) / "kubernetes/apps/ferry-watch/ferry-watch/app" / ours.name
-    assert theirs.read_text() == ours.read_text()
+    assert _STREAM_VIEWER.sub(r"\1...", theirs.read_text()) == _STREAM_VIEWER.sub(r"\1...", ours.read_text())

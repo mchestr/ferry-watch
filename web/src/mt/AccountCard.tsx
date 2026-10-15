@@ -1,17 +1,21 @@
-/** The user's own settings: alerts on this device, quiet hours, signing out, and the Ko-fi link. */
+/**
+ * The user's own settings: alerts on this device, quiet hours, the checkout viewer beta where it's offered, signing
+ * out, and the Ko-fi link.
+ */
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Bell, Coffee, LogOut } from "lucide-react";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { toast } from "sonner";
 import { Button, LinkButton } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Field, Input } from "@/components/ui/controls";
+import { Switch } from "@/components/ui/switch";
 import { reportError } from "@/lib/hooks";
 import { parseTimeOfDay, timeLabel } from "@/lib/time";
 import { MY_STATE_KEY, myApi } from "./api";
 import { signOut } from "./auth";
 import { pushSupported, subscribe } from "./push";
-import type { MyState, QuietHours } from "./schema";
+import type { CheckoutViewer, MyState, QuietHours } from "./schema";
 
 /**
  * The user's quiet hours. Everyone has them, 10 pm to 5 am unless they change them; changed times wait for Save.
@@ -84,6 +88,41 @@ function QuietHoursSetting({ saved }: { saved: QuietHours }) {
   );
 }
 
+/** The streamed checkout viewer (beta), for users the deployment offers it to. It saves at once. */
+function CheckoutViewerSetting({ saved }: { saved: CheckoutViewer }) {
+  const qc = useQueryClient();
+  const id = useId();
+  const save = useMutation({
+    mutationFn: myApi.setCheckoutViewer,
+    onSuccess: (next, viewer) => {
+      qc.setQueryData(MY_STATE_KEY, next);
+      toast.success(viewer === "stream" ? "Checkouts open in the new viewer" : "Checkouts open in the classic viewer");
+    },
+    onError: (error) => reportError(qc, error),
+  });
+  const viewer = save.isPending ? save.variables : saved;
+  return (
+    <div className="flex items-start justify-between gap-4">
+      <div>
+        <label htmlFor={id} className="text-sm">
+          New checkout viewer (beta)
+        </label>
+        <p id={`${id}-hint`} className="mt-0.5 text-xs text-muted-foreground">
+          Checkout looks and scrolls like a normal page on your phone. If anything goes wrong, the checkout has a{" "}
+          <strong>Use the classic viewer</strong> button.
+        </p>
+      </div>
+      <Switch
+        id={id}
+        aria-describedby={`${id}-hint`}
+        checked={viewer === "stream"}
+        disabled={save.isPending}
+        onCheckedChange={(on) => save.mutate(on ? "stream" : "classic")}
+      />
+    </div>
+  );
+}
+
 export function AccountCard({ state }: { state: MyState }) {
   const qc = useQueryClient();
   const onError = (error: unknown) => reportError(qc, error);
@@ -123,6 +162,7 @@ export function AccountCard({ state }: { state: MyState }) {
         </div>
       </div>
       <QuietHoursSetting saved={state.settings.quiet_hours} />
+      {state.settings.stream_viewer_offered && <CheckoutViewerSetting saved={state.settings.checkout_viewer} />}
       <p className="text-xs text-muted-foreground">
         Your nearest trip within a week is watched closely, every 5 minutes a week out down to every 30 seconds in the
         last 6 hours. Other trips are checked every 6 hours.

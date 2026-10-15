@@ -2,7 +2,7 @@
 import { z } from "zod";
 import { request } from "@/lib/api";
 import { TerminalListSchema, type Terminal, type TripSettings } from "@/lib/schema";
-import { CheckoutSchema, MyStateSchema, type MyState, type QuietHours } from "./schema";
+import { CheckoutSchema, MyStateSchema, type CheckoutViewer, type MyState, type QuietHours } from "./schema";
 
 export const MY_STATE_KEY = ["my-state"] as const;
 
@@ -43,6 +43,8 @@ export const myApi = {
   booked: (id: string, answer: BookedAnswer) => mutate("POST", `${tripPath(id)}/booked`, answer),
   /** The user's quiet hours (Pacific time). Everyone has them, so there's no turning them off. */
   setQuietHours: (quiet: QuietHours) => mutate("PATCH", "/api/me", { quiet_hours: quiet }),
+  /** Which viewer opens the user's checkouts; "stream" only while the beta is offered to them. */
+  setCheckoutViewer: (viewer: CheckoutViewer) => mutate("PATCH", "/api/me", { checkout_viewer: viewer }),
   /** A one-minute link to this trip's checkout. Not followed automatically: the user chooses the device. */
   checkout: (id: string) => request(`${tripPath(id)}/vnc`, { method: "POST", body: {}, schema: CheckoutSchema }),
   subscribe: (subscription: PushSubscriptionJSON) =>

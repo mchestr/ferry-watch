@@ -18,7 +18,7 @@ import msgspec
 from ferry_watch.polling import PollPolicy, Tier
 from ferry_watch.protocol import MAX_HARD_S, MAX_SESSION_S, MAX_UNCLAIMED_S, MAX_VIEWER_GONE_S, HoldLimits
 
-from .configure import HubSettings
+from .configure import HubSettings, StreamViewer
 from .db import Roles
 from .limits import CEILINGS, DEFAULTS, LimitKey, Limits
 from .pods import NAMESPACE, PodParams
@@ -92,6 +92,12 @@ class RolesConfig(_Config, kw_only=True):
     control: str = "ferrywatch_control"
 
 
+class CheckoutConfig(_Config, kw_only=True):
+    # Who may use the streamed checkout viewer (beta); the same value as ferry-web's. Each pod's configure carries
+    # `cast_allowed` from it, so "off" (the kill switch) closes live streams within one configure push.
+    stream_viewer: StreamViewer = "off"
+
+
 class ControlConfig(_Config, kw_only=True):
     pod: PodConfig
     fleet: FleetConfig = msgspec.field(default_factory=FleetConfig)
@@ -99,6 +105,7 @@ class ControlConfig(_Config, kw_only=True):
     polling: PollingConfig = msgspec.field(default_factory=PollingConfig)
     limits: LimitsConfig = msgspec.field(default_factory=LimitsConfig)
     roles: RolesConfig = msgspec.field(default_factory=RolesConfig)
+    checkout: CheckoutConfig = msgspec.field(default_factory=CheckoutConfig)
     checks_per_minute: Annotated[int, msgspec.Meta(ge=1, le=40)] = 20
     auto_cart: bool = True
     alert_only_fares: list[str] = []
@@ -146,6 +153,7 @@ class ControlConfig(_Config, kw_only=True):
             auto_cart=self.auto_cart,
             alert_only_fares=frozenset(self.alert_only_fares),
             alert_only_vehicles=frozenset(self.alert_only_vehicles),
+            stream_viewer=self.checkout.stream_viewer,
         )
 
     def user_limits(self) -> Limits:

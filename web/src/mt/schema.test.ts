@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { makeSettings } from "@/test/fixtures";
-import { DEFAULT_QUIET_HOURS, MyStateSchema } from "./schema";
+import { CheckoutSchema, DEFAULT_QUIET_HOURS, MyStateSchema } from "./schema";
 
 /** /api/state as ferry-web 0.6.2 sent it: one global quiet hours, me.paused, no settings. */
 function older(): Record<string, unknown> {
@@ -63,10 +63,41 @@ describe("MyStateSchema", () => {
 
   it("tolerates an older server: no settings of the user's own, and no trip is quiet", () => {
     const state = MyStateSchema.parse(older());
-    expect(state.settings).toEqual({ quiet_hours: DEFAULT_QUIET_HOURS });
+    expect(state.settings).toEqual({
+      quiet_hours: DEFAULT_QUIET_HOURS,
+      checkout_viewer: "classic",
+      stream_viewer_offered: false,
+    });
     expect(state.trips[0]?.quiet).toBe(false);
     const none = older();
     delete none.quiet_hours;
     expect(MyStateSchema.parse(none).quiet_hours).toBeNull();
+  });
+});
+
+describe("the checkout viewer", () => {
+  const quiet = { start: "22:00", end: "05:00" };
+
+  it("reads the user's choice and whether the beta is offered to them", () => {
+    const settings = { quiet_hours: quiet, checkout_viewer: "stream", stream_viewer_offered: true };
+    expect(MyStateSchema.parse({ ...older(), settings }).settings).toEqual(settings);
+  });
+
+  it("is classic, and not offered, from a server before the beta (0.6.4)", () => {
+    const { settings } = MyStateSchema.parse({ ...older(), settings: { quiet_hours: quiet } });
+    expect(settings).toEqual({ quiet_hours: quiet, checkout_viewer: "classic", stream_viewer_offered: false });
+  });
+
+  it("is classic where a server says something this build doesn't know", () => {
+    const settings = { quiet_hours: quiet, checkout_viewer: "stream2", stream_viewer_offered: "yes" };
+    const parsed = MyStateSchema.parse({ ...older(), settings }).settings;
+    expect([parsed.checkout_viewer, parsed.stream_viewer_offered]).toEqual(["classic", false]);
+  });
+
+  it("is what the checkout link says it opens, classic from a server before the beta", () => {
+    const url = "https://ferry-checkout.chestr.dev/t/3f9c0a1b2c3d4e5f/g/2/#ticket";
+    expect(CheckoutSchema.parse({ url, ttl: 60 }).viewer).toBe("classic");
+    expect(CheckoutSchema.parse({ url, ttl: 60, viewer: "stream" }).viewer).toBe("stream");
+    expect(CheckoutSchema.parse({ url, ttl: 60, viewer: "other" }).viewer).toBe("classic");
   });
 });
