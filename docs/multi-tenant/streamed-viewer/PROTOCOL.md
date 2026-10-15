@@ -269,8 +269,10 @@ equal `ready.w`/`ready.h`; a pop-up window with a toolbar has a slightly shorter
 - **Metadata kept.** The agent keeps the header fields of the last **16** binary messages it sent, so that it can
   check what a `tap` or `pinch` was aimed at (§6.4, §6.8).
 - **Malformed.** A binary message the viewer can't take as one of the above (fewer than 32 bytes, `kind` not 1 or
-  2, `slot` not 0 or 1, a kind 2 longer than 32 bytes, a kind 1 with no JPEG) is an agent bug: the viewer neither
-  draws nor acks it, closes the socket with 1000 and goes on as after a 4500 (§3.6).
+  2, `slot` not 0 or 1, a kind 2 longer than 32 bytes, a kind 1 with no JPEG or with bytes that don't decode as one,
+  a `w` or `h` of 0, a `scale`, `sx` or `sy` that isn't a finite number, a `scale` not above 0, a kind 2 for a slot
+  that holds no image of this session) is an agent bug: the viewer neither draws nor acks it, closes the socket with
+  1000 and goes on as after a 4500 (§3.6).
 
 ### 4.3 Image sources and rates (agent)
 
