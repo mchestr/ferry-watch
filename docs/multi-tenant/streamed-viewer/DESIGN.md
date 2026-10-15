@@ -996,7 +996,10 @@ switch.
 
 **`shim.js`**: its socket wrapper calls `FwSession` (same behaviour); its phone IIFEs are unchanged. `build.py`
 concatenates `session.js` + `shim.js` into the served `fw/shim.js`, so vnc.html still has exactly one inserted
-script line and its CSP hash is unchanged.
+script line and its CSP hash is unchanged. It serves `fw/landing.js` the same way, `session.js` + `landing.js`, and
+landing.html loads only that: vnc-edge rolls one replica at a time (and back, on a rollback), so a page and its
+script can come from different versions, and neither may need another file of its own version. `landing.js` also
+works on 0.6.4's landing.html. Found in review: 0.6.4's page with 0.7.0's script never opened the checkout.
 
 ### 8.5 Frontend
 
@@ -1017,6 +1020,7 @@ script line and its CSP hash is unchanged.
 | 0.7.0 ferry-web/control, pod from before the upgrade (agent 0.6.x) | classic URL (version check); no `cast_allowed` sent to it |
 | 0.7.0 ferry-web, 0.6.4 vnc-edge still serving (rollout seconds) | a stream URL lands on the old landing page ("No checkout here"); opening again after vnc-edge rolls works. Order vnc-edge first, or keep `streamViewer: off` until it has |
 | 0.6.4 ferry-web, 0.7.0 vnc-edge/pods | classic URLs only; the new landing page handles the 0.6.4 fragment |
+| vnc-edge rolling between 0.6.4 and 0.7.0 replicas (either way) | a landing page and its script may come from different versions: each served script carries `session.js`, and `landing.js` works on 0.6.4's page (`test_checkout_edge.py` opens a classic link with each pairing) |
 | Rollback to 0.6.4 (all services) | the column is ignored; classic URLs; running 0.7.0 pods get `cast_allowed` absent = false: new streams refused, live ones closed with 4005 → classic |
 | Rollback of the images only, keeping the 0.7.0 values | set `checkout.streamViewer: "off"` first, or in the same change: with any other value the configs carry the key, which 0.6.4's ferry-web, ferry-control and db hook refuse, and the upgrade fails |
 | Kill switch `streamViewer: off` | no stream URLs, no Settings switch; every pod's `cast_allowed` false within one configure push: live streams move to classic |
@@ -1024,7 +1028,8 @@ script line and its CSP hash is unchanged.
 ## 9. vnc-edge build, nginx, CSP, smoke test (workstream B)
 
 **`build.py`**:
-- `SHIM_BUNDLE = ("fw/session.js", "fw/shim.js")`, written as `www/fw/shim.js`; `session.js` is also copied as is.
+- `BUNDLES`: `fw/session.js` in front of `fw/shim.js` and of `fw/landing.js`, each written under its own name;
+  `session.js` is also copied as is (viewer.html loads it).
 - `viewer_csp(checkout_host)` returns the C38 policy, and `default.conf.in` gets a `__FW_VIEWER_CSP__` placeholder.
 - The build fails if `viewer.html` contains an inline `<script>` without `src`, a `style=` attribute, an `on…=`
   handler, a `<style>` element, or lacks `#fw-escape`.
@@ -1051,7 +1056,7 @@ The viewer's modules and CSS are served by the existing `/fw/` location, which i
   answer 200, and the modules have `Cache-Control: no-store`.
 - The viewer's CSP equals the C38 string.
 - vnc.html's CSP is unchanged.
-- The served `shim.js` starts with `session.js`'s content.
+- The served `shim.js` and `landing.js` start with `session.js`'s content.
 
 The vnc-edge **Dockerfile** is unchanged.
 

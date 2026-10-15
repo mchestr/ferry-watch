@@ -27,8 +27,11 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 SHIM = '<script src="/fw/shim.js"></script>'
-# Served together as fw/shim.js, vnc.html's one inserted script. session.js is also served on its own.
-SHIM_BUNDLE = ("fw/session.js", "fw/shim.js")
+# fw/session.js in front of each classic script a page of ours loads, served as one file: fw/shim.js, vnc.html's
+# one inserted script, and fw/landing.js, the landing page's. A page and its script can come from different
+# replicas during a rolling update (or a rollback), so neither may need another file of its own version.
+# session.js is also served on its own, for viewer.html.
+BUNDLES = {name: ("fw/session.js", name) for name in ("fw/shim.js", "fw/landing.js")}
 CLIENT_DIRS = ("assets", "app", "core")  # what nginx serves from KasmVNC, besides vnc.html
 _HOST = re.compile(r"[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?")
 _ORIGIN = re.compile(r"https://[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?")
@@ -170,9 +173,8 @@ def build(kasmvnc_www: Path, out: Path, *, checkout_host: str, app_origin: str) 
             target.write_text(_fill(source.read_text(), values, source.name))
         else:
             shutil.copyfile(source, target)
-    (www / SHIM_BUNDLE[-1]).write_text(
-        "".join(_fill((HERE / "site" / name).read_text(), values, name) for name in SHIM_BUNDLE)
-    )
+    for bundle, parts in BUNDLES.items():
+        (www / bundle).write_text("".join(_fill((HERE / "site" / name).read_text(), values, name) for name in parts))
     policy = csp(script_hash, checkout_host)
     viewer_policy = viewer_csp(checkout_host)
     conf = out / "default.conf"

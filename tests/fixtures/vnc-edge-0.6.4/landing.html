@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="fw-app" content="__FW_APP_ORIGIN__" />
+    <title>Ferry Watch checkout</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: system-ui, sans-serif;
+        line-height: 1.5;
+      }
+      body {
+        margin: 0;
+        padding: 24px 16px;
+        background: Canvas;
+        color: CanvasText;
+      }
+      main {
+        max-width: 32rem;
+        margin: 0 auto;
+      }
+      h1 {
+        font-size: 1.25rem;
+        margin: 0 0 8px;
+      }
+      .muted {
+        opacity: 0.75;
+      }
+      button {
+        width: 100%;
+        padding: 12px;
+        border: 0;
+        border-radius: 12px;
+        background: #15803d;
+        color: #fff;
+        font: inherit;
+        font-weight: 600;
+      }
+    </style>
+    <script src="/fw/landing.js" defer></script>
+  </head>
+  <body>
+    <main>
+      <h1 id="title">Opening your checkout…</h1>
+      <section id="details" hidden>
+        <p id="sailing"></p>
+        <p id="deadline" class="muted"></p>
+        <button id="open" type="button">Open checkout</button>
+      </section>
+      <p id="nothing" class="muted" hidden></p>
+      <p><a id="back" href="__FW_APP_ORIGIN__/">Back to Ferry Watch</a></p>
+    </main>
+  </body>
+</html>

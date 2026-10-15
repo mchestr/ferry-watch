@@ -12,9 +12,11 @@ The client's files come from the KasmVNC package: set FW_KASMVNC_WWW to its extr
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import functools
 import importlib.util
 import os
+import shutil
 import struct
 import sys
 import time
@@ -177,6 +179,13 @@ def edge_app(site: Site, gate: Gate | Handler, offers: list[list[str]]) -> web.A
 
 @pytest.fixture
 async def edge(site: Site, tmp_path: Path) -> AsyncIterator[Edge]:
+    async with serve_edge(site, tmp_path) as served:
+        yield served
+
+
+@contextlib.asynccontextmanager
+async def serve_edge(site: Site, tmp_path: Path) -> AsyncIterator[Edge]:
+    """vnc-edge serving `site`, with the gate in front of a stand-in Xvnc."""
     xvnc = FakeXvnc(tmp_path / "rfb.sock")
     rfb = await asyncio.start_unix_server(xvnc.serve, path=xvnc.path)
     port = unused_port()
@@ -367,6 +376,37 @@ async def test_a_classic_ticket_opens_vnc_html_as_0_6_4_did(edge: Edge, page: Pa
     record = await device_record(page)
     assert (record["viewer"], record["viewer_fallback"]) == ("classic", False)
     assert sorted(edge.offers[-1]) == sorted(["binary", f"fw.n1.{record['n']}", f"fw.t1.{issued}"])
+
+
+@pytest.mark.parametrize(
+    ("page_from", "script_from"), [("0.6.4", "0.7.0"), ("0.7.0", "0.6.4")], ids=["old-page", "old-script"]
+)
+async def test_a_classic_ticket_opens_vnc_html_while_vnc_edge_rolls(
+    site: Site, tmp_path: Path, page: Page, page_from: str, script_from: str
+) -> None:
+    """vnc-edge rolls one replica at a time (and back, on a rollback): the landing page and its script can come from
+    different versions. Each must stand on its own, and a classic link works with either pairing."""
+    mixed = tmp_path / "www"
+    shutil.copytree(site.www, mixed)
+    old = Path(__file__).resolve().parents[1] / "fixtures" / "vnc-edge-0.6.4"
+    if page_from == "0.6.4":
+        html = (old / "landing.html").read_text().replace("__FW_APP_ORIGIN__", APP)
+        (mixed / "fw" / "landing.html").write_text(html)
+        (mixed / "fw" / "session.js").unlink()  # that replica has none
+    else:
+        (mixed / "fw" / "landing.js").write_text((old / "landing.js").read_text())
+    errors: list[str] = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    async with serve_edge(Site(mixed, site.csp), tmp_path) as edge:
+        issued = ticket()
+        await page.goto(f"{edge.url}{LANDING}#{issued}")
+        await page.click("#open")
+        await page.wait_for_selector("html.noVNC_connected")
+        assert page.url == f"{edge.url}{classic_url()}"
+        assert sorted(edge.offers[-1]) == sorted(
+            ["binary", f"fw.n1.{(await device_record(page))['n']}", f"fw.t1.{issued}"]
+        )
+    assert errors == []
 
 
 async def test_a_stream_ticket_opens_the_streamed_viewer(edge: Edge, page: Page) -> None:

@@ -113,3 +113,17 @@ def test_the_build_refuses_a_viewer_its_policy_would_break(
 
 def test_the_viewer_as_it_is_fits(build: ModuleType) -> None:
     build.check_viewer_html((EDGE / "site" / "fw" / "viewer.html").read_text())
+
+
+def test_each_page_script_stands_on_its_own(build: ModuleType, kasmvnc: Path, tmp_path: Path) -> None:
+    """A page and its script can come from different replicas while vnc-edge rolls: the shim and the landing page's
+    script each carry fw/session.js, and neither page loads it as a file of its own version."""
+    built = build.build(kasmvnc, tmp_path / "out", checkout_host=HOST, app_origin=APP)
+    fw = built.www / "fw"
+    session = (fw / "session.js").read_text()
+    for name in ("shim.js", "landing.js"):
+        own = (EDGE / "site" / "fw" / name).read_text().replace("__FW_APP_ORIGIN__", APP)
+        assert (fw / name).read_text() == session + own, name
+    scripts = re.findall(r'<script src="([^"]+)"', (fw / "landing.html").read_text())
+    assert scripts == ["/fw/landing.js"]
+    assert re.findall(r'<script src="(/fw/[^"]+)"', (built.www / "vnc.html").read_text()) == ["/fw/shim.js"]

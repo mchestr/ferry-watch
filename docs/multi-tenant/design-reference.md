@@ -2262,7 +2262,9 @@ narrow, validated input protocol.
   `keyboard`, `overlays`, `sheets`). `fw/session.js` is a classic script shared with the classic viewer: the
   device record, the nonce, the subprotocol offer, both viewers' URLs and the escape hatch. `build.py` serves it
   on its own and as the first part of the served `fw/shim.js`, so vnc.html still has its one inserted line, and its
-  page, patch and policy are byte-identical to 0.6.4's (a test pins the policy string).
+  page, patch and policy are byte-identical to 0.6.4's (a test pins the policy string). The landing page's
+  `fw/landing.js` carries it the same way: while replicas of two versions serve, a page and its script can come
+  from different ones.
 - **Landing routing.** The landing page takes the 0.6.4 fragment (`#fw1.…`, the ticket alone: classic) and
   `#v=s1&t=<ticket>` (stream). A fresh ticket stores `record.viewer` in the device record; the page opens
   `/fw/viewer.html#t=<trip>&g=<gen>` when it says stream and `record.viewer_fallback` is unset, else 0.6.4's

@@ -13,7 +13,7 @@
 // The ticket's display fields are signed but not checked here: they are shown as text, never markup.
 (() => {
   "use strict";
-  const session = window.FwSession; // fw/session.js
+  const session = window.FwSession; // fw/session.js, served in front of this file (build.py)
   const app = document.querySelector('meta[name="fw-app"]').content;
   const at = session.where(location.pathname);
   if (!at) return;
@@ -99,7 +99,8 @@
 
   const streamed = Boolean(record && record.viewer === "stream" && !record.viewer_fallback);
   ready(record && record.disp);
-  document.getElementById("beta").hidden = !streamed;
+  const beta = document.getElementById("beta"); // not on a page from a 0.6.4 replica, mid-rollout
+  if (beta) beta.hidden = !streamed;
   const go = () => location.replace(streamed ? session.streamUrl(trip, gen) : session.classicUrl(trip, gen));
   document.getElementById("open").addEventListener("click", go);
   setTimeout(go, OPEN_AFTER_MS);

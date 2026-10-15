@@ -65,11 +65,14 @@ for path in /fw/viewer/main.js /fw/viewer/core/protocol.js /fw/session.js /fw/vi
   fi
 done
 curl -fsS -o "$work/shim.js" "$base/fw/shim.js"
+curl -fsS -o "$work/landing.js" "$base/fw/landing.js"
 curl -fsS -o "$work/session.js" "$base/fw/session.js"
-python3 -I - "$work/headers" "$work/viewer-headers" "$work/session.js" "$work/shim.js" <<'EOF'
+python3 -I - "$work/headers" "$work/viewer-headers" "$work/session.js" "$work/shim.js" "$work/landing.js" <<'EOF'
 import re, sys
 
-classic_headers, viewer_headers, session, shim = (open(path, encoding="utf-8").read() for path in sys.argv[1:])
+classic_headers, viewer_headers, session, shim, landing = (
+    open(path, encoding="utf-8").read() for path in sys.argv[1:]
+)
 policy = lambda headers: re.search(r"(?im)^content-security-policy: (.*?)\r?$", headers).group(1)
 classic, viewer = policy(classic_headers), policy(viewer_headers)
 host = re.search(r"connect-src 'self' wss://([a-z0-9.:-]+) data:", classic).group(1)
@@ -85,6 +88,8 @@ assert viewer == (
     "base-uri 'none'; form-action 'none'; frame-ancestors 'none'; require-trusted-types-for 'script'; "
     "trusted-types 'none'"
 ), viewer
+# Each page's script stands on its own while replicas of two versions serve (a rolling update, a rollback).
 assert shim.startswith(session) and len(shim) > len(session), "fw/shim.js doesn't start with fw/session.js"
+assert landing.startswith(session) and len(landing) > len(session), "fw/landing.js doesn't start with fw/session.js"
 EOF
 echo "vnc-edge smoke test passed"
