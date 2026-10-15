@@ -9,7 +9,16 @@ from typing import Any, cast
 
 import pytest
 
-from ferry_watch.agent.cast_cdp import ALLOWED, EVALUATE_TIMEOUT_MS, WORLD_NAME, Cdp, CdpError, NotAllowed, Worlds
+from ferry_watch.agent.cast_cdp import (
+    ALLOWED,
+    EVALUATE_TIMEOUT_MS,
+    WORLD_NAME,
+    Cdp,
+    CdpError,
+    NotAllowed,
+    Worlds,
+    open_session,
+)
 from ferry_watch.agent.cast_scripts import FIELDS, SCRIPTS, STORE_OWNER, VIEWPORT, call, script_of
 from tests.castfakes import FakeCdp, FakeContext, FakeFrame, FakePage
 
@@ -297,3 +306,67 @@ async def test_a_failing_call_drops_the_world_and_the_next_one_is_made_afresh() 
     assert again is not None
     assert again.context != main.context
     await worlds.close()
+
+
+async def eventually(done: Any) -> None:
+    async with asyncio.timeout(2):
+        while not done():  # noqa: ASYNC110 - the stand-ins change it on their own
+            await asyncio.sleep(0.01)
+
+
+async def test_a_session_whose_opening_nobody_waits_for_any_more_is_detached() -> None:
+    """Playwright makes the session even when its caller has gone (a cancelled task, a bound run out): it's detached
+    once it's there, as nobody else holds it."""
+    page = FakePage()
+    context = FakeContext(page)
+    context.opening = asyncio.Event()
+    waiting = asyncio.ensure_future(open_session(cast(Any, context), cast(Any, page)))
+    await asyncio.sleep(0.05)
+    waiting.cancel()  # a reconnect replaced the stream session, say
+    with pytest.raises(asyncio.CancelledError):
+        await waiting
+    with pytest.raises(TimeoutError):
+        await open_session(cast(Any, context), cast(Any, page), seconds=0.05)
+    context.opening.set()
+    await eventually(lambda: len(context.sessions) == 2 and all(s.detached for s in context.sessions))
+
+    context.opening = None
+    session = await open_session(cast(Any, context), cast(Any, page))  # one that is waited for is kept
+    await asyncio.sleep(0.05)
+    assert not cast(FakeCdp, session).detached
+    with pytest.raises(RuntimeError, match="separate CDP session"):  # Playwright's refusal comes through
+        await open_session(cast(Any, context), cast(Any, page.main_frame))
+
+
+@pytest.mark.parametrize("how", ["dropped", "failed"])
+async def test_a_card_frames_own_session_goes_when_its_world_isnt_made(how: str) -> None:
+    """The world of an out-of-process frame is being made when the frame navigates (a 3-D Secure step reloads the
+    card frame: its making is cancelled) or when its own session's first call fails: that session is detached."""
+    context, page, card, _ = page_with_frames()
+    card.page = page
+    main_session = FakeCdp(page)
+    worlds = Worlds(cast(Any, context), cast(Any, page), Cdp(cast(Any, main_session)))
+    assert await worlds.get(cast(Any, page.main_frame)) is not None
+    original = context.new_cdp_session
+
+    async def gone(method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        raise RuntimeError("Target closed")  # it went before it answered
+
+    async def opened(target: Any) -> FakeCdp:
+        session = await original(target)
+        if how == "dropped":
+            session.hang = {"Page.getFrameTree"}  # busy loading its next page
+        else:
+            session.send = gone  # type: ignore[method-assign]
+        return session
+
+    context.new_cdp_session = opened  # type: ignore[method-assign]
+    making = asyncio.ensure_future(worlds.get(cast(Any, card)))
+    await eventually(lambda: context.sessions)
+    (own,) = context.sessions
+    if how == "dropped":
+        await asyncio.sleep(0.05)
+        worlds.drop(cast(Any, card))  # framenavigated
+    assert await making is None
+    await worlds.close()
+    await eventually(lambda: own.detached)

@@ -174,8 +174,11 @@ class FakeContext(Emitter):
         super().__init__()
         self.pages = list(pages)
         self.sessions: list[FakeCdp] = []
+        self.opening: asyncio.Event | None = None  # new sessions wait for it, if set (and are made all the same)
 
     async def new_cdp_session(self, target: FakePage | FakeFrame) -> FakeCdp:
+        if self.opening is not None:
+            await self.opening.wait()
         if isinstance(target, FakeFrame):
             if not target.out_of_process:
                 raise RuntimeError("This frame does not have a separate CDP session")

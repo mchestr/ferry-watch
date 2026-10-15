@@ -30,6 +30,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Final, Protocol, cast
 
+from .cast_cdp import open_session
 from .cast_protocol import MAX_DIALOG_MESSAGE, MAX_PROMPT_DEFAULT, DialogKind, clean
 
 if TYPE_CHECKING:
@@ -255,8 +256,7 @@ class DialogKeeper:
 
     async def _watch(self, context: BrowserContext, page: Page) -> None:
         try:
-            async with asyncio.timeout(self._call_seconds):
-                session = await context.new_cdp_session(page)
+            session = await open_session(context, page, seconds=self._call_seconds)
         except Exception as e:  # noqa: BLE001 - the page is going, or the browser is: no dialogs to keep there
             log.debug("No dialog session for a page: %s", type(e).__name__)
             return

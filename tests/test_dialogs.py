@@ -153,8 +153,15 @@ async def context() -> FakeContext:
 async def keeper(context: FakeContext) -> DialogKeeper:
     keeper = DialogKeeper(lambda: cast(Any, context), call_seconds=0.5)
     await keeper.keep()
-    await asyncio.sleep(0)  # the page's session
+    await opened()  # the page's session
     return keeper
+
+
+async def opened() -> None:
+    """Let the keeper open the sessions it opens in the background (a few turns of the loop: Playwright's call runs
+    as a task of its own, cast_cdp.open_session)."""
+    for _ in range(10):
+        await asyncio.sleep(0)
 
 
 def numbered(pairs: list[tuple[int, KeptDialog]]) -> list[tuple[int, str]]:
@@ -262,7 +269,7 @@ async def test_a_closed_page_takes_its_dialogs(context: FakeContext, keeper: Dia
     sink = Sink()
     keeper.attach(sink)
     popup = context.open_page("https://bank.example/3ds")
-    await asyncio.sleep(0)
+    await opened()
     await context.dialog("alert", "Bank", page=popup)
     await context.dialog("alert", "Shop")
     popup.close()
@@ -330,6 +337,7 @@ async def test_keep_follows_the_checkouts_context(context: FakeContext) -> None:
     await keeper.keep()  # a new browser session: the old one's dialogs are dismissed
     assert old.answers == [("dismiss", None)]
     assert context.handlers["dialog"] == []
+    await keeper.release()
 
 
 async def test_answers_are_never_logged(

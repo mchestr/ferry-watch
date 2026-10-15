@@ -13,7 +13,7 @@ import contextlib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final
 
-from .cast_cdp import CALL_SECONDS, Cdp, CdpError, Worlds
+from .cast_cdp import Cdp, CdpError, Worlds, open_session
 from .cast_protocol import MAX_TITLE, PageInfo, Pages, clean, origin_of
 
 if TYPE_CHECKING:
@@ -86,8 +86,7 @@ class PageList:
         async with self._opening:  # one session a page, however many ask at once
             if entry.cdp is None:
                 try:
-                    async with asyncio.timeout(CALL_SECONDS):
-                        session = await self._context.new_cdp_session(entry.page)
+                    session = await open_session(self._context, entry.page)
                 except Exception as e:  # noqa: BLE001 - the page went
                     raise CdpError(f"no CDP session for a page ({type(e).__name__})") from None
                 entry.cdp = Cdp(session)

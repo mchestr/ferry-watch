@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Any, Final, Literal, Protocol, cast
 
 from aiohttp import WSMsgType, web
 
-from .cast_cdp import CALL_SECONDS, Cdp, CdpError, Worlds
+from .cast_cdp import CALL_SECONDS, Cdp, CdpError, Worlds, open_session
 from .cast_fields import FieldMapper, FocusReporter, Front
 from .cast_frames import FramePump
 from .cast_input import MOVED_SCALE, PINCH_SPEED, ImageRing, InputMapper
@@ -177,7 +177,7 @@ class ClassicScreen:
 
 async def _unzoom(context: BrowserContext, page: Page) -> None:
     """A trackpad's pinch back to page scale 1, about the middle of the window, if the page is zoomed."""
-    session = await context.new_cdp_session(page)
+    session = await open_session(context, page)
     cdp = Cdp(session)
     try:
         viewport = (await cdp.send("Page.getLayoutMetrics")).get("cssVisualViewport", {})

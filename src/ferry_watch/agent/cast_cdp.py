@@ -316,6 +316,39 @@ class Cdp:
             log.debug("A CDP session didn't detach: %s", type(e).__name__)
 
 
+_late: set[asyncio.Task[None]] = set()  # detaching sessions nobody waited for
+
+
+async def open_session(context: BrowserContext, target: Page | Frame, *, seconds: float = CALL_SECONDS) -> CDPSession:
+    """A new CDP session onto a page or an out-of-process frame, bounded. Playwright makes the session whether or
+    not anyone still waits for it: when the wait is cancelled or runs out, the session is detached as soon as it's
+    there, so none is left attached for the rest of the target's life. Raises what Playwright raises, or
+    TimeoutError."""
+    opening = asyncio.ensure_future(context.new_cdp_session(target))
+    try:
+        async with asyncio.timeout(seconds):
+            return await asyncio.shield(opening)
+    except BaseException:
+        opening.add_done_callback(_detach_late)
+        raise
+
+
+def _detach_late(opening: asyncio.Future[CDPSession]) -> None:
+    if opening.cancelled() or opening.exception() is not None:
+        return
+    task = asyncio.ensure_future(_detach_quietly(opening.result()))
+    _late.add(task)
+    task.add_done_callback(_late.discard)
+
+
+async def _detach_quietly(session: CDPSession) -> None:
+    try:
+        async with asyncio.timeout(CALL_SECONDS):
+            await session.detach()
+    except Exception as e:  # noqa: BLE001 - gone with its target already, most likely
+        log.debug("A CDP session didn't detach: %s", type(e).__name__)
+
+
 @dataclass(eq=False, slots=True)
 class World:
     """An isolated world in one frame."""
@@ -450,17 +483,17 @@ class Worlds:
         return World(frame, self._cdp, frame_id, await self._create(self._cdp, frame_id))
 
     async def _child_world(self, frame: Frame, parent: World) -> World:
-        cdp, own = parent.cdp, False
         try:
-            async with asyncio.timeout(CALL_SECONDS):
-                session = await self._context.new_cdp_session(frame)  # an out-of-process frame has its own
+            session = await open_session(self._context, frame)  # an out-of-process frame has its own
         except Exception:  # noqa: BLE001 - Playwright refuses for a frame in its parent's process
+            cdp, own = parent.cdp, False
             frame_id = await self._frame_id_in(parent, frame)
         else:
-            cdp, own = Cdp(session), True
-            tree = await cdp.send("Page.getFrameTree")
-            frame_id = str(tree["frameTree"]["frame"]["id"])
-        try:
+            cdp, own, frame_id = Cdp(session), True, ""
+        try:  # from here a failure, or the frame dropped meanwhile, detaches the frame's own session
+            if own:
+                tree = await cdp.send("Page.getFrameTree")
+                frame_id = str(tree["frameTree"]["frame"]["id"])
             context = await self._create(cdp, frame_id)
             owner = await self._keep_owner(parent, frame_id)
         except BaseException:
