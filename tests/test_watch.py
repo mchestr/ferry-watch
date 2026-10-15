@@ -34,6 +34,7 @@ from ferry_watch.protocol import (
     FarePreference,
     HoldLimits,
     Phase,
+    ReleaseCheck,
     TripSpec,
     decode_agent_message,
     encode,
@@ -591,6 +592,33 @@ async def test_a_hold_that_ends_closes_the_viewer_as_ended(rig: Rig) -> None:
     rig.watcher.release(rig.watcher.checkout_cart() or "")
     await rig.step()
     assert rig.close_codes == [CloseCode.ENDED]
+
+
+@pytest.mark.parametrize("empties", [True, False])
+async def test_no_viewer_is_let_in_while_an_ended_hold_empties_its_cart(rig: Rig, empties: bool) -> None:
+    """The viewer is closed first, then the cart emptied (up to 45 s), and a release is on no clock: KasmVNC's client
+    reconnects a second after its socket closes. The gate turns it away, so nothing keeps the page's dialogs again
+    and the emptying can't wait on a beforeunload."""
+    cart_id = await hold_one(rig)
+    rig.watcher.viewer_changed(connected=True)
+    seen: list[tuple[str | None, CloseCode | None]] = []
+    session = rig.site.session
+    assert session is not None
+    emptying = session.empty_cart
+
+    async def empty_cart() -> ReleaseCheck:
+        seen.append((rig.watcher.checkout_cart(), rig.watcher.viewer_verdict(cart_id, "rfb")))
+        return await emptying()
+
+    session.empty_cart = empty_cart  # type: ignore[method-assign]
+    if empties:
+        assert rig.watcher.release(cart_id)
+    else:
+        rig.site.view = CheckoutView(booked=True)  # booked: nothing to empty, and the pod goes
+    await rig.step()
+    assert rig.close_codes == [CloseCode.ENDED]
+    assert seen == ([(None, CloseCode.ENDED)] if empties else [])
+    assert rig.watcher.checkout_cart() is None
 
 
 @pytest.mark.parametrize("viewed", [False, True])

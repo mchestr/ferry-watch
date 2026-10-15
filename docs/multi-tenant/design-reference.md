@@ -987,7 +987,9 @@ stream also when `cast_allowed` turns false. After a viewed hold the pod exits.
   life, dialogs are kept open for the viewer: a stream viewer answers them in its own sheet, headed with the
   opening frame's origin (C41); a classic viewer answers them on the pod's screen, where Chromium draws them. They
   stay open across reconnects and switches between kinds. When the gate closes with 4000, 4002 or 4003 they are
-  dismissed and no longer kept, so the agent's own browsing afterwards (emptying the cart) can't wait on one.
+  dismissed and no longer kept, so the agent's own browsing afterwards (emptying the cart) can't wait on one. A hold
+  that ends stops being offered to viewers before its viewer is closed, so none is let in again (and none keeps
+  dialogs again) while the cart is emptied.
 
 **Rate and usage:** viewer seconds are reported in `state` and charged to `vncMinutesPerDay`. The gate
 refuses more than 5 *failed* upgrade attempts per minute; successful reconnects are not counted.

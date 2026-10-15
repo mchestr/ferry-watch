@@ -619,6 +619,20 @@ async def test_the_screen_is_restored_only_before_a_classic_viewer(cast_rig: Cas
     assert cast_rig.log.count("screen restored") == 1
 
 
+async def test_once_the_hold_ends_no_reconnect_keeps_dialogs_again(cast_rig: CastRig) -> None:
+    """The watcher stops offering the checkout before it closes the viewer and empties the cart: KasmVNC's client,
+    back a second later, is turned away, and the dialogs stay released for the emptying's navigation."""
+    classic = await cast_rig.connect(protocols(tkt=ticket()))
+    await greeted(classic)
+    cast_rig.cart[0] = None  # TripWatcher._end_hold: over, before the viewer is closed
+    await cast_rig.gate.close("hold ended (released)")
+    assert cast_rig.log[-1] == "dialogs released"
+    cast_rig.clear()
+    assert await cast_rig.refused(protocols()) == 409
+    assert await cast_rig.refused(cast_protocols()) == 409
+    assert cast_rig.log == []
+
+
 async def test_a_stream_admitted_while_the_hold_ends_is_turned_away(cast_rig: CastRig) -> None:
     stream = await cast_rig.stream(cast_protocols(tkt=ticket()))
     waiting = asyncio.create_task(cast_rig.refused(cast_protocols()))

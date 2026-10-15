@@ -227,6 +227,7 @@ class TripWatcher:
         self.hold: HoldState | None = None
         self._cart_key: tuple[object, ...] | None = None
         self._held_alert: int | None = None  # seq of the cart_held alert: its ack starts the unclaimed clock
+        self._hold_ending = False  # the hold is over and its cart being emptied: no viewer may open it again
         self._attempts = 0
         self._release_requested = False
         self._sign_in_reported = False
@@ -261,7 +262,7 @@ class TripWatcher:
         latest = self._store.latest
         if self._drain_reason is not None or not self._lockdown_ok() or latest is None or not latest.vnc_allowed:
             return None
-        if not self.holding or self.cart is None or self.hold is None:
+        if not self.holding or self.cart is None or self.hold is None or self._hold_ending:
             return None
         if release_due(self.hold, self._limits(), self._clock()) is not None:
             return None
@@ -715,12 +716,17 @@ class TripWatcher:
         cart, hold = self.cart, self.hold
         if cart is None or hold is None:
             return None
+        # Over from here on, before the viewer is closed: a release isn't on any clock, and KasmVNC's client comes
+        # back a second after its socket closes. Let in again, it would keep the page's dialogs once more, and
+        # emptying the cart would wait on a kept beforeunload.
+        self._hold_ending = True
         await self._close_viewer(f"hold ended ({outcome})", CloseCode.ENDED)
         emptied, check = False, cast(ReleaseCheck, "none")
         if empty:
             emptied, check = await self._empty(cart)
         viewed = hold.first_viewer_at is not None
         self.cart, self.hold, self._held_alert, self._release_requested = None, None, None, False
+        self._hold_ending = False
         if viewed or outcome == "booked" or self.mode == "short_check":
             return Finish("hold_ended", outcome, emptied, check, viewer_was_connected=viewed)
         # Nobody looked: a warm pod carries on watching, from a fresh search.

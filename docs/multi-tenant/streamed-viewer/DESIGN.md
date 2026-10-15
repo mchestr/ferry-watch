@@ -665,8 +665,11 @@ class CloseCode(IntEnum):  # in cast_protocol.py
 - **`close(reason, code=CloseCode.ENDED)`.** Sets `viewer.close_code`, then disconnects; 4005 disconnects only a
   stream viewer (the kill switch doesn't concern a classic one). For codes 4000, 4002 and 4003 it then calls
   `dialogs.release()`, whether or not a viewer was connected: nobody will answer a dialog now, and the agent's own
-  navigation afterwards (emptying the cart) mustn't wait on a kept `beforeunload`. 4005 leaves dialogs open for
-  the classic viewer the stream moves to. The replacing path sets `REPLACED`. `_upgrade`'s `finally` closes a
+  navigation afterwards (emptying the cart) mustn't wait on a kept `beforeunload`. So that no viewer is let in
+  again meanwhile (KasmVNC's client reconnects a second after its socket closes, and a release is on no clock), the
+  watcher's `checkout_cart()` is None from the moment a hold starts ending, before it closes the viewer and while it
+  empties the cart (found in review: a classic reconnect kept the dialogs again and the emptying waited on a
+  `beforeunload`). 4005 leaves dialogs open for the classic viewer the stream moves to. The replacing path sets `REPLACED`. `_upgrade`'s `finally` closes a
   stream's socket with `viewer.close_code or 1000`, and a classic viewer's with 1000 whatever the reason, as in
   0.6.4 (KasmVNC's client does look at how a socket closed).
 - **`watch.py` `viewer_verdict(cart_id, kind)`**, in this order:
