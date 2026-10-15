@@ -1,0 +1,590 @@
+{
+  "protocol": "fw.cast1",
+  "inputs": [
+    {
+      "id": "tap-zoomed", "sec": "11.2", "front": 1,
+      "images": [{"seq": 341, "page": 1, "w": 390, "h": 664, "scale": 2, "sx": 175, "sy": 770.5}],
+      "live": {"pageX": 175, "pageY": 770.5, "scale": 2},
+      "msg": {"t": "tap", "page": 1, "seq": 341, "x": 29, "y": 121.5, "ms": 95},
+      "calls": [
+        {"method": "Input.dispatchMouseEvent", "params": {"type": "mouseMoved", "x": 14.5, "y": 60.75}},
+        {"method": "Input.dispatchMouseEvent",
+         "params": {"type": "mousePressed", "x": 14.5, "y": 60.75, "button": "left", "clickCount": 1}},
+        {"method": "Input.dispatchMouseEvent",
+         "params": {"type": "mouseReleased", "x": 14.5, "y": 60.75, "button": "left", "clickCount": 1}}
+      ],
+      "wait_ms": 95
+    },
+    {
+      "id": "tap-not-zoomed", "sec": "1", "front": 1,
+      "images": [{"seq": 9, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5}],
+      "live": {"pageX": 0, "pageY": 530.5, "scale": 1},
+      "msg": {"t": "tap", "page": 1, "seq": 9, "x": 120.5, "y": 300},
+      "calls": [
+        {"method": "Input.dispatchMouseEvent", "params": {"type": "mouseMoved", "x": 120.5, "y": 300}},
+        {"method": "Input.dispatchMouseEvent",
+         "params": {"type": "mousePressed", "x": 120.5, "y": 300, "button": "left", "clickCount": 1}},
+        {"method": "Input.dispatchMouseEvent",
+         "params": {"type": "mouseReleased", "x": 120.5, "y": 300, "button": "left", "clickCount": 1}}
+      ],
+      "wait_ms": 0, "note": "at scale 1, frame px = CDP coordinates"
+    },
+    {
+      "id": "tap-uses-live-scale", "sec": "6.4", "front": 1,
+      "images": [{"seq": 341, "page": 1, "w": 390, "h": 664, "scale": 2, "sx": 175, "sy": 770.5}],
+      "live": {"pageX": 175, "pageY": 770.5, "scale": 2.005},
+      "msg": {"t": "tap", "page": 1, "seq": 341, "x": 29, "y": 121.5, "ms": 30},
+      "calls": [
+        {"method": "Input.dispatchMouseEvent",
+         "params": {"type": "mouseMoved", "x": 14.463840399002494, "y": 60.59850374064838}},
+        {
+          "method": "Input.dispatchMouseEvent",
+          "params": {"type": "mousePressed", "x": 14.463840399002494, "y": 60.59850374064838, "button": "left",
+           "clickCount": 1}
+        },
+        {
+          "method": "Input.dispatchMouseEvent",
+          "params": {"type": "mouseReleased", "x": 14.463840399002494, "y": 60.59850374064838, "button": "left",
+           "clickCount": 1}
+        }
+      ],
+      "wait_ms": 30, "note": "within 0.01 of the image's scale"
+    },
+    {
+      "id": "tap-stale-not-front", "sec": "6.4", "front": 1,
+      "images": [
+        {"seq": 5, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 6, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 7, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 8, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 9, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 10, "page": 2, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 11, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 12, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 13, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 14, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 15, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 16, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 17, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 18, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 19, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 20, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5}
+      ],
+      "live": {"pageX": 0, "pageY": 530.5, "scale": 1}, "msg": {"t": "tap", "page": 2, "seq": 10, "x": 10, "y": 10},
+      "calls": [], "error": "stale"
+    },
+    {
+      "id": "tap-stale-forgotten", "sec": "6.4", "front": 1,
+      "images": [
+        {"seq": 5, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 6, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 7, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 8, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 9, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 10, "page": 2, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 11, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 12, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 13, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 14, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 15, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 16, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 17, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 18, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 19, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 20, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5}
+      ],
+      "live": {"pageX": 0, "pageY": 530.5, "scale": 1}, "msg": {"t": "tap", "page": 1, "seq": 4, "x": 10, "y": 10},
+      "calls": [], "error": "stale", "note": "only the last 16 binary messages are remembered"
+    },
+    {
+      "id": "tap-oldest-remembered", "sec": "6.4", "front": 1,
+      "images": [
+        {"seq": 5, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 6, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 7, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 8, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 9, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 10, "page": 2, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 11, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 12, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 13, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 14, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 15, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 16, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 17, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 18, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 19, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 20, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5}
+      ],
+      "live": {"pageX": 0, "pageY": 530.5, "scale": 1}, "msg": {"t": "tap", "page": 1, "seq": 5, "x": 10, "y": 10},
+      "calls": [
+        {"method": "Input.dispatchMouseEvent", "params": {"type": "mouseMoved", "x": 10, "y": 10}},
+        {"method": "Input.dispatchMouseEvent",
+         "params": {"type": "mousePressed", "x": 10, "y": 10, "button": "left", "clickCount": 1}},
+        {"method": "Input.dispatchMouseEvent",
+         "params": {"type": "mouseReleased", "x": 10, "y": 10, "button": "left", "clickCount": 1}}
+      ],
+      "wait_ms": 0
+    },
+    {
+      "id": "tap-stale-not-sent", "sec": "6.4", "front": 1,
+      "images": [
+        {"seq": 5, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 6, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 7, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 8, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 9, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 10, "page": 2, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 11, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 12, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 13, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 14, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 15, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 16, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 17, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 18, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 19, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 20, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5}
+      ],
+      "live": {"pageX": 0, "pageY": 530.5, "scale": 1}, "msg": {"t": "tap", "page": 1, "seq": 21, "x": 10, "y": 10},
+      "calls": [], "error": "stale"
+    },
+    {
+      "id": "tap-stale-image-of-other-page", "sec": "6.4", "front": 1,
+      "images": [
+        {"seq": 5, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 6, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 7, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 8, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 9, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 10, "page": 2, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 11, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 12, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 13, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 14, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 15, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 16, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 17, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 18, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 19, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 20, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5}
+      ],
+      "live": {"pageX": 0, "pageY": 530.5, "scale": 1}, "msg": {"t": "tap", "page": 1, "seq": 10, "x": 10, "y": 10},
+      "calls": [], "error": "stale", "note": "seq 10 showed page 2"
+    },
+    {
+      "id": "tap-scrolled-1px", "sec": "6.4", "front": 1,
+      "images": [{"seq": 9, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5}],
+      "live": {"pageX": 0, "pageY": 531.5, "scale": 1}, "msg": {"t": "tap", "page": 1, "seq": 9, "x": 10, "y": 10},
+      "calls": [
+        {"method": "Input.dispatchMouseEvent", "params": {"type": "mouseMoved", "x": 10, "y": 10}},
+        {"method": "Input.dispatchMouseEvent",
+         "params": {"type": "mousePressed", "x": 10, "y": 10, "button": "left", "clickCount": 1}},
+        {"method": "Input.dispatchMouseEvent",
+         "params": {"type": "mouseReleased", "x": 10, "y": 10, "button": "left", "clickCount": 1}}
+      ],
+      "wait_ms": 0, "note": "1 CSS px is tolerated"
+    },
+    {"id": "tap-stale-scrolled", "sec": "6.4", "front": 1,
+     "images": [{"seq": 9, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5}],
+     "live": {"pageX": 0, "pageY": 531.75, "scale": 1}, "msg": {"t": "tap", "page": 1, "seq": 9, "x": 10, "y": 10},
+     "calls": [], "error": "stale"},
+    {"id": "tap-stale-scrolled-sideways", "sec": "6.4", "front": 1,
+     "images": [{"seq": 9, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5}],
+     "live": {"pageX": 1.5, "pageY": 530.5, "scale": 1}, "msg": {"t": "tap", "page": 1, "seq": 9, "x": 10, "y": 10},
+     "calls": [], "error": "stale"},
+    {"id": "tap-stale-zoomed", "sec": "6.4", "front": 1,
+     "images": [{"seq": 341, "page": 1, "w": 390, "h": 664, "scale": 2, "sx": 175, "sy": 770.5}],
+     "live": {"pageX": 175, "pageY": 770.5, "scale": 2.02},
+     "msg": {"t": "tap", "page": 1, "seq": 341, "x": 29, "y": 121.5}, "calls": [], "error": "stale"},
+    {"id": "move-zoomed", "sec": "6.5", "front": 1,
+     "images": [{"seq": 341, "page": 1, "w": 390, "h": 664, "scale": 2, "sx": 175, "sy": 770.5}],
+     "live": {"pageX": 175, "pageY": 770.5, "scale": 2}, "msg": {"t": "move", "page": 1, "x": 120.5, "y": 300},
+     "calls": [{"method": "Input.dispatchMouseEvent", "params": {"type": "mouseMoved", "x": 60.25, "y": 150}}]},
+    {
+      "id": "move-not-front", "sec": "6.5", "front": 1,
+      "images": [
+        {"seq": 5, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 6, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 7, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 8, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 9, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 10, "page": 2, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 11, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 12, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 13, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 14, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 15, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 16, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 17, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 18, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 19, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 20, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5}
+      ],
+      "live": {"pageX": 0, "pageY": 530.5, "scale": 1}, "msg": {"t": "move", "page": 2, "x": 10, "y": 10},
+      "calls": [], "note": "ignored, no error"
+    },
+    {
+      "id": "wheel-zoomed", "sec": "6.6", "front": 1,
+      "images": [{"seq": 341, "page": 1, "w": 390, "h": 664, "scale": 2, "sx": 175, "sy": 770.5}],
+      "live": {"pageX": 175, "pageY": 770.5, "scale": 2},
+      "msg": {"t": "wheel", "page": 1, "x": 195, "y": 500, "dx": 0, "dy": 14.5},
+      "calls": [
+        {"method": "Input.dispatchMouseEvent",
+         "params": {"type": "mouseWheel", "x": 97.5, "y": 250, "deltaX": 0, "deltaY": 14.5}}
+      ],
+      "note": "the deltas aren't divided: the page follows the finger"
+    },
+    {
+      "id": "wheel-not-zoomed", "sec": "6.6", "front": 1,
+      "images": [{"seq": 9, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5}],
+      "live": {"pageX": 0, "pageY": 530.5, "scale": 1},
+      "msg": {"t": "wheel", "page": 1, "x": 195, "y": 500, "dx": -3, "dy": -40},
+      "calls": [
+        {"method": "Input.dispatchMouseEvent",
+         "params": {"type": "mouseWheel", "x": 195, "y": 500, "deltaX": -3, "deltaY": -40}}
+      ]
+    },
+    {
+      "id": "wheel-not-front", "sec": "6.6", "front": 1,
+      "images": [
+        {"seq": 5, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 6, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 7, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 8, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 9, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 10, "page": 2, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 11, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 12, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 13, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 14, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 15, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 16, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 17, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 18, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 19, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 20, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5}
+      ],
+      "live": {"pageX": 0, "pageY": 530.5, "scale": 1},
+      "msg": {"t": "wheel", "page": 2, "x": 1, "y": 1, "dx": 0, "dy": 10}, "calls": []
+    },
+    {
+      "id": "pinch-with-pan", "sec": "11.3", "front": 1,
+      "images": [{"seq": 11, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 520.5}],
+      "live": {"pageX": 0, "pageY": 520.5, "scale": 1}, "after": {"scale": 2},
+      "msg": {"t": "pinch", "page": 1, "seq": 11, "x0": 300, "y0": 400, "x1": 250, "y1": 300, "scale": 2},
+      "calls": [
+        {"method": "Input.synthesizePinchGesture",
+         "params": {"x": 300, "y": 400, "scaleFactor": 2, "gestureSourceType": "mouse"}},
+        {"method": "Input.dispatchMouseEvent",
+         "params": {"type": "mouseWheel", "x": 125, "y": 150, "deltaX": 50, "deltaY": 100}}
+      ],
+      "note": "measured: the content under (300, 400) ended at frame px (250, 300)"
+    },
+    {
+      "id": "pinch-without-pan", "sec": "6.8", "front": 1,
+      "images": [{"seq": 11, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5}],
+      "live": {"pageX": 0, "pageY": 530.5, "scale": 1}, "after": {"scale": 1.5},
+      "msg": {"t": "pinch", "page": 1, "seq": 11, "x0": 195, "y0": 400, "x1": 195, "y1": 400, "scale": 1.5},
+      "calls": [
+        {"method": "Input.synthesizePinchGesture",
+         "params": {"x": 195, "y": 400, "scaleFactor": 1.5, "gestureSourceType": "mouse"}}
+      ]
+    },
+    {
+      "id": "pinch-out-when-zoomed", "sec": "6.8", "front": 1,
+      "images": [{"seq": 341, "page": 1, "w": 390, "h": 664, "scale": 2, "sx": 175, "sy": 770.5}],
+      "live": {"pageX": 175, "pageY": 770.5, "scale": 2}, "after": {"scale": 1},
+      "msg": {"t": "pinch", "page": 1, "seq": 341, "x0": 200, "y0": 300, "x1": 210, "y1": 280, "scale": 0.5},
+      "calls": [
+        {"method": "Input.synthesizePinchGesture",
+         "params": {"x": 100, "y": 150, "scaleFactor": 0.5, "gestureSourceType": "mouse"}},
+        {"method": "Input.dispatchMouseEvent",
+         "params": {"type": "mouseWheel", "x": 210, "y": 280, "deltaX": -10, "deltaY": 20}}
+      ]
+    },
+    {
+      "id": "pinch-stale", "sec": "6.8", "front": 1,
+      "images": [
+        {"seq": 5, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 6, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 7, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 8, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 9, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 10, "page": 2, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 11, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 12, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 13, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 14, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 15, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 16, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 17, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 18, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 19, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5},
+        {"seq": 20, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5}
+      ],
+      "live": {"pageX": 0, "pageY": 530.5, "scale": 1},
+      "msg": {"t": "pinch", "page": 1, "seq": 4, "x0": 10, "y0": 10, "x1": 10, "y1": 10, "scale": 2}, "calls": [],
+      "error": "stale"
+    },
+    {"id": "text", "sec": "6.10", "front": 1,
+     "images": [{"seq": 9, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5}],
+     "live": {"pageX": 0, "pageY": 530.5, "scale": 1}, "msg": {"t": "text", "s": "4242 4242"},
+     "calls": [{"method": "Input.insertText", "params": {"text": "4242 4242"}}]},
+    {
+      "id": "compose", "sec": "6.10", "front": 1,
+      "images": [{"seq": 9, "page": 1, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5}],
+      "live": {"pageX": 0, "pageY": 530.5, "scale": 1}, "msg": {"t": "compose", "s": "Ches"},
+      "calls": [
+        {"method": "Input.imeSetComposition", "params": {"text": "Ches", "selectionStart": 4, "selectionEnd": 4}}
+      ]
+    }
+  ],
+  "keys": [
+    {
+      "id": "named-keys", "sec": "6.9",
+      "msgs": [
+        {"t": "key", "k": "Backspace"}, {"t": "key", "k": "Delete"}, {"t": "key", "k": "Enter"},
+        {"t": "key", "k": "Tab"}, {"t": "key", "k": "Escape"}, {"t": "key", "k": "ArrowLeft"},
+        {"t": "key", "k": "ArrowRight"}, {"t": "key", "k": "ArrowUp"}, {"t": "key", "k": "ArrowDown"},
+        {"t": "key", "k": "Home"}, {"t": "key", "k": "End"}, {"t": "key", "k": "PageUp"},
+        {"t": "key", "k": "PageDown"}
+      ],
+      "events": [
+        {"type": "rawKeyDown", "key": "Backspace", "code": "Backspace", "windowsVirtualKeyCode": 8, "modifiers": 0},
+        {"type": "keyUp", "key": "Backspace", "code": "Backspace", "windowsVirtualKeyCode": 8, "modifiers": 0},
+        {"type": "rawKeyDown", "key": "Delete", "code": "Delete", "windowsVirtualKeyCode": 46, "modifiers": 0},
+        {"type": "keyUp", "key": "Delete", "code": "Delete", "windowsVirtualKeyCode": 46, "modifiers": 0},
+        {"type": "keyDown", "key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13, "text": "\r",
+         "modifiers": 0},
+        {"type": "keyUp", "key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13, "modifiers": 0},
+        {"type": "rawKeyDown", "key": "Tab", "code": "Tab", "windowsVirtualKeyCode": 9, "modifiers": 0},
+        {"type": "keyUp", "key": "Tab", "code": "Tab", "windowsVirtualKeyCode": 9, "modifiers": 0},
+        {"type": "rawKeyDown", "key": "Escape", "code": "Escape", "windowsVirtualKeyCode": 27, "modifiers": 0},
+        {"type": "keyUp", "key": "Escape", "code": "Escape", "windowsVirtualKeyCode": 27, "modifiers": 0},
+        {"type": "rawKeyDown", "key": "ArrowLeft", "code": "ArrowLeft", "windowsVirtualKeyCode": 37, "modifiers": 0},
+        {"type": "keyUp", "key": "ArrowLeft", "code": "ArrowLeft", "windowsVirtualKeyCode": 37, "modifiers": 0},
+        {"type": "rawKeyDown", "key": "ArrowRight", "code": "ArrowRight", "windowsVirtualKeyCode": 39, "modifiers": 0},
+        {"type": "keyUp", "key": "ArrowRight", "code": "ArrowRight", "windowsVirtualKeyCode": 39, "modifiers": 0},
+        {"type": "rawKeyDown", "key": "ArrowUp", "code": "ArrowUp", "windowsVirtualKeyCode": 38, "modifiers": 0},
+        {"type": "keyUp", "key": "ArrowUp", "code": "ArrowUp", "windowsVirtualKeyCode": 38, "modifiers": 0},
+        {"type": "rawKeyDown", "key": "ArrowDown", "code": "ArrowDown", "windowsVirtualKeyCode": 40, "modifiers": 0},
+        {"type": "keyUp", "key": "ArrowDown", "code": "ArrowDown", "windowsVirtualKeyCode": 40, "modifiers": 0},
+        {"type": "rawKeyDown", "key": "Home", "code": "Home", "windowsVirtualKeyCode": 36, "modifiers": 0},
+        {"type": "keyUp", "key": "Home", "code": "Home", "windowsVirtualKeyCode": 36, "modifiers": 0},
+        {"type": "rawKeyDown", "key": "End", "code": "End", "windowsVirtualKeyCode": 35, "modifiers": 0},
+        {"type": "keyUp", "key": "End", "code": "End", "windowsVirtualKeyCode": 35, "modifiers": 0},
+        {"type": "rawKeyDown", "key": "PageUp", "code": "PageUp", "windowsVirtualKeyCode": 33, "modifiers": 0},
+        {"type": "keyUp", "key": "PageUp", "code": "PageUp", "windowsVirtualKeyCode": 33, "modifiers": 0},
+        {"type": "rawKeyDown", "key": "PageDown", "code": "PageDown", "windowsVirtualKeyCode": 34, "modifiers": 0},
+        {"type": "keyUp", "key": "PageDown", "code": "PageDown", "windowsVirtualKeyCode": 34, "modifiers": 0}
+      ],
+      "note": "Enter is a keyDown with text \"\\r\"; the others are rawKeyDown"
+    },
+    {
+      "id": "shift-tab", "sec": "6.9", "msgs": [{"t": "key", "k": "Tab", "shift": true}],
+      "events": [
+        {"type": "rawKeyDown", "key": "Tab", "code": "Tab", "windowsVirtualKeyCode": 9, "modifiers": 8},
+        {"type": "keyUp", "key": "Tab", "code": "Tab", "windowsVirtualKeyCode": 9, "modifiers": 8}
+      ]
+    },
+    {
+      "id": "word-backspace", "sec": "6.9", "msgs": [{"t": "key", "k": "Backspace", "word": true}],
+      "events": [
+        {"type": "rawKeyDown", "key": "Backspace", "code": "Backspace", "windowsVirtualKeyCode": 8, "modifiers": 2},
+        {"type": "keyUp", "key": "Backspace", "code": "Backspace", "windowsVirtualKeyCode": 8, "modifiers": 2}
+      ]
+    },
+    {
+      "id": "shift-word-arrow", "sec": "6.9", "msgs": [{"t": "key", "k": "ArrowLeft", "shift": true, "word": true}],
+      "events": [
+        {"type": "rawKeyDown", "key": "ArrowLeft", "code": "ArrowLeft", "windowsVirtualKeyCode": 37, "modifiers": 10},
+        {"type": "keyUp", "key": "ArrowLeft", "code": "ArrowLeft", "windowsVirtualKeyCode": 37, "modifiers": 10}
+      ]
+    },
+    {
+      "id": "characters", "sec": "6.9",
+      "msgs": [
+        {"t": "key", "c": "4"}, {"t": "key", "c": "M"}, {"t": "key", "c": "m"}, {"t": "key", "c": "é"},
+        {"t": "key", "c": " "}
+      ],
+      "events": [
+        {"type": "keyDown", "key": "4", "code": "Digit4", "windowsVirtualKeyCode": 52, "text": "4",
+         "unmodifiedText": "4", "modifiers": 0},
+        {"type": "keyUp", "key": "4", "code": "Digit4", "windowsVirtualKeyCode": 52, "modifiers": 0},
+        {"type": "keyDown", "key": "M", "code": "KeyM", "windowsVirtualKeyCode": 77, "text": "M",
+         "unmodifiedText": "m", "modifiers": 0},
+        {"type": "keyUp", "key": "M", "code": "KeyM", "windowsVirtualKeyCode": 77, "modifiers": 0},
+        {"type": "keyDown", "key": "m", "code": "KeyM", "windowsVirtualKeyCode": 77, "text": "m",
+         "unmodifiedText": "m", "modifiers": 0},
+        {"type": "keyUp", "key": "m", "code": "KeyM", "windowsVirtualKeyCode": 77, "modifiers": 0},
+        {"type": "keyDown", "key": "é", "code": "", "windowsVirtualKeyCode": 0, "text": "é", "unmodifiedText": "é",
+         "modifiers": 0},
+        {"type": "keyUp", "key": "é", "code": "", "windowsVirtualKeyCode": 0, "modifiers": 0},
+        {"type": "keyDown", "key": " ", "code": "", "windowsVirtualKeyCode": 0, "text": " ", "unmodifiedText": " ",
+         "modifiers": 0},
+        {"type": "keyUp", "key": " ", "code": "", "windowsVirtualKeyCode": 0, "modifiers": 0}
+      ],
+      "note": "code Key<A-Z>/Digit<0-9> and VK the uppercase ASCII code for letters and digits, else \"\" and 0"
+    },
+    {
+      "id": "shift-held-letter", "sec": "6.9",
+      "msgs": [
+        {"t": "key", "k": "Shift", "ph": "down"}, {"t": "key", "c": "M", "ph": "down"},
+        {"t": "key", "c": "M", "ph": "up"}, {"t": "key", "k": "Shift", "ph": "up"}
+      ],
+      "events": [
+        {"type": "rawKeyDown", "key": "Shift", "code": "ShiftLeft", "windowsVirtualKeyCode": 16, "modifiers": 8},
+        {"type": "keyDown", "key": "M", "code": "KeyM", "windowsVirtualKeyCode": 77, "text": "M",
+         "unmodifiedText": "m", "modifiers": 8},
+        {"type": "keyUp", "key": "M", "code": "KeyM", "windowsVirtualKeyCode": 77, "modifiers": 8},
+        {"type": "keyUp", "key": "Shift", "code": "ShiftLeft", "windowsVirtualKeyCode": 16, "modifiers": 0}
+      ],
+      "note": "measured as a real keyboard reports it (round2/out/s8-desktop.json)"
+    },
+    {
+      "id": "rollover", "sec": "6.9",
+      "msgs": [
+        {"t": "key", "c": "i", "ph": "down"}, {"t": "key", "c": "k", "ph": "down"},
+        {"t": "key", "c": "i", "ph": "up"}, {"t": "key", "c": "k", "ph": "up"}
+      ],
+      "events": [
+        {"type": "keyDown", "key": "i", "code": "KeyI", "windowsVirtualKeyCode": 73, "text": "i",
+         "unmodifiedText": "i", "modifiers": 0},
+        {"type": "keyDown", "key": "k", "code": "KeyK", "windowsVirtualKeyCode": 75, "text": "k",
+         "unmodifiedText": "k", "modifiers": 0},
+        {"type": "keyUp", "key": "i", "code": "KeyI", "windowsVirtualKeyCode": 73, "modifiers": 0},
+        {"type": "keyUp", "key": "k", "code": "KeyK", "windowsVirtualKeyCode": 75, "modifiers": 0}
+      ]
+    },
+    {
+      "id": "down-twice", "sec": "6.9",
+      "msgs": [
+        {"t": "key", "c": "a", "ph": "down"}, {"t": "key", "c": "a", "ph": "down"},
+        {"t": "key", "c": "a", "ph": "up"}
+      ],
+      "events": [
+        {"type": "keyDown", "key": "a", "code": "KeyA", "windowsVirtualKeyCode": 65, "text": "a",
+         "unmodifiedText": "a", "modifiers": 0},
+        {"type": "keyUp", "key": "a", "code": "KeyA", "windowsVirtualKeyCode": 65, "modifiers": 0}
+      ],
+      "note": "no auto-repeat: a down for a held key is ignored"
+    },
+    {
+      "id": "up-not-held", "sec": "6.9",
+      "msgs": [
+        {"t": "key", "c": "a", "ph": "down"}, {"t": "key", "c": "A", "ph": "up"}, {"t": "key", "c": "b", "ph": "up"},
+        {"t": "key", "c": "a", "ph": "up"}
+      ],
+      "events": [
+        {"type": "keyDown", "key": "a", "code": "KeyA", "windowsVirtualKeyCode": 65, "text": "a",
+         "unmodifiedText": "a", "modifiers": 0},
+        {"type": "keyUp", "key": "a", "code": "KeyA", "windowsVirtualKeyCode": 65, "modifiers": 0}
+      ],
+      "note": "keys compare exactly: A isn't a"
+    },
+    {
+      "id": "seven-held", "sec": "6.9",
+      "msgs": [
+        {"t": "key", "c": "a", "ph": "down"}, {"t": "key", "c": "b", "ph": "down"},
+        {"t": "key", "c": "c", "ph": "down"}, {"t": "key", "c": "d", "ph": "down"},
+        {"t": "key", "c": "e", "ph": "down"}, {"t": "key", "c": "f", "ph": "down"},
+        {"t": "key", "c": "g", "ph": "down"}
+      ],
+      "events": [
+        {"type": "keyDown", "key": "a", "code": "KeyA", "windowsVirtualKeyCode": 65, "text": "a",
+         "unmodifiedText": "a", "modifiers": 0},
+        {"type": "keyDown", "key": "b", "code": "KeyB", "windowsVirtualKeyCode": 66, "text": "b",
+         "unmodifiedText": "b", "modifiers": 0},
+        {"type": "keyDown", "key": "c", "code": "KeyC", "windowsVirtualKeyCode": 67, "text": "c",
+         "unmodifiedText": "c", "modifiers": 0},
+        {"type": "keyDown", "key": "d", "code": "KeyD", "windowsVirtualKeyCode": 68, "text": "d",
+         "unmodifiedText": "d", "modifiers": 0},
+        {"type": "keyDown", "key": "e", "code": "KeyE", "windowsVirtualKeyCode": 69, "text": "e",
+         "unmodifiedText": "e", "modifiers": 0},
+        {"type": "keyDown", "key": "f", "code": "KeyF", "windowsVirtualKeyCode": 70, "text": "f",
+         "unmodifiedText": "f", "modifiers": 0},
+        {"type": "keyUp", "key": "a", "code": "KeyA", "windowsVirtualKeyCode": 65, "modifiers": 0},
+        {"type": "keyDown", "key": "g", "code": "KeyG", "windowsVirtualKeyCode": 71, "text": "g",
+         "unmodifiedText": "g", "modifiers": 0}
+      ],
+      "note": "at most 6 held: the seventh releases the oldest first"
+    },
+    {
+      "id": "whole-press-while-shift-held", "sec": "6.9",
+      "msgs": [{"t": "key", "k": "Shift", "ph": "down"}, {"t": "key", "k": "Tab"}, {"t": "key", "c": "4"}],
+      "events": [
+        {"type": "rawKeyDown", "key": "Shift", "code": "ShiftLeft", "windowsVirtualKeyCode": 16, "modifiers": 8},
+        {"type": "rawKeyDown", "key": "Tab", "code": "Tab", "windowsVirtualKeyCode": 9, "modifiers": 8},
+        {"type": "keyUp", "key": "Tab", "code": "Tab", "windowsVirtualKeyCode": 9, "modifiers": 8},
+        {"type": "keyDown", "key": "4", "code": "Digit4", "windowsVirtualKeyCode": 52, "text": "4",
+         "unmodifiedText": "4", "modifiers": 8},
+        {"type": "keyUp", "key": "4", "code": "Digit4", "windowsVirtualKeyCode": 52, "modifiers": 8}
+      ]
+    },
+    {
+      "id": "named-halves", "sec": "6.9",
+      "msgs": [{"t": "key", "k": "Enter", "ph": "down"}, {"t": "key", "k": "Enter", "ph": "up"}],
+      "events": [
+        {"type": "keyDown", "key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13, "text": "\r",
+         "modifiers": 0},
+        {"type": "keyUp", "key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13, "modifiers": 0}
+      ]
+    },
+    {
+      "id": "teardown-releases", "sec": "3.5", "msgs": [{"t": "key", "c": "a", "ph": "down"}], "teardown": true,
+      "events": [
+        {"type": "keyDown", "key": "a", "code": "KeyA", "windowsVirtualKeyCode": 65, "text": "a",
+         "unmodifiedText": "a", "modifiers": 0},
+        {"type": "keyUp", "key": "a", "code": "KeyA", "windowsVirtualKeyCode": 65, "modifiers": 0}
+      ]
+    },
+    {
+      "id": "teardown-releases-shift", "sec": "3.5", "msgs": [{"t": "key", "k": "Shift", "ph": "down"}],
+      "teardown": true,
+      "events": [
+        {"type": "rawKeyDown", "key": "Shift", "code": "ShiftLeft", "windowsVirtualKeyCode": 16, "modifiers": 8},
+        {"type": "keyUp", "key": "Shift", "code": "ShiftLeft", "windowsVirtualKeyCode": 16, "modifiers": 0}
+      ]
+    }
+  ],
+  "date_keys": [
+    {"id": "date-2026-10-16", "sec": "6.12", "k": "date", "v": "2026-10-16", "chars": "10162026"},
+    {"id": "date-2028-02-29", "sec": "6.12", "k": "date", "v": "2028-02-29", "chars": "02292028"},
+    {"id": "date-2026-01-05", "sec": "6.12", "k": "date", "v": "2026-01-05", "chars": "01052026"},
+    {"id": "time-0930", "sec": "6.12", "k": "time", "v": "09:30", "chars": "0930A",
+     "note": "measured (scripts/s2i_time.py)"},
+    {"id": "time-1415", "sec": "6.12", "k": "time", "v": "14:15", "chars": "0215P",
+     "note": "measured (scripts/s2i_time.py)"},
+    {"id": "time-0005", "sec": "6.12", "k": "time", "v": "00:05", "chars": "1205A",
+     "note": "measured (scripts/s2i_time.py)"},
+    {"id": "time-1200", "sec": "6.12", "k": "time", "v": "12:00", "chars": "1200P"},
+    {"id": "time-1259", "sec": "6.12", "k": "time", "v": "12:59", "chars": "1259P"},
+    {"id": "time-2359", "sec": "6.12", "k": "time", "v": "23:59", "chars": "1159P"},
+    {"id": "time-0000", "sec": "6.12", "k": "time", "v": "00:00", "chars": "1200A"},
+    {"id": "time-0100", "sec": "6.12", "k": "time", "v": "01:00", "chars": "0100A"}
+  ],
+  "choose_keys": [
+    {"id": "choose-first-disabled", "sec": "6.11",
+     "opts": [["Choose", true], ["Victoria", false], ["Vancouver", false], ["Nanaimo", false]], "i": 2,
+     "keys": ["Home", "ArrowDown", "Enter"]},
+    {"id": "choose-first-enabled", "sec": "6.11",
+     "opts": [["Choose", true], ["Victoria", false], ["Vancouver", false], ["Nanaimo", false]], "i": 1,
+     "keys": ["Home", "Enter"]},
+    {"id": "choose-last", "sec": "6.11",
+     "opts": [["Choose", true], ["Victoria", false], ["Vancouver", false], ["Nanaimo", false]], "i": 3,
+     "keys": ["Home", "ArrowDown", "ArrowDown", "Enter"]},
+    {"id": "choose-disabled", "sec": "6.11",
+     "opts": [["Choose", true], ["Victoria", false], ["Vancouver", false], ["Nanaimo", false]], "i": 0,
+     "error": "failed"},
+    {"id": "choose-beyond", "sec": "6.11",
+     "opts": [["Choose", true], ["Victoria", false], ["Vancouver", false], ["Nanaimo", false]], "i": 4,
+     "error": "failed"},
+    {"id": "choose-skips-disabled", "sec": "6.11", "opts": [["a", false], ["b", true], ["c", false], ["d", false]],
+     "i": 3, "keys": ["Home", "ArrowDown", "ArrowDown", "Enter"]},
+    {"id": "choose-index-0", "sec": "6.11", "opts": [["a", false], ["b", true], ["c", false], ["d", false]], "i": 0,
+     "keys": ["Home", "Enter"]},
+    {"id": "choose-disabled-middle", "sec": "6.11", "opts": [["a", false], ["b", true], ["c", false], ["d", false]],
+     "i": 1, "error": "failed"}
+  ]
+}

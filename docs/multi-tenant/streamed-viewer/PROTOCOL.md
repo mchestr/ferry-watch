@@ -35,9 +35,11 @@ shared conformance pack that both implementations MUST pass.
   Section 5.3.3 extends the first rule to frames inside iframes. Test vectors are in §11.3.
 - **Strings** are JSON strings. Lengths are counted in Unicode scalar values ("code points") unless stated as bytes.
   **Clean text** means: no C0 controls (U+0000-U+001F), no DEL (U+007F), no C1 controls (U+0080-U+009F), no
-  surrogate code points (U+D800-U+DFFF, as from a lone `\ud800` escape). **Typed text** (§6.10) is clean text
-  except that it MAY contain U+0009 (TAB) and U+000A (LF).
-- **Integers** are JSON numbers with no fraction. **Numbers** are any finite JSON number.
+  surrogate code points (U+D800-U+DFFF; inbound, one can only arrive as a lone `\ud800`-style escape, which the
+  agent's decoder refuses as malformed JSON, §6). **Typed text** (§6.10) is clean text except that it MAY contain
+  U+0009 (TAB) and U+000A (LF).
+- **Integers** are JSON numbers written without a fraction or an exponent (`7`, never `7.0` or `7e0`). **Numbers**
+  are any finite JSON number (one too large for a double, such as `1e400`, is not).
 - **Binary** values are little-endian.
 - **Epoch** values are seconds since 1970-01-01T00:00:00Z, as JSON numbers.
 - Every JSON message is an object with a string field `t` (its type). Field order is irrelevant.
@@ -260,6 +262,9 @@ equal `ready.w`/`ready.h`; a pop-up window with a toolbar has a slightly shorter
   backpressure: a slow link gets fewer, fresher images.
 - **Metadata kept.** The agent keeps the header fields of the last **16** binary messages it sent, so that it can
   check what a `tap` or `pinch` was aimed at (§6.4, §6.8).
+- **Malformed.** A binary message the viewer can't take as one of the above (fewer than 32 bytes, `kind` not 1 or
+  2, `slot` not 0 or 1, a kind 2 longer than 32 bytes, a kind 1 with no JPEG) is an agent bug: the viewer neither
+  draws nor acks it, closes the socket with 1000 and goes on as after a 4500 (§3.6).
 
 ### 4.3 Image sources and rates (agent)
 
@@ -361,7 +366,7 @@ The editable fields visible on the front page, for the viewer's keyboard proxy a
 | `f[].m` | integer | 0-511, the hit mask: bit `j` (`j` = 0-8, row-major, row `j div 3`, column `j mod 3`) is set when a click at the centre of cell `j` of a 3×3 grid over `c` would reach this field and nothing else, in its own frame and in every ancestor frame (§5.3.2). Fields with `m` = 0 are not sent |
 | `f[].type` | string | one of `text`, `email`, `tel`, `url`, `number`, `password`, `search`, `date`, `time`, `textarea`, `select`, `contenteditable`; other input types are reported as `text` |
 | `f[].im` | string | `inputmode`: one of `none`, `text`, `decimal`, `numeric`, `tel`, `search`, `email`, `url`, or "" |
-| `f[].ac` | string | `autocomplete` tokens: ≤ 64 code points of `[a-z0-9 -]`, lowercased, with the credential tokens `username`, `current-password`, `new-password` and `webauthn` removed; "" if none |
+| `f[].ac` | string | `autocomplete` tokens: the attribute (cut to 64 code points in the script) split on ASCII whitespace and lowercased; a token with any character outside `[a-z0-9-]` is dropped, never repaired (`user_name` doesn't become `username`), and so are the credential tokens `username`, `current-password`, `new-password` and `webauthn`; the rest joined by single spaces; "" if none |
 | `f[].ekh` | string | `enterkeyhint`: one of `enter`, `done`, `go`, `next`, `previous`, `search`, `send`, or "" |
 | `f[].cap` | string | `autocapitalize`: one of `off`, `none`, `on`, `sentences`, `words`, `characters`, or "" |
 | `f[].max` | integer \| null | `maxlength`, if set (1-524288) |
@@ -519,16 +524,20 @@ value changes (the agent checks every second, §7.2).
 
 Text frames only, each one JSON object of at most **4096 bytes** UTF-8. The agent decodes each in two steps:
 
-1. **Structure** (msgspec, `forbid_unknown_fields`): a binary frame; text that isn't UTF-8 JSON; a JSON value that
+1. **Structure** (msgspec, `forbid_unknown_fields`): a binary frame; text that isn't UTF-8 JSON (including a
+   string with a lone surrogate escape such as `"\ud800"`, and a number too large for a double); a JSON value that
    isn't an object; a missing or unknown `t`; an unknown field; a missing required field; a value of the wrong JSON
-   type (a string for a number, a fraction for an integer, `null` where not allowed). Any of these, any message
-   but `hello` before `ready`, a second `hello`, and a `hello` that breaks any rule of §6.1, close **4400**.
+   type (a string for a number, an integer written with a fraction or an exponent, `null` where not allowed: an
+   optional field is absent, never `null`, unless its row says so). Any of these, any message but `hello` before
+   `ready`, a second `hello`, and a `hello` that breaks any rule of §6.1, close **4400**.
 2. **Values** (in Python, after decoding): every range, length, enumeration, pattern and combination rule below.
    A message that breaks one is dropped and answered with `error invalid`; it counts toward the drop limit (§7.1).
 
 Coordinates `x`, `y` (and `x0`, `y0`, `x1`, `y1`) are frame px in `[0, w]`×`[0, h]` of the image the message
 refers to (`w`, `h` from its header: the image named by `seq` for `tap` and `pinch`, otherwise the latest binary
-message the agent sent for that page); outside: `error invalid`.
+message the agent sent for that page); outside: `error invalid`. A `tap` or `pinch` whose `seq` the agent no
+longer remembers (§4.2) passes this step and is answered `error stale` when carried out (§6.4 step 1); a `move` or
+`wheel` for a page the agent has sent no image for is ignored.
 
 ### 6.1 `hello`
 
@@ -645,7 +654,8 @@ Agent:
   `shift` (or while a `Shift` is held down), 2 for `word`.
 - `ph: down`: the down half only; the agent records the key as held. At most **6** keys are held; a seventh `down`
   first releases the oldest. A `down` for a key already held is ignored (CDP never auto-repeats). While `Shift` is
-  held, every key event carries modifiers 8.
+  held, every key event carries modifiers 8 (the `Shift`'s own `rawKeyDown` included, its `keyUp` not, as a real
+  keyboard reports them).
 - `ph: up`: the up half, if that key (`k` or `c`, compared exactly) is held; otherwise ignored.
 - Teardown releases every held key (§3.5).
 - `focus` (§5.4) follows `Tab`, `Enter` and `Escape`.
@@ -687,11 +697,11 @@ Agent, in this order, sending nothing to the page until step 4:
 ### 6.12 `date`
 
 `{"t": "date", "page": 1, "rev": 12, "f": 5, "v": "2026-10-16"}`. Set a `date` (`v` = `YYYY-MM-DD`, a real calendar
-date) or `time` (`v` = `HH:MM`, 24-hour) field. A `v` of the wrong form for the field's `k`: `error invalid`.
-Agent: steps 1-2 of §6.11, with `f` a `date` or `time` field of `rev` (else `error stale`); step 3 with one
-candidate point only, the first segment at
-(`x + min(12, w/4)`, `y + h/2`) of the element's box (else `error stale`); step 4 (the click is always made; no
-digit is typed unless the focus check holds, else `error failed`); then the digits in the pod's en-US order
+date) or `time` (`v` = `HH:MM`, 24-hour) field, in ASCII digits. A `v` of the wrong form for the field's `k`:
+`error invalid`. Agent: steps 1-2 of §6.11, with `f` a `date` or `time` field of `rev` (else `error stale`); step 3
+with one candidate point only, the first segment at (`x + min(12, w/4)`, `y + h/2`) of the element's box (else
+`error stale`); step 4 (the click is always made; no digit is typed unless the focus check holds, else `error
+failed`); then the digits in the pod's en-US order
 (`MMDDYYYY`; `hhmm` then `A`/`P`) as whole key presses, and a re-read of the value (`error failed` if it differs).
 If the pod's browser locale isn't en-US: `error unsupported`.
 
@@ -715,6 +725,12 @@ Unknown pages are ignored.
 The agent keeps a token bucket per message type and one overall. A message over its type's bucket is dropped (not
 carried out) and answered with `error rate`. More than **200** dropped messages (over a bucket, or `error
 invalid`) in any 10 s, or a message over the overall bucket, closes **4429**.
+
+Each type has a bucket of its own (a row naming two types gives each of them one). Every bucket starts full (its
+burst) and refills continuously at its rate. Only messages that passed the value rules (§6) are rate-limited: an
+`error invalid` takes no tokens. A message is admitted only if its type's bucket (for `text`, both of its buckets)
+holds enough tokens, and then takes them and one from the overall bucket; a message over its type's bucket takes
+nothing from any bucket. The 10 s of the drop limit is a sliding window.
 
 | Type | Rate (/s) | Burst | Viewer sends at most |
 |---|---|---|---|
@@ -837,8 +853,9 @@ Before sending `text`, the viewer MUST:
 2. remove lone surrogates, C0 controls other than TAB and LF, DEL and C1 controls;
 3. send nothing if nothing remains;
 4. split into consecutive chunks of at most 256 code points (never inside a surrogate pair: split the code-point
-   array, not the UTF-16 string), moving any chunk's trailing LF to the start of the next chunk, and send each as one
-   `text`, in order.
+   array, not the UTF-16 string), where a chunk that would end with a LF while more text follows ends just before
+   that LF instead (the LF starts the next chunk, whose own end is counted from there), and send each as one `text`,
+   in order.
 
 The same rules apply to `compose` (without TAB and LF; a composition longer than 64 code points is not sent until it
 is committed by `text`) and to `dialog.s` (without TAB and LF; cut at 256). Test vectors: §11.4.
@@ -887,15 +904,18 @@ load (DESIGN §11, step 0). An implementation conforms only if it passes all of 
 
 | File | Cases | Agent checks | Viewer checks |
 |---|---|---|---|
-| `messages.json` | every message type: valid examples, each limit's boundary, structural violations, value violations | outcome: carried out / `error invalid` / close 4400 | the viewer's own encoder produces only the valid ones |
-| `headers.json` | §4.4 and more | pack/unpack | parse |
+| `messages.json` | every message type: valid examples, each limit's boundary, structural violations, value violations; also the upgrade's offers (§2.1-2.2), `hello` from the window (§8.1) and its scale factor (§6.1), the rate limits (§7.1), queue coalescing (§3.4), the agent→viewer shapes (§5, §9) and `autocomplete` cleaning (§5.3.1, §8.5) | outcome: carried out / `error invalid` / close 4400 (1009 for size); the gate's offer outcome, `dsf`, rates, coalescing, its outbound schema, `ac` | the viewer's own encoder produces only the valid ones; its offer, `hello`, decoding of agent messages, the proxy's `autocomplete` |
+| `headers.json` | §4.4 and more; malformed binary messages | pack/unpack | parse; refuse the malformed |
 | `rects.json` | page states (scale, visual viewport offset, frame chains, client rects) → `r`, `c`; §11.3 | `frame_rect()` | — |
 | `hits.json` | a map + an image + tap points → field id or none; overlay or not | — | `fieldAt()`, `overlayFor()` |
 | `usable.json` | (map `seq`, `n`, offsets) × (image, last input number, prediction) → usable or not | — | `mapUsable()` |
 | `text.json` | §11.4: raw input → messages | value rules accept every output | `normalise()` |
 | `gestures.json` | timed touch/mouse sequences → messages (taps with `ms`, wheels at most one per 33 ms with exact sums, pinch `x0..y1`, no tap during a prediction) | — | the gesture state machine driven by a fake clock |
-| `mapping.json` | frame px + scale → CDP coordinates; pinch → CDP calls; `tap` staleness cases | `InputMapper` | — |
+| `mapping.json` | frame px + scale → CDP coordinates; pinch → CDP calls; `tap` staleness cases; key events (DESIGN §6.5); `date` digits and `choose` keys | `InputMapper` | — |
 | `close_codes.json` | close code (+ history) → reconnect delay / stop / classic | — | `nextAction()` |
+
+`tests/fixtures/cast1/README.md` gives each file's schema and how each side runs its cases; `tests/test_cast_pack.py`
+checks that the files match it.
 
 ### 10.2 Checklists
 
@@ -958,3 +978,5 @@ point that was under (300, 400) ends at frame px (250, 300) (measured).
 | 255 × `"a"` + `"😀"` + `"b"` | `text` (255 × "a" + "😀"), `text "b"` |
 | 255 × `"a"` + `"\n"` + `"b"` | `text` (255 × "a"), `text "\nb"` |
 | one character typed, `"é"` | `key {c: "é"}` |
+
+The conformance pack (§10.1) holds these vectors and many more.
