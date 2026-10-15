@@ -811,7 +811,10 @@ read once per session in the main world must start with `en-US`, else `date` ans
 
 ### 7.3 Rendering (`frames.js`, `core/layout.js`)
 
-- One full-viewport `<canvas>` (backing store = CSS size × `devicePixelRatio`).
+- One full-viewport `<canvas>` (backing store = CSS size × `devicePixelRatio`). viewer.html doesn't ask for
+  `viewport-fit=cover`: a phone's browser keeps the page, and so the image and where taps land, clear of the notch
+  and the rounded corners in landscape, as for any page (found in review: with it, the image was drawn under them
+  while the menu handle moved inside the safe area).
 - Binary messages go through one promise chain: `createImageBitmap(new Blob([jpeg]))` into the slot, closing the
   old bitmap, then draw, then `ack`.
 - Each image is drawn into the box of PROTOCOL §8.1 (letterboxed, `k ≤ 1`). A 2560x1440 desktop window sends

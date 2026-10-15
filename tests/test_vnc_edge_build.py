@@ -127,3 +127,15 @@ def test_each_page_script_stands_on_its_own(build: ModuleType, kasmvnc: Path, tm
     scripts = re.findall(r'<script src="([^"]+)"', (fw / "landing.html").read_text())
     assert scripts == ["/fw/landing.js"]
     assert re.findall(r'<script src="(/fw/[^"]+)"', (built.www / "vnc.html").read_text()) == ["/fw/shim.js"]
+
+
+def test_the_viewer_leaves_the_screens_unsafe_areas_to_the_browser() -> None:
+    """No `viewport-fit=cover`: in landscape a phone's browser then keeps the page, and with it the checkout's image
+    and where taps land, clear of the notch and the rounded corners, as it does for any page. With it, the image
+    was drawn under them while the viewer's own controls moved inside (found in review)."""
+    html = (EDGE / "site" / "fw" / "viewer.html").read_text()
+    viewport = re.search(r'<meta\s+name="viewport"\s+content="([^"]*)"', html)
+    assert viewport is not None
+    settings = {part.strip().split("=")[0]: part.strip().split("=")[-1] for part in viewport.group(1).split(",")}
+    assert settings["width"] == "device-width"
+    assert settings.get("viewport-fit", "auto") == "auto"
