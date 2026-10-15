@@ -201,8 +201,8 @@ feasibility 6).
     xsettingsd was stopped and no modes were left.
   - It never runs at hold end or drain, because the pod exits anyway (C22).
   - As built, the gate's restore is `stream.ClassicScreen`: when a stream has changed the screen since the last
-    classic viewer, it first pinches every zoomed page of the checkout back to page scale 1 (bounded to 2 s), then
-    calls `Screen.restore()`. Found in integration: after a stream's pinch, KasmVNC found the page at scale 2, which
+    classic viewer, it first pinches every zoomed page of the checkout back to page scale 1 (bounded to 2 s; a page
+    with an open dialog is left as it is), then calls `Screen.restore()`. Found in integration: after a stream's pinch, KasmVNC found the page at scale 2, which
     a classic viewer on a phone can't pinch back.
 - **The escape hatch on the same phone** restores 1280x1000@1 and then KasmVNC resizes to its own size, so the page
   goes 390@2 → 1280@1 → 390@1 once. That is the price of KasmVNC finding exactly 0.6.4's state. It happens at most

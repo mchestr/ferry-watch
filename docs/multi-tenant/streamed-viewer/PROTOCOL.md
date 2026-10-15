@@ -103,8 +103,9 @@ count as "a viewer" for viewer seconds and the hold clocks exactly as in 0.6.4.
 own screen (the X screen back to its launch size, Xft/DPI back to the default by stopping xsettingsd, the added
 RandR modes removed; DESIGN §4.1), bounded to 3 s in total, and, when a stream has changed the screen since the
 last `binary` viewer, first pinch every page of the checkout that is zoomed back to page scale 1 (a trackpad pinch,
-§6.8; bounded to 2 s): a classic viewer on a phone can't pinch the pod's page back. A `binary` viewer therefore
-always finds the pod's screen as a 0.6.4 classic viewer would. The screen is restored at no other time (§3.5). A JavaScript dialog a
+§6.8; bounded to 2 s; not a page with an open dialog, which answers nothing until the classic viewer has answered
+it): a classic viewer on a phone can't pinch the pod's page back. A `binary` viewer therefore always finds the
+pod's screen as a 0.6.4 classic viewer would. The screen is restored at no other time (§3.5). A JavaScript dialog a
 stream session left open stays open: Chromium draws it on the pod's screen, where the classic viewer answers it
 (§5.5).
 

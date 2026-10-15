@@ -60,6 +60,10 @@ class FakeDialogs:
     log: list[str] = field(default_factory=list)
     sink: Any = None
 
+    @property
+    def open_dialogs(self) -> list[KeptDialog]:
+        return [d for _, d in self.open]
+
     def attach(self, sink: Any) -> list[tuple[int, KeptDialog]]:
         self.sink = sink
         self.log.append("attach")
@@ -747,16 +751,26 @@ class StreamedScreen:
 
 async def test_a_classic_viewer_after_a_stream_finds_the_pages_at_scale_1(monkeypatch: pytest.MonkeyPatch) -> None:
     """Before a classic viewer, after a stream: every page the stream zoomed is pinched back to scale 1, then the
-    screen is restored. Without a stream since the last classic viewer, the pages aren't touched at all."""
-    zoomed, plain, blocked = FakePage(), FakePage("https://pay.example/bank"), FakePage("https://pay.example/3ds")
+    screen is restored. Without a stream since the last classic viewer, the pages aren't touched at all, and a page
+    with an open dialog (which answers no CDP) is left for the classic viewer."""
+    zoomed, plain, asking = FakePage(), FakePage("https://pay.example/bank"), FakePage("https://pay.example/3ds")
     zoomed.scale, zoomed.w, zoomed.h = 2.0, 390, 664
-    context = FakeContext(zoomed, plain)
+    asking.hang = {"Page.getLayoutMetrics"}
+    context = FakeContext(zoomed, plain, asking)
+    dialogs = FakeDialogs()
+    dialogs.open = [(1, dialog(asking, "alert", "Approve in your bank's app"))]
+
+    def classic(screen: StreamedScreen) -> stream.ClassicScreen:
+        return stream.ClassicScreen(screen, lambda: (cast(Any, context), cast(Any, zoomed)), dialogs)
+
     untouched = StreamedScreen(changed=False)
-    await stream.ClassicScreen(untouched, lambda: (cast(Any, context), cast(Any, zoomed))).restore()
+    await classic(untouched).restore()
     assert (untouched.restored, context.sessions) == (1, [])
 
     after_a_stream = StreamedScreen(changed=True)
-    await stream.ClassicScreen(after_a_stream, lambda: (cast(Any, context), cast(Any, zoomed))).restore()
+    started = time.monotonic()
+    await classic(after_a_stream).restore()
+    assert time.monotonic() - started < 1
     assert after_a_stream.restored == 1
     (pinch,) = zoomed.sent("Input.")
     assert pinch == (
@@ -764,14 +778,15 @@ async def test_a_classic_viewer_after_a_stream_finds_the_pages_at_scale_1(monkey
         {"x": 195.0, "y": 332.0, "scaleFactor": 0.5, "gestureSourceType": "mouse", "relativeSpeed": 3000},
     )
     assert plain.sent("Input.") == []
+    assert asking.calls == []
+    assert [s.page for s in context.sessions] == [zoomed, plain]
     assert all(s.detached for s in context.sessions)
 
-    # A page that answers nothing (a dialog is open on it) holds the classic viewer up only so long.
+    # A page that answers nothing for another reason holds the classic viewer up only so long.
     monkeypatch.setattr(stream, "UNZOOM_SECONDS", 0.2)
-    blocked.hang = {"Page.getLayoutMetrics"}
-    context = FakeContext(zoomed, blocked)
+    dialogs.open = []
     started = time.monotonic()
-    await stream.ClassicScreen(after_a_stream, lambda: (cast(Any, context), cast(Any, zoomed))).restore()
+    await classic(after_a_stream).restore()
     assert time.monotonic() - started < 1
     assert after_a_stream.restored == 2
 

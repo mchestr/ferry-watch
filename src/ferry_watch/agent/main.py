@@ -117,7 +117,7 @@ class Agent:
             viewer_changed=self.watcher.viewer_changed,
             cast=factory(stream),
             verdict=self.watcher.viewer_verdict,
-            screen=ClassicScreen(self.screen, self._checkout_page),
+            screen=ClassicScreen(self.screen, self._checkout_page, self.dialogs),
             dialogs=self.dialogs,
         )
         self.gate_port: int | None = None

@@ -139,22 +139,36 @@ class StreamedScreen(Protocol):
     async def restore(self) -> None: ...
 
 
+class OpenDialogs(Protocol):
+    @property
+    def open_dialogs(self) -> list[KeptDialog]: ...
+
+
 class ClassicScreen:
     """What the gate restores before it bridges a classic (KasmVNC) viewer, after a stream: the pod's own screen
     (screen.py), and the checkout's pages at page scale 1. A stream's pinch zoom is the stream's: a classic viewer on
     a phone has no way to pinch the pod's page back, and 0.6.4's never found it zoomed. When no stream has changed
-    the screen since the last classic viewer, nothing is done at all. Bounded; never raises."""
+    the screen since the last classic viewer, nothing is done at all. A page with an open dialog is left as it is:
+    it answers no CDP until the classic viewer has answered the dialog. Bounded; never raises."""
 
-    def __init__(self, screen: StreamedScreen, target: Callable[[], tuple[BrowserContext, Page] | None]) -> None:
+    def __init__(
+        self,
+        screen: StreamedScreen,
+        target: Callable[[], tuple[BrowserContext, Page] | None],
+        dialogs: OpenDialogs,
+    ) -> None:
         self._screen = screen
         self._target = target
+        self._dialogs = dialogs
 
     async def restore(self) -> None:
         target = self._target() if self._screen.changed else None
         if target is not None:
+            blocked = {id(d.page) for d in self._dialogs.open_dialogs}
+            pages = [page for page in target[0].pages if id(page) not in blocked]
             try:
                 async with asyncio.timeout(UNZOOM_SECONDS):
-                    await asyncio.gather(*(_unzoom(target[0], page) for page in target[0].pages))
+                    await asyncio.gather(*(_unzoom(target[0], page) for page in pages))
             except Exception as e:  # noqa: BLE001 - a classic viewer is waiting: it gets the page as it is
                 log.warning("Couldn't zoom the checkout back out: %s", type(e).__name__)
         await self._screen.restore()

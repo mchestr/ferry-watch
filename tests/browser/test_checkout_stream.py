@@ -227,7 +227,7 @@ async def make_rig(
             )
         ),
         verdict=verdict,
-        screen=ClassicScreen(screen_, lambda: (pod.context, pod.tab)),
+        screen=ClassicScreen(screen_, lambda: (pod.context, pod.tab), keeper),
         dialogs=keeper,
     )
     server = TestServer(app(gate) if app is not None else gate.app(), host="127.0.0.1", port=port)
