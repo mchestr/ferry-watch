@@ -1017,6 +1017,14 @@ switch.
 - Fragment parsing: a fragment starting `fw1.` is the 0.6.4 form (classic). Otherwise
   `URLSearchParams(fragment)`: `t` is the ticket, and `v=s1` means stream.
 - It stores `record.viewer` ("classic"/"stream") when a fresh ticket arrives, unless `record.viewer_fallback`.
+- It shows nothing from the ticket, whose signature it can't check (only the pods have the keys): found in review,
+  anyone could make a link that put their own words ("Payment failed: call …") on the checkout host through `disp`,
+  as 0.6.4's page already allowed. It keeps the ticket's `disp.hard_deadline` only as a hold could have it (after
+  now, at most `MAX_HARD_S` plus 10 minutes' clock skew away; otherwise as if the ticket hadn't said) and never
+  earlier than the record's own, and it forgets records whose deadline no hold could have. A made-up link with a
+  checkout's trip and gen therefore can't send its viewer to `/gone.html` early (and the next opening then drop the
+  nonce, and with it the held cart), nor leave a record that never goes. `#sailing` and `#deadline` stay in the
+  markup, empty, for 0.6.4's script during a rollout.
 - It opens `streamUrl` when `record.viewer === "stream" && !record.viewer_fallback`, else `classicUrl`.
 
 **`shim.js`**: its socket wrapper calls `FwSession` (same behaviour); its phone IIFEs are unchanged. `build.py`

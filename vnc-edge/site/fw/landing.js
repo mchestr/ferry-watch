@@ -10,7 +10,12 @@
 // streamed viewer). The device remembers which, per checkout, and opens that viewer from then on, unless
 // the streamed viewer has given way to the classic one for this checkout on this device.
 //
-// The ticket's display fields are signed but not checked here: they are shown as text, never markup.
+// The ticket's signature isn't checked here (only the pod's gate has its keys), so anyone can make a link that
+// reaches this page with claims of their own. So nothing the ticket says is shown: every word on the page is the
+// page's own. Its trip and expiry decide only where this tab goes, and its hold's hard deadline is kept only as far
+// as any real hold could have it (after now, at most MAX_HOLD_S off) and never brings forward a deadline the device
+// already keeps: a made-up link can't put its words on the checkout host, nor end a checkout on this device early,
+// nor leave a record that never goes (found in review; the same was true of 0.6.4's page).
 (() => {
   "use strict";
   const session = window.FwSession; // fw/session.js, served in front of this file (build.py)
@@ -20,11 +25,12 @@
   const { trip, gen } = at;
   const key = session.key(trip, gen);
   const now = Date.now();
+  const nowS = Math.floor(now / 1000);
   const TICKET = /^fw1\.[a-z0-9]{1,16}\.([A-Za-z0-9_-]+)\.[A-Za-z0-9_-]+$/;
   const MAX_TICKET_LENGTH = 1024;
   const OPEN_AFTER_MS = 2000;
-  const MAX_HOLD_MS = 90 * 60 * 1000; // protocol.MAX_HARD_S, for a ticket that doesn't say
-  const PACIFIC = "America/Vancouver";
+  const MAX_HOLD_S = 90 * 60; // protocol.MAX_HARD_S: no hold ends further off than this
+  const SKEW_S = 10 * 60; // this device's clock may be behind Ferry Watch's
 
   /** The ticket's claims, if the fragment holds a well-formed ticket for this trip. */
   function claimsOf(ticket) {
@@ -40,6 +46,11 @@
     }
   }
 
+  /** A hold's hard deadline (epoch s) that a real hold could have now: after now, and no further off than any. */
+  function plausible(deadline) {
+    return Number.isFinite(deadline) && deadline > nowS && deadline <= nowS + MAX_HOLD_S + SKEW_S;
+  }
+
   /** The ticket in the fragment and the viewer it opens in. */
   function fromFragment(fragment) {
     if (fragment.startsWith("fw1.")) return { ticket: fragment, viewer: "classic" };
@@ -47,12 +58,12 @@
     return { ticket: params.get("t") || "", viewer: params.get("v") === "s1" ? "stream" : "classic" };
   }
 
-  // Forget checkouts whose holds are over (and anything unreadable).
+  // Forget checkouts whose holds are over (and anything unreadable, or with a deadline no hold could have).
   try {
     for (const name of Object.keys(localStorage)) {
       if (!name.startsWith("fw:")) continue;
       const old = session.read(localStorage, name);
-      if (!old || !(old.hard_deadline * 1000 > now)) localStorage.removeItem(name);
+      if (!old || !plausible(old.hard_deadline)) localStorage.removeItem(name);
     }
   } catch {
     // storage is blocked; the write below says so
@@ -69,13 +80,14 @@
     return;
   }
   if (claims && claims.exp * 1000 > now) {
-    const disp = claims.disp && typeof claims.disp === "object" ? claims.disp : {};
+    const claimed = claims.disp && typeof claims.disp === "object" ? claims.disp.hard_deadline : undefined;
+    const kept = record && plausible(record.hard_deadline) ? record.hard_deadline : 0;
     record = {
       n: record && typeof record.n === "string" ? record.n : session.nonce(),
       opened,
-      disp,
-      hard_deadline: Number(disp.hard_deadline) || Math.floor((now + MAX_HOLD_MS) / 1000),
-      session_deadline: Number.isFinite(disp.session_s) ? now + disp.session_s * 1000 : null,
+      // The later of the deadline kept and the ticket's, if the ticket's is one a hold could have: a hold that ends
+      // later in the same pod moves it on, and no link brings it forward.
+      hard_deadline: Math.max(kept, plausible(claimed) ? claimed : 0) || nowS + MAX_HOLD_S,
       viewer,
       viewer_fallback: Boolean(record && record.viewer_fallback), // sticky for this checkout on this device
     };
@@ -98,7 +110,7 @@
   }
 
   const streamed = Boolean(record && record.viewer === "stream" && !record.viewer_fallback);
-  ready(record && record.disp);
+  document.getElementById("details").hidden = false;
   const beta = document.getElementById("beta"); // not on a page from a 0.6.4 replica, mid-rollout
   if (beta) beta.hidden = !streamed;
   const go = () => location.replace(streamed ? session.streamUrl(trip, gen) : session.classicUrl(trip, gen));
@@ -110,38 +122,5 @@
     const nothing = document.getElementById("nothing");
     nothing.textContent = text;
     nothing.hidden = false;
-  }
-
-  function ready(disp) {
-    document.getElementById("details").hidden = false;
-    if (!disp) return;
-    const sailing = [disp.route, dateLabel(disp.date), timeLabel(disp.depart), disp.fare].filter(Boolean);
-    document.getElementById("sailing").textContent = sailing.map(String).join(" · ");
-    const closes = record.session_deadline
-      ? `Checkout closes at ${clock(record.session_deadline)} (paused while you're on the payment page).`
-      : "";
-    const latest = record.hard_deadline ? ` At the latest ${clock(record.hard_deadline * 1000)}.` : "";
-    document.getElementById("deadline").textContent = closes + latest;
-  }
-
-  function clock(epochMs) {
-    return new Intl.DateTimeFormat("en-CA", { hour: "numeric", minute: "2-digit", timeZone: PACIFIC })
-      .format(epochMs)
-      .replace(/\./g, "");
-  }
-
-  function timeLabel(hhmm) {
-    const match = /^(\d{2}):(\d{2})$/.exec(String(hhmm));
-    if (!match) return null;
-    const hour = Number(match[1]);
-    return `${hour % 12 || 12}:${match[2]} ${hour < 12 ? "am" : "pm"}`;
-  }
-
-  function dateLabel(iso) {
-    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso));
-    if (!match) return null;
-    const day = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
-    const format = { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" };
-    return new Intl.DateTimeFormat("en-CA", format).format(day);
   }
 })();

@@ -12,9 +12,11 @@ The client's files come from the KasmVNC package: set FW_KASMVNC_WWW to its extr
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import functools
 import importlib.util
+import json
 import os
 import shutil
 import struct
@@ -25,6 +27,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 import aiohttp
 import pytest
@@ -259,8 +262,8 @@ async def test_the_client_opens_the_checkout_with_the_ticket_then_comes_back_wit
     issued = ticket()
     await page.goto(f"{edge.url}{LANDING}#{issued}")
     assert page.url == f"{edge.url}{LANDING}"  # the ticket is out of the address bar and history
-    assert await page.text_content("#sailing") == "Swartz Bay → Tsawwassen · Fri, Oct 16 · 9:00 am · Saver"
-    assert "(paused while you're on the payment page)" in (await page.text_content("#deadline") or "")
+    assert await page.text_content("h1") == "Opening your checkout…"
+    assert await page.is_visible("#open")
     await page.click("#open")
     await page.wait_for_selector("html.noVNC_connected")
     (first,) = edge.offers
@@ -323,6 +326,58 @@ async def test_without_a_ticket_or_a_key_there_is_only_the_way_back(edge: Edge, 
     assert not await page.is_visible("#details")
     assert await page.get_attribute("#back", "href") == f"{APP}/"
     assert edge.offers == []
+
+
+def forged(trip: str = TRIP, **disp: Any) -> str:
+    """A link anyone can make: a well-formed ticket with claims of their own and no valid signature."""
+    claims = {"trip": trip, "exp": int(time.time()) + 600} | (
+        {"disp": {"route": "Payment failed: call +1 800 555 0100", "fare": "or your booking is cancelled", **disp}}
+    )
+    payload = base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip("=")
+    return f"fw1.k1.{payload}.AAAA"
+
+
+async def page_text(page: Page) -> str:
+    return str(await page.evaluate("document.body.innerText"))
+
+
+async def test_a_made_up_link_shows_none_of_its_words_and_keeps_no_deadline_of_its_own(edge: Edge, page: Page) -> None:
+    """Found in review: anyone could make a link that showed their own words on the checkout host (the ticket's
+    signature isn't checked there) and left a device record that never went."""
+    await page.goto(f"{edge.url}{LANDING}#v=s1&t={forged(hard_deadline=4102444800, date='2026-10-16')}")
+    text = await page_text(page)
+    assert "Payment failed" not in text
+    assert "cancelled" not in text
+    assert "Oct 16" not in text
+    assert "Checkout closes" not in text
+    record = await device_record(page)
+    assert "disp" not in record
+    deadline = record["hard_deadline"]
+    assert isinstance(deadline, int)
+    assert time.time() < deadline <= time.time() + 90 * 60 + 1  # as if the ticket had said nothing
+    await page.goto("about:blank")
+
+
+async def test_a_made_up_link_neither_ends_nor_keeps_forever_a_checkout_on_this_device(edge: Edge, page: Page) -> None:
+    """The review's stronger case: with a checkout's trip and gen, a made-up link brought the device record's deadline
+    forward, so the viewer gave up and the next opening dropped the device's nonce (and with it the held cart)."""
+    await page.goto(f"{edge.url}{LANDING}#{ticket(hold_s=1800)}")
+    await page.click("#open")
+    await page.wait_for_selector("html.noVNC_connected")
+    record = await device_record(page)
+    for made_up in (forged(hard_deadline=1), forged(hard_deadline=4102444800), forged(hard_deadline="soon")):
+        await page.goto("about:blank")
+        await page.goto(f"{edge.url}{LANDING}#{made_up}")
+        await page.wait_for_selector("html.noVNC_connected")  # it opens this device's own checkout, by its nonce
+        again = await device_record(page)
+        assert (again["n"], again["opened"], again["hard_deadline"]) == (record["n"], True, record["hard_deadline"])
+    # A record that 0.6.4's page kept from such a link, with a deadline no hold could have, goes.
+    stale = {"n": "QW5vdGhlckRldmljZXNOb25jZQ", "opened": False, "hard_deadline": 4102444800}
+    await page.evaluate("(r) => localStorage.setItem('fw:0123456789abcdef:1', JSON.stringify(r))", stale)
+    await page.goto("about:blank")
+    await page.goto(f"{edge.url}{LANDING}")
+    assert await page.evaluate("localStorage.getItem('fw:0123456789abcdef:1')") is None
+    assert (await device_record(page))["n"] == record["n"]
 
 
 async def test_after_the_hold_ends_the_page_stops_reconnecting(edge: Edge, page: Page) -> None:
@@ -413,7 +468,6 @@ async def test_a_stream_ticket_opens_the_streamed_viewer(edge: Edge, page: Page)
     issued = ticket()
     await page.goto(f"{edge.url}{LANDING}#v=s1&t={issued}")
     assert page.url == f"{edge.url}{LANDING}"  # the ticket is out of the address bar and history
-    assert await page.text_content("#sailing") == "Swartz Bay → Tsawwassen · Fri, Oct 16 · 9:00 am · Saver"
     assert await page.text_content("#beta") == "Opens in the new checkout viewer (beta)."
     await page.click("#open")
     await page.wait_for_url(f"{edge.url}{STREAM_VIEWER}")

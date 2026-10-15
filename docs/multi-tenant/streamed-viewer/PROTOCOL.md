@@ -117,9 +117,12 @@ draws it on the pod's screen, where the classic viewer answers it (§5.5).
 ### 2.4 The device's nonce and ticket
 
 The viewer MUST use the same storage the classic viewer's shim uses (`fw/session.js`, DESIGN §8.4): localStorage key
-`fw:<trip>:<gen>` holding `{n, opened, disp, hard_deadline, session_deadline, viewer, viewer_fallback}` and
-sessionStorage key `fw:<trip>:<gen>:ticket` holding `{ticket, exp}`. On the first `open` event it MUST drop the
-pending ticket and set `opened: true`, exactly as the shim does. Neither value ever appears in a URL path or query.
+`fw:<trip>:<gen>` holding `{n, opened, hard_deadline, viewer, viewer_fallback}` and sessionStorage key
+`fw:<trip>:<gen>:ticket` holding `{ticket, exp}`. On the first `open` event it MUST drop the pending ticket and set
+`opened: true`, exactly as the shim does. Neither value ever appears in a URL path or query. The landing page writes
+the record without checking the ticket's signature, so nothing in it is page text: `hard_deadline` is the ticket's
+only when a hold could have it (after now, at most 100 minutes away) and never earlier than the one the record had
+(DESIGN §8.4). A record 0.6.4's page wrote may also hold `disp` and `session_deadline`, which nothing reads.
 
 ### 2.5 Liveness
 

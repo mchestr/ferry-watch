@@ -916,9 +916,14 @@ and its step-2 condition below is a READY cart. The gate rejects every other aud
 as a sign-in window before any cart (§15), would be a new audience with its own condition and no `cart_id`
 (`vnc_mints.cart_id` is nullable for that reason): an addition, not a change to the checkout path.
 
-`disp` is decoded but not trusted by the landing page, which shows it with `textContent` only. At first
-connect the landing page stores `session deadline = now + session_s` with `N` and shows "Checkout closes at
-hh:mm (paused while you're on the payment page)" and the hard deadline.
+`disp` is for whatever holds the pod's keys; the landing page can't check the signature, so since 0.7.0 it shows
+nothing from the ticket at all (found in review: anyone could make a link that put their own words on the checkout
+host, and 0.6.4's page showed `disp` there). Of the claims it reads only `trip` and `exp` (where this tab goes) and
+`disp.hard_deadline`, which it keeps with `N` only as far as any real hold could have it: after now and at most
+`MAX_HARD_S` (plus 10 minutes for clock skew) away, else as if the ticket hadn't said, and never earlier than a
+deadline the device already keeps for that checkout. Records with a deadline no hold could have are forgotten. So a
+made-up link can neither end a checkout on this device early (and with it the nonce, and the cart) nor leave a
+record that never goes.
 
 **Upgrade checks, all required, in order:**
 1. `Origin == FW_VNC_ORIGIN` (`https://ferry-checkout.chestr.dev`). Page JS in the pod's own Chromium cannot pass
@@ -2133,12 +2138,13 @@ before the query (`initSetting("path","websockify")`, `reconnect`, `reconnect_de
 opens its socket with one `new WebSocket(url, protocols)` call. The shim wraps `window.WebSocket` for URLs
 matching `^wss://ferry-checkout\.chestr\.dev/t/[a-f0-9]{16}/g/[0-9]{1,6}/ws$` only and sets the protocols to
 `["binary", "fw.n1.<N>"]`, plus `fw.t1.<ticket>` while a ticket is pending; it drops the ticket after the
-first successful open. If the client gives up reconnecting before the hold deadline it knows from `disp`, the
+first successful open. If the client gives up reconnecting before the hold deadline the device keeps (§5.5), the
 shim reloads `vnc.html` with back-off (1, 2, 5, 10 s), so retries are effectively uncapped until the deadline.
 The landing page sets
 `#path=t/<trip>/g/<gen>/ws&autoconnect=1&reconnect=1&reconnect_delay=1000&idle_disconnect=120&anti_aliasing=1`,
-plus `&virtual_keyboard_visible=1` on a touch screen (*As built, on a phone*), and shows the sailing and deadlines
-with `textContent` (its note advising guest checkout went after 0.6.3, §5.7). If the fragment's ticket has
+plus `&virtual_keyboard_visible=1` on a touch screen (*As built, on a phone*). It shows only its own text, nothing
+from the ticket, whose signature it can't check (0.6.4's page showed the sailing and deadlines from `disp`; its note
+advising guest checkout went after 0.6.3, §5.7). If the fragment's ticket has
 already expired (a slow load) and this device holds no lock yet, it sends the user back to
 `https://ferry.chestr.dev/c/<trip>` to mint again; with no ticket and no stored `N` it shows only a link back to
 the dashboard. A CI test drives the stock client in headless Chromium against a fake gate and asserts the path
