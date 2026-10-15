@@ -881,6 +881,10 @@ sends it as `text` (normalised) to the focused field.
     in the image, not `trunc`.
   - Options are built with `new Option(label)` and `disabled` flags.
   - Overlays are hidden while scrolling or zooming, and always sit below the viewer's own controls.
+  - A pick the agent couldn't carry out (`error failed`/`stale`/`unsupported` for `choose` or `date`) takes that
+    field's overlay away for the rest of the map revision, and a short notice says "That didn't take. Tap the field
+    to try again." The next tap there reaches the page's own control (found in review: on a custom select whose
+    mousedown is cancelled, the picker came back after every failed pick and the page's control never got a tap).
 - **The option sheet** for `focus.popup`.
 - **The dialog sheet**: the origin heading per PROTOCOL §8.8, the message in a `<p>` via `textContent`, OK/Cancel,
   and a prompt input with the password rules. It is styled as page content, not as viewer chrome.
@@ -1158,7 +1162,9 @@ check: apply 390x664 at 2x, the page reports it, restore, the page reports 1280x
   6. Drag gives at most one `wheel` per 33 ms with exact sums; a flick coasts and stops; a tap during a coast sends
      no `tap`; on `inner.html`-style images (no `sy` change) no prediction shift is drawn.
   7. Two-point touch gives a local zoom and exactly one `pinch` with `x0..y1`.
-  8. Overlays only for `m` = 511 fields of a usable map; covered cells don't hit.
+  8. Overlays only for `m` = 511 fields of a usable map; covered cells don't hit; a pick answered `error failed`
+     takes its overlay away for the revision, with a notice (and on the pod, `test_stream_midpoint.py` with
+     `occl.html`'s custom select).
   9. Dialog sheet: origin heading (same-origin, embedded, empty) and answer; page list show/close; menu Paste.
   10. Close codes: 4000, 4001, 4005 (goes to classic), 1006 backoff, three failures → classic prominent, the hard
       deadline → `/gone.html`.

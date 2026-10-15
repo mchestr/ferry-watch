@@ -5,6 +5,7 @@
 // - The menu, from a handle on the right edge: the time left, the checkout's open pages, Paste, the classic viewer
 //   and the way back to Ferry Watch.
 // - The option sheet, for a select the pod opened its own list for.
+// - A notice, for a pick the checkout didn't take.
 // - The dialog sheet, for the checkout's JavaScript dialogs, headed with the origin of the frame that opened it and
 //   drawn as the browser draws its own, never as Ferry Watch's, so that no page can pass its prompt off as ours.
 // Everything here that comes from the checkout's pages (titles, origins, option labels, dialog text) is set as
@@ -14,6 +15,7 @@ import { dialogAnswer } from "./core/text.js";
 
 const PACIFIC = "America/Vancouver";
 const CLOSING_MS = 300; // a sheet's closing transition
+const NOTICE_MS = 4000;
 
 const SCREENS = {
   opening: { title: "Opening your checkout…", busy: true },
@@ -76,6 +78,22 @@ export class Status {
   hide() {
     this.showing = null;
     this.root.hidden = true;
+  }
+}
+
+/** A short line over the checkout that goes by itself, for what didn't happen as the user meant it. */
+export class Notice {
+  constructor(document, { showMs = NOTICE_MS } = {}) {
+    this.root = document.getElementById("notice");
+    this.showMs = showMs;
+    this.timer = 0;
+  }
+
+  show(text) {
+    clearTimeout(this.timer);
+    this.root.textContent = text;
+    this.root.hidden = false;
+    this.timer = setTimeout(() => (this.root.hidden = true), this.showMs);
   }
 }
 

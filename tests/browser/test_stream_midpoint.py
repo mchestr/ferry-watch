@@ -496,6 +496,42 @@ async def test_the_pickers_set_clear_fields_and_a_covered_field_is_refused(
         assert not [entry for entry in log if entry.startswith("PAY")], log
 
 
+async def notice(viewer: Viewer) -> str | None:
+    shown: str | None = await viewer.evaluate(
+        "(() => { const n = document.getElementById('notice'); return n.hidden ? null : n.textContent; })()"
+    )
+    return shown
+
+
+async def test_a_pick_the_page_doesnt_take_gives_the_field_back_to_the_page(
+    browser: Browser, checkout: Checkout
+) -> None:
+    """A custom select whose mousedown is cancelled never takes a pick (`error failed`): the viewer says so, and its
+    picker goes, so that the next tap there reaches the page's own control instead of opening a picker that can never
+    work."""
+    async with device(browser, "phone") as phone:
+        await opened(phone, checkout, "occl.html")
+        field = await field_for(phone, checkout.pod, "#s4")
+        clear = [["SELECT", "60px"], ["INPUT", "120px"], ["SELECT", "180px"]]
+        assert await until(lambda: overlays(phone), lambda o: o == clear) == clear
+        await phone.page.select_option('#overlays > select[style*="top: 180px"]', label="two")
+        seen = await until(lambda: wire(phone), lambda w: any(m["msg"]["t"] == "error" for m in w["got"]), wait_s=5)
+        assert [m["msg"] for m in seen["got"] if m["msg"]["t"] == "error"] == [
+            {"t": "error", "code": "failed", "ref": "choose"}
+        ]
+        assert await checkout.tab("document.getElementById('s4').value") == "one"
+        assert await until(lambda: notice(phone), bool) == "That didn't take. Tap the field to try again."
+        assert await until(lambda: overlays(phone), lambda o: o == clear[:2]) == clear[:2]
+
+        await checkout.tab(
+            "window.s4Downs = 0; document.getElementById('s4').addEventListener('mousedown', () => s4Downs++)"
+        )
+        await tap(phone, *middle(field["r"]))
+        assert await until(lambda: checkout.tab("window.s4Downs"), bool) == 1  # the page's own control got it
+        await settled(phone)  # a map for after the tap: still no picker over the field
+        assert await overlays(phone) == clear[:2]
+
+
 # ---- 6. a reconnect changes nothing the page can see
 
 

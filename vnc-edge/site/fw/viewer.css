@@ -181,6 +181,24 @@ svg {
   animation: rise 0.25s var(--ease);
 }
 
+.notice {
+  position: fixed;
+  left: 50%;
+  bottom: max(20px, calc(env(safe-area-inset-bottom) + 12px));
+  z-index: 6;
+  max-width: calc(100% - 48px);
+  margin: 0;
+  padding: 10px 16px;
+  border-radius: 12px;
+  font-size: 15px;
+  text-align: center;
+  color: var(--primary-foreground);
+  background: var(--foreground);
+  box-shadow: var(--shadow);
+  transform: translateX(-50%);
+  animation: rise 0.25s var(--ease);
+}
+
 .chip svg {
   width: 20px;
   height: 20px;

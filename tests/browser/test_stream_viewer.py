@@ -1021,6 +1021,35 @@ async def test_native_pickers_lie_over_the_fields_a_usable_map_clears(phone: Vie
     assert (await in_touchend(phone))[-1]["focused"] == "proxy"
 
 
+async def test_a_pick_the_agent_couldnt_carry_out_gives_the_field_back_to_the_page(
+    phone: Viewer, checkout: Edge
+) -> None:
+    """`error failed` (or `stale`, `unsupported`) for a picker's `choose` or `date`: the user is told, and that
+    field's picker goes for as long as the map's revision lasts, so the next tap there goes to the page itself."""
+    session, seq = await started(phone, checkout)
+    fields = OCCLUSION["map"]["f"]
+    await send_map(session, fields, seq=seq, rev=3)
+    await phone.page.locator('#overlays > select[style*="top: 180px"]').select_option(index=1)
+    (choose,) = await session.wait_for("choose")
+    assert await phone.evaluate("document.getElementById('notice').hidden")
+    await session.send({"t": "error", "code": "failed", "ref": "choose"})
+    notice = await until(
+        lambda: phone.evaluate(
+            "(() => { const n = document.getElementById('notice'); return n.hidden ? null : n.textContent; })()"
+        ),
+        bool,
+    )
+    assert notice == "That didn't take. Tap the field to try again."
+    await send_map(session, fields, seq=seq, rev=3)  # the same map again (fields_ok, say): still none there
+    shown = sorted((o["tag"], o["type"], tuple(o["r"])) for o in await overlays(phone))
+    assert shown == [("input", "date", (20, 120, 300, 40)), ("select", "select-one", (20, 60, 300, 40))]
+    await tap(phone, 170, 200)  # the field: the page's own control gets the tap
+    (tapped,) = await session.wait_for("tap")
+    assert (tapped["x"], tapped["y"]) == (170, 200)
+    await send_map(session, fields, seq=seq, rev=4)  # a new revision: the picker is back
+    assert len(await overlays(phone)) == 3
+
+
 # ---- the sheets: dialogs, the option sheet, the menu (viewer tests 9 and 12)
 
 MARKUP = '<img src=x onerror="document.title = 1">'  # what a page might put in its title, a label or a dialog

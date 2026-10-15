@@ -887,6 +887,10 @@ The viewer's hidden `<input>` that receives the phone's keyboard (DESIGN §4.4):
 
 - A native `<select>` or `<input type=date|time>` overlay, placed per §8.3; on `change` the viewer sends `choose`
   or `date` with the map's `rev`.
+- A pick from an overlay that the agent answers `error failed`, `stale` or `unsupported` didn't take (a custom
+  select that cancels the click, a field that changed). The viewer MUST NOT lay a picker over that field again for
+  the same map `rev`, so that the next tap there reaches the page's own control (or the option sheet, through
+  `focus.popup`), and SHOULD tell the user the pick didn't take.
 - On `focus.popup`, the viewer shows its own option sheet built from `opts` (labels via `textContent`), and sends
   `choose`; a select with `trunc` shows the options it has and a note that the rest need the classic viewer.
 

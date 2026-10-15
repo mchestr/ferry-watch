@@ -10,13 +10,15 @@ import { Frames } from "./frames.js";
 import { Input } from "./input.js";
 import { Keyboard } from "./keyboard.js";
 import { Overlays } from "./overlays.js";
-import { DialogSheet, Menu, OptionSheet, Status } from "./sheets.js";
+import { DialogSheet, Menu, Notice, OptionSheet, Status } from "./sheets.js";
 import { Connection } from "./socket.js";
 
 const session = window.FwSession;
 const at = session.where(location.hash);
 const computer = matchMedia("(pointer: fine)").matches; // a mouse and a keyboard, not a touch screen
 const FOCUS_KEYS = new Set(["Tab", "Enter", "Escape"]);
+const PICKS = new Set(["choose", "date"]);
+const NOT_TAKEN = new Set(["failed", "stale", "unsupported"]); // a pick the agent couldn't carry out (§5.7)
 let connection = null;
 
 const status = new Status(document, { here: () => connection?.connect(), classic: toClassic });
@@ -64,6 +66,7 @@ function start(checkout) {
   });
   const keyboard = new Keyboard(document, { send, screen, computer });
   const overlays = new Overlays(document, { send });
+  const notice = new Notice(document);
   const dialogs = new DialogSheet(document, {
     answer: (id, ok, s) => send(s === undefined ? { t: "dialog", id, ok } : { t: "dialog", id, ok, s }),
   });
@@ -102,7 +105,13 @@ function start(checkout) {
     focus: focused,
     dialog: (msg) => dialogs.add(msg),
     dialog_closed: (msg) => dialogs.remove(msg.id),
-    error: (msg) => console.warn(`The checkout's agent didn't carry out a ${msg.ref}: ${msg.code}`),
+    error(msg) {
+      console.warn(`The checkout's agent didn't carry out a ${msg.ref}: ${msg.code}`);
+      if (!PICKS.has(msg.ref) || !NOT_TAKEN.has(msg.code)) return;
+      overlays.refuse(); // the next tap on the field goes to the page itself
+      refresh();
+      notice.show("That didn't take. Tap the field to try again.");
+    },
   };
 
   connection = new Connection(checkout, {
@@ -112,7 +121,7 @@ function start(checkout) {
       keyboard.reset();
       dialogs.reset();
       options.hide();
-      overlays.clear();
+      overlays.reset();
       live = fresh();
       menu.update(live);
       showing = false;
@@ -191,6 +200,7 @@ function start(checkout) {
   function chose(index) {
     const { map, focus } = live;
     const field = findSelect(map, focus?.f);
+    overlays.forget();
     if (field) send({ t: "choose", page: map.page, rev: map.rev, f: field.id, i: index });
     else send({ t: "key", k: "Escape" }); // the map hasn't caught up: close the pod's list, and the user taps again
   }
