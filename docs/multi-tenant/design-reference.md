@@ -2130,8 +2130,8 @@ fails CI.
   too instead of nearest-neighbour.
 - **A keyboard button**, on touch screens only (`navigator.maxTouchPoints > 0`): `virtual_keyboard_visible=1`
   shows the client's floating keyboard button (draggable; holding it shows Ctrl, Alt, Tab, Esc and other keys,
-  which the side panel's Keys already offered). A phone opens its keyboard only for a field on the viewer's own page, and a
-  tap on a checkout field focuses only the pod's field, so the button is how the keyboard opens.
+  which the side panel's Keys already offered). A phone opens its keyboard only for a field on the viewer's own
+  page, and a tap on a checkout field focuses only the pod's field, so the button is how the keyboard opens.
 - **The side panel out of the way.** The client opens its side panel on load and closes it 2 s after connecting,
   but on a phone the panel covers most of the screen, and a tap on it in those 2 s keeps it open. The shim
   closes it as `<html>` gets `noVNC_connected`; its handle still opens it. The client's own close would still
@@ -2163,6 +2163,8 @@ fails CI.
 
 Still janky on a phone:
 - The keyboard doesn't open when a checkout field is tapped (above): the user taps the keyboard button.
+- The keyboard button answers only a quick tap: the client toggles the keyboard for a press shorter than 150 ms
+  and shows its extra keys after 350 ms, so a press in between does nothing.
 - The client's IME handling loses letters from a composition (what predictive and autocorrecting keyboards
   send): in emulation, typing "Mike" and then composing "Chester" reached the pod as "MikeCester".
 - Text is drawn at 1x and smoothed onto a 2x or 3x display, so it's softer than a native page. Sharper text would
@@ -3250,7 +3252,7 @@ exec into or screenshot a pod that holds a cart.
 | A checkout is cut off mid-payment | Medium / high | Payment guard pauses session clocks; no navigation away while paying; the 30-minute session default tuned from `ferrywatch_checkout_seconds`; `hold_ending` warning at T−5. |
 | VNC reconnects fail on phones (bank-app switch, network change, Cloudflare idle) | Medium / high | 20 s pings; reconnect with `N` replaces stale sockets; shim reload until the deadline; only failed upgrades count; S-VNC-lite on three clients. |
 | The device that opened checkout is lost (iOS home-screen storage) | Medium / medium | No automatic open; device choice on `/c`; `N` reused across returns; S-VNC-lite checks the iOS path; no takeover ticket (round 3): iPhone users check out in Safari or on a computer if it fails. |
-| The stock KasmVNC client changes on upgrade | Low / medium | No bundle patch; a CI test drives the client through the shim against a fake gate. |
+| The stock KasmVNC client changes on upgrade | Low / medium | No bundle patch; a CI test drives the client through the shim against a fake gate. The shim's phone handling relies on the client's DOM and gesture events (§7.9, *As built, on a phone*): it does nothing if they change, and `test_checkout_screen.py` fails. |
 | Memory is higher than measured (heavy pages, tmpfs, checkout) | Medium / medium | S-MEM measures the cgroup working set including tmpfs; podMemory starts at 1.5 GiB; disk cache capped; recycle at 85 % while Watching, alert while Holding; quota backstop. |
 | A Talos upgrade releases a hold (R8) | Medium / low | "Pause carting" runbook; orderly release with an alert; hold PDB plus `drainTimeout` in M4 if it bites. |
 | A session token stolen through XSS on the dashboard origin (R17) | Low / medium | The strict hash-based CSP (blocks injection and fetch/form exfiltration, not navigation); the 24 h IdP re-verification, which a thief can't pass; idle and absolute expiry; server-side revocation (logout, "sign out everywhere", suspension); VNC still needs the pod's ticket and first-viewer lock. |

@@ -83,7 +83,8 @@ PHONE: dict[str, Any] = {
 }
 
 # A checkout tab longer than any screen: lines of text, with two fields after the first few, where the client's
-# side panel would cover them on a phone. It counts the mouse buttons pressed on it.
+# side panel would cover them on a phone. It counts the mouse buttons pressed on it, and the context menus and
+# Ctrl+wheel zooms it gets, which it stops.
 LONG_FORM = f"""<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
@@ -96,7 +97,12 @@ LONG_FORM = f"""<!doctype html>
 {"".join(f"<p>Line {i}: Swartz Bay to Tsawwassen, 9:00 am, Saver fare, one vehicle.</p>" for i in range(5, 81))}
 <script>
   window.presses = 0;
+  window.menus = 0;
+  window.zooms = 0;
   addEventListener("mousedown", () => window.presses++);
+  addEventListener("contextmenu", (event) => {{ window.menus++; event.preventDefault(); }});
+  const zoom = (event) => {{ if (event.ctrlKey) {{ window.zooms++; event.preventDefault(); }} }};
+  addEventListener("wheel", zoom, {{ passive: false }});
 </script>"""
 
 
@@ -310,9 +316,11 @@ async def _on_viewer(viewer: Page, pod: Pod, selector: str) -> tuple[float, floa
     )
     tab_width, tab_height = await pod.tab.evaluate("[innerWidth, innerHeight]")
     point = (box[0] + (x + width / 2) * box[2] / tab_width, box[1] + (y + height / 2) * box[3] / tab_height)
+    # The side panel slides in after the page loads, and the status ("Connected to ...") over the top as it connects.
     on_top = """([x, y]) => {
-      const panel = document.getElementById("noVNC_control_bar"); // it slides in after the page loads
-      return panel && panel.getAnimations().length ? "sliding panel" : document.elementFromPoint(x, y).tagName;
+      const moving = (id) => document.getElementById(id).getAnimations().length;
+      const sliding = ["noVNC_control_bar", "noVNC_status"].find(moving);
+      return sliding || document.elementFromPoint(x, y).tagName;
     }"""
     uncovered = await _until(lambda: viewer.evaluate(on_top, point), lambda t: t == "CANVAS")
     assert uncovered == "CANVAS", f"the client's {uncovered} covers the checkout's {selector}"
@@ -330,9 +338,9 @@ def _stroke(
     ]
 
 
-async def _touch(viewer: Page, steps: list[list[tuple[float, float]]]) -> None:
-    """Fingers down at the first step's points, through the others a frame apart, and up: what a phone's touch
-    screen sends. (Playwright's touchscreen only taps.)"""
+async def _touch(viewer: Page, steps: list[list[tuple[float, float]]], *, hold_s: float = 0.016) -> None:
+    """Fingers down at the first step's points, through the others a frame apart, and up `hold_s` after the last:
+    what a phone's touch screen sends. (Playwright's touchscreen only taps.)"""
     cdp = await viewer.context.new_cdp_session(viewer)
 
     def points(step: list[tuple[float, float]]) -> list[dict[str, float]]:
@@ -342,7 +350,7 @@ async def _touch(viewer: Page, steps: list[list[tuple[float, float]]]) -> None:
     for step in steps[1:]:
         await asyncio.sleep(0.016)
         await cdp.send("Input.dispatchTouchEvent", {"type": "touchMove", "touchPoints": points(step)})
-    await asyncio.sleep(0.016)
+    await asyncio.sleep(hold_s)
     await cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
     await cdp.detach()
 
@@ -393,14 +401,27 @@ async def test_on_a_phone_the_checkout_is_the_phones_size_and_scrolls_like_a_pag
     assert 150 <= scrolled <= 600, f"a 300 px drag scrolled the checkout {scrolled} px"
     assert await pod.tab.evaluate("String(getSelection())") == "", "a drag selected the checkout's text"
     assert await pod.tab.evaluate("presses") == presses, "a drag pressed a mouse button on the checkout"
+    # Once the page has stopped, a tap is a tap again.
+    await phone.touchscreen.tap(width / 2, 300)
+    tapped = await _until(lambda: pod.tab.evaluate("presses"), lambda p: p > presses)
+    assert tapped == presses + 1, "a tap after a scroll didn't reach the checkout"
+    presses = tapped
 
-    # Two fingers still scroll as the client scrolls them, and the panel's handle still opens it.
+    # Two fingers still scroll as the client scrolls them.
     await pod.tab.evaluate("scrollTo(0, 0)")
     await _settled(lambda: pod.tab.evaluate("scrollY"))
     await _touch(phone, _stroke((width / 2 - 30, 550), (width / 2 - 30, 250), fingers=2))
     scrolled = await _until(lambda: pod.tab.evaluate("scrollY"), lambda y: y > 0)
     assert scrolled > 0, "two fingers no longer scroll the checkout"
     assert await pod.tab.evaluate("presses") == presses
+
+    # A long press is still a right click, a pinch still zooms (the client sends Ctrl and the wheel), and the
+    # panel's handle still opens it.
+    await _touch(phone, [[(width / 2, 300)]], hold_s=1.5)
+    assert await _until(lambda: pod.tab.evaluate("menus"), bool) == 1, "a long press isn't a right click"
+    pinch: list[list[tuple[float, float]]] = [[(width / 2 - d, 350), (width / 2 + d, 350)] for d in range(20, 160, 7)]
+    await _touch(phone, pinch)
+    assert await _until(lambda: pod.tab.evaluate("zooms"), bool), "a pinch doesn't zoom the checkout"
     await phone.tap("#noVNC_control_bar_handle")
     await phone.wait_for_selector("#noVNC_control_bar.noVNC_open")
 
