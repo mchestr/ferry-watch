@@ -354,6 +354,9 @@ class Configure(_Message, tag="configure", frozen=True, kw_only=True):
     vnc_allowed: bool = False
     brake: Brake = msgspec.field(default_factory=Brake)
     breaker: Literal["closed", "open"] = "closed"
+    # The streamed checkout viewer's kill switch (0.7.0): without it the gate refuses `fw.cast1` and closes a
+    # live stream. Sent only to agents from 0.7.0 on, since older ones refuse unknown fields; absent is false.
+    cast_allowed: bool = False
 
 
 CommandOp = Literal["check_now", "release", "dismiss", "drain", "vnc_revoke"]
