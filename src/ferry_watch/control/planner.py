@@ -8,7 +8,9 @@ pods to start, which to drain, and where the rest wait. The loop applies it; tes
   a pod that is starting, holding or draining stays where it is.
 - Every other eligible trip gets a *short check* when due: a pod that checks once and exits.
 - In a user's quiet hours their trips are treated as paused, except one whose quiet hours they lifted.
-- A trip has at most one pod. Holding pods are never displaced.
+- A trip has at most one pod. Holding pods are never displaced, but a removed (archived) trip's pod is drained
+  even while it holds a cart: nobody can check out of it any more, and draining lets the cart go. A pod whose
+  trip isn't in the inputs at all (one ferry-control can't read, say) keeps its cart.
 - Caps: total pods, with `short_check_slots` kept free of warm pods; at most 2 starting; 30 starts an
   hour; a user's starts at least 20 s apart. Nothing is created that would wait as Pending.
 """
@@ -22,7 +24,7 @@ from datetime import datetime, timedelta
 from typing import Literal
 
 from ferry_watch.models import PACIFIC, Trip
-from ferry_watch.polling import PollPolicy, QuietHours, time_until
+from ferry_watch.polling import DEFAULT_QUIET_HOURS, PollPolicy, QuietHours, time_until
 from ferry_watch.protocol import CommandReason, Mode
 
 PodPhase = Literal["creating", "starting", "watching", "holding", "draining", "failed", "gone"]
@@ -38,10 +40,10 @@ class UserView:
     active: bool = True  # not suspended
     paused: bool = False  # for a release: "Pause all" from a ferry-web before 0004, until ferry-web moves it
     max_active_browsers: int = 1
-    quiet: QuietHours | None = None  # their trips aren't checked then
+    quiet: QuietHours = DEFAULT_QUIET_HOURS  # their trips aren't checked then
 
     def quiet_now(self, at: datetime) -> bool:
-        return self.quiet is not None and self.quiet.contains(at)
+        return self.quiet.contains(at)
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,7 +51,7 @@ class TripView:
     trip: Trip
     user_id: str
     paused_reason: str | None = None  # e.g. after_checkout, until "Did you book it?" is answered
-    archived: bool = False
+    archived: bool = False  # removed by the user (the fleet loop passes these only while a pod is live)
     next_check_at: float | None = None  # a short check is due then (None: now)
     backoff_until: float | None = None
     needs_attention: bool = False
@@ -116,12 +118,12 @@ def _ineligible(
     """Why this trip may not have a browser now (None: it may)."""
     quiet = user is not None and user.quiet_now(at) and not view.quiet_lifted(now)
     reasons: list[tuple[bool, CommandReason]] = [
+        (view.archived, "deleted"),  # first: it's what lets a removed trip's held cart go
         (fleet.maintenance, "maintenance"),
         (user is None or not user.active, "suspended"),
         (user is not None and user.paused, "paused"),
         (not view.trip.enabled or view.paused_reason is not None, "paused"),
         (quiet, "paused"),  # the user's quiet hours: not checked at all, as if paused
-        (view.archived, "deleted"),
         (time_until(view.trip, at) is None, "past"),
         (view.needs_attention or (view.backoff_until is not None and view.backoff_until > now), "limit"),
     ]
@@ -178,9 +180,9 @@ class _Planner:
                 self.eligible[view.id] = view
                 continue
             pod = self.pod_by_trip.get(view.id)
-            if pod is not None and pod.phase not in ("holding", "draining"):
+            if pod is not None and pod.phase != "draining" and (pod.phase != "holding" or reason == "deleted"):
                 self.result.drain.append(Drain(pod.name, reason))
-        for pod in self.pods:  # pods for trips that no longer exist at all
+        for pod in self.pods:  # pods for trips not in the inputs: gone, or a spec ferry-control can't read
             if pod.trip_id not in self.trips and pod.phase not in ("holding", "draining"):
                 self.result.drain.append(Drain(pod.name, "deleted"))
 
@@ -189,6 +191,7 @@ class _Planner:
         by_user: dict[str, list[TripView]] = {}
         for view in self.eligible.values():
             by_user.setdefault(view.user_id, []).append(view)
+        drained = {d.pod for d in self.result.drain}
         want: list[TripView] = []
         for user_id, views in by_user.items():
             user = self.users[user_id]
@@ -201,7 +204,7 @@ class _Planner:
                 if warm.trip_id in self.eligible and warm.trip_id not in nearest_ids and warm.phase == "watching":
                     self.result.drain.append(Drain(warm.name, "superseded"))  # a nearer trip takes the browser
                     leaving = True
-                elif warm.phase == "draining" or (warm.trip_id not in self.eligible and warm.phase != "holding"):
+                elif warm.phase == "draining" or warm.name in drained:
                     leaving = True  # drained this pass or already; a held cart keeps its pod until it's let go
             # Every warm pod counts until it's gone, so a user never has more than their warm browsers.
             room = max(user.max_active_browsers - len(warm_pods), 0)

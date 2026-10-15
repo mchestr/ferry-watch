@@ -168,7 +168,7 @@ k8s-native. The review then:
 | 9 | Reap unused browsers; no misuse | Disposable pods (`restartPolicy: Never`), recycled after every viewed hold and at about 24 h; short-check pods exit after one check; hold caps, kiosk mode, policies and the egress allowlist outside holds. | More pod starts mean more Queue-it visits, which the start throttle and budget (D12) absorb. |
 | Alerts | No Pushover; Web Push plus email | ferry-web sends from a Postgres outbox. Web Push is the default; email carries cart alerts and is the fallback. | A service worker, VAPID handling and SES production access (§2.3). |
 | Routing (review) | "Route each user to their own pod" | §3.3: one host, one path per pod, one ticket per owner, trip, pod and cart. | None beyond vnc-edge. |
-| Polling (round 3) | "Be good users of the api": poll rarely when far off, often when close; trips at most 30 days ahead; quiet hours alert only | One warm browser per user on a curve (5 min from 7 days out, 2 min from 3 days, 60 s from 24 h, 30 s from 6 h; ±15 % jitter; 30 s compiled floor), short checks every 6 h for other trips, `tripHorizonDays` 30, quiet hours 23:00-06:00 Pacific alert only (since 0.6.3: each user's own, none by default, and no checks at all in them). Canonical: `src/ferry_watch/polling.py`; §6.6, §8.2, §9.3. | A trip that isn't the user's nearest is seen only every 6 h until it becomes the nearest; each short check is a pod start and possibly a Queue-it pass. |
+| Polling (round 3) | "Be good users of the api": poll rarely when far off, often when close; trips at most 30 days ahead; quiet hours alert only | One warm browser per user on a curve (5 min from 7 days out, 2 min from 3 days, 60 s from 24 h, 30 s from 6 h; ±15 % jitter; 30 s compiled floor), short checks every 6 h for other trips, `tripHorizonDays` 30, quiet hours 23:00-06:00 Pacific alert only (since 0.6.3 each user's own, with no checks at all in them; since 0005 everyone has them, 22:00-05:00 until they change them). Canonical: `src/ferry_watch/polling.py`; §6.6, §8.2, §9.3. | A trip that isn't the user's nearest is seen only every 6 h until it becomes the nearest; each short check is a pod start and possibly a Queue-it pass. |
 | 3DS egress (round 3) | Open public HTTPS egress while a cart is held | A second CiliumNetworkPolicy selects `ferry-watch.io/egress: hold`, a label only ferry-control may change, and only that label (VAP); private, cluster, node, metadata, smtp-relay and observability destinations stay denied (§7.6). | A tenant can browse other sites from the home IP during their own hold, and code in a holding pod can reach any public HTTPS host (R22). ferry-control gains `pods` patch, fenced by the pod-lock VAP from M1. |
 
 ### 2.2 Cluster facts this plan relies on (verified in home-cluster at 0bff2f8 unless marked upstream)
@@ -379,8 +379,9 @@ Numbers below are the defaults from the canonical table in §8.2.
    (`POST /api/trips/{id}/hold`) lifts quiet hours, and the trip's own auto-cart off, for that trip for
    10 minutes (`trip_runtime.hold_requested_until`), and checks now; every other limit and the claim still
    apply, and ferry-control clears the request once a cart is held or fails. Quiet hours are each user's own
-   (0.6.3; none unless they set some): in them the user's trips aren't checked at all (no pods start, pods not
-   holding a cart are drained, any pod left is told `active=false`), so nothing opens, is held or alerts. A
+   and everyone has them (22:00-05:00 Pacific until they change them, since the ferries sail from about 5 am
+   to 10 pm; there's no turning them off): in them the user's trips aren't checked at all (no pods start, pods
+   not holding a cart are drained, any pod left is told `active=false`), so nothing opens, is held or alerts. A
    manual check lifts them for that trip for 10 minutes too (`trip_runtime.quiet_lifted_until`), and while
    lifted the trip is checked and may cart as usual. When carting, the agent:
    - runs `add_to_cart` (≤40 s, `CART_BUDGET_SECONDS`, `watcher.py:50`);
@@ -400,15 +401,15 @@ Numbers below are the defaults from the canonical table in §8.2.
    and the check can be turned off by a values flag. A cart the site has already dropped sends
    `cart_expired{by_site}` at once (its age feeds the site-TTL histogram) and never counts as viewed.
 3. **Deliver.** ferry-web's outbox worker gets the NOTIFY and renders the typed kind from its own templates
-   (§6.7): "Held for you: 7:00 am Tsawwassen → Swartz Bay, Fri Aug 1. Check out as a guest by 3:42 pm …".
+   (§6.7): "Held for you: 7:00 am Tsawwassen → Swartz Bay, Fri Aug 1. Check out by 3:42 pm …".
    The link is built from its own template: `https://ferry.chestr.dev/c/<trip>`. It sends Web Push (urgency
    high, TTL 1800 s) and email.
 4. **Choose a device.** The user taps the notification. The service worker builds the URL from the trip id
    against a constant origin. If the app session has lapsed, the SPA redirects to Authelia's authorization
    endpoint, which sends the browser straight back while the Authelia session is alive, and returns to
    `/c/<trip>` (§6.2.4). `/c/<trip>` shows the sailing, the deadline, and three choices, with the copy
-   "Checkout will be locked to the device you choose" and "Check out as a guest. Don't sign in to BC Ferries
-   here: it doesn't accept a sign-in while a cart is held" (§5.7):
+   "Checkout will be locked to the device you choose". It doesn't say how to check out: signing in to BC
+   Ferries there or continuing as a guest is the user's choice (§5.7):
    - **Check out on this device** POSTs `/api/trips/<trip>/vnc`. ferry-web checks that the user owns the
      trip, that `trip_state` shows a READY cart with this `cart_id` in the current pod, and that the user
      has made fewer than 10 mints this minute. It mints a ticket (§5.5), writes `vnc_mints` and audit rows,
@@ -455,6 +456,7 @@ Numbers below are the defaults from the canonical table in §8.2.
      link on the screen it opens).
    - A hold released on request (`bye{hold_ended, released}`: the user's Release, an admin's, or the trip's
      search edited mid-hold) asks nothing: the outcome is recorded and a new pod watches the trip on (0.6.3).
+   - A hold drained because the user removed the trip asks nothing either: the outcome is recorded (0.6.4).
    - Otherwise ferry-control sets `paused_reason='after_checkout'` and inserts a `booked_it` notification
      ("Did you book it?"). **The trip stays paused until the user answers** (owner, round 3: no automatic
      resume). "Yes" archives the trip; "No, cancel" archives it too (answer `cancelled`); "No, keep watching"
@@ -520,7 +522,7 @@ everything (R1).
 
 | Value | Browser pod | ferry-control (operator) | ferry-web | vnc-edge | Envoy | Cloudflare edge + cloudflared | Postgres | Logs (VictoriaLogs) |
 |---|---|---|---|---|---|---|---|---|
-| Card number, CVV, 3DS codes, guest contact details (typed over VNC); a BC Ferries password, if a user signs in during checkout despite the advice (§5.7) | yes (own tenant only) | **no** | **no** | yes (RFB is plaintext) | yes | yes | no | no |
+| Card number, CVV, 3DS codes, guest contact details (typed over VNC); a BC Ferries password, if a user chooses to sign in during checkout (§5.7) | yes (own tenant only) | **no** | **no** | yes (RFB is plaintext) | yes | yes | no | no |
 | BC Ferries guest cart cookie | yes (own) | no | no | no | no | no | no | no |
 | VNC ticket (60 s, single use) | verifies it | no | mints it | yes (subprotocol header) | yes (header, not logged) | yes | `jti` only | no |
 | Resume nonce `N` | stores `sha256(N)` | no | **no** | yes | yes | yes | no | no |
@@ -636,8 +638,8 @@ once TLS ends; tenants are told (R4).
   phish through the dashboard and alerts. Closing the race needs an IdP-asserted principal verified by the
   pod (S-VNCID), which stays in the M4 backlog. Accepted for invite-only (owner, round 3).
 - **R4 Plaintext keystrokes on infrastructure.** Cloudflare's edge, cloudflared, Envoy, vnc-edge and the pod
-  see checkout keystrokes (RFB is plaintext after TLS ends), including a BC Ferries password if a user signs
-  in during checkout despite the advice (§5.7). vnc-edge, Envoy and Cloudflare can also inject input and
+  see checkout keystrokes (RFB is plaintext after TLS ends), including a BC Ferries password if a user
+  chooses to sign in during checkout (§5.7). vnc-edge, Envoy and Cloudflare can also inject input and
   reuse `N`. Whether relaying a cardholder's own keystrokes puts the owner in PCI scope is a grey
   area. Tenants are told, naming Cloudflare.
 - **R5 BC Ferries' own page supply chain.** Third-party scripts on bcferries.com or the payment pages can skim
@@ -1012,7 +1014,7 @@ is harmless: nothing can cart or open the gate before a check has launched Chrom
 **Xvnc flags** replace `entrypoint.sh:20-26`:
 `:99 -geometry 1280x1000 -depth 24 -rfbunixpath /tmp/kasm/rfb.sock -rfbunixmode 0600 -SecurityTypes None
 -DisableBasicAuth -NeverShared -DisconnectClients=0 -SendCutText=0 -AcceptCutText=1 -DLP_ClipAcceptMax 256
--IgnoreClientSettingsKasm -FrameRate 15 -MaxVideoResolution 1920x1080 -MaxConnectionTime 6000
+-IgnoreClientSettingsKasm -FrameRate 15 -DetectScrolling -MaxVideoResolution 1920x1080 -MaxConnectionTime 6000
 -AcceptSetDesktopSize -publicIP 127.0.0.1 -Log *:stderr:10`.
 
 - With `-rfbunixpath` set, KasmVNC creates only the unix listener and no WebSocket or TCP listener
@@ -1024,6 +1026,10 @@ is harmless: nothing can cart or open the gate before a check has launched Chrom
   there is no WebSocket or HTTP listener, so there is no basic auth to turn off; access stays the socket's
   0600 mode and the gate. Two tests run the real Xvnc with these flags and fail on a black or deaf screen:
   `tests/browser/test_checkout_screen.py` and the browser image's smoke test (`docker/browser/selftest.py`).
+- **Added:** `-DetectScrolling`. Xvnc sends a scrolled region as a copy of pixels the viewer already has
+  instead of new ones. On the pod's real screen with a 390x664 phone viewer, a 300 px one-finger drag (about
+  400 px of page) took about 60 KB instead of 620-750 KB, and a two-finger scroll about 65 KB instead of
+  250-300 KB, with no measurable change in Xvnc's CPU time. It changes only how frames are encoded.
 - **Removed:** `-AlwaysShared`, `-interface`, `-websocketPort`, `-httpd`, `-sslOnly`,
   `-IdleTimeout` (the gate's ping replaces it; idle-dropping a user who is reading the page only forces a
   reconnect), and `-DLP_KeyRateLimit` (KasmVNC drops any key-down within `1000/limit` ms of the previous key
@@ -1053,11 +1059,12 @@ is harmless: nothing can cart or open the gate before a check has launched Chrom
 
 - **Guest, the only mode at launch, for everyone including the owner** (owner, round 2: accepted "for
   now"). Remove the auto-cart credential gate (`watcher.py:459`, `:562`) and default `auto_cart` to true
-  (`views.py:113`). Drop `BCF_USER`/`BCF_PASS` (`settings.py:40-42`) and pass `credentials=None`. Cart alerts
-  say "check out as a guest". The guest's contact details and card exist only in the pod's memory during one
-  hold, and the pod is destroyed after any viewed hold. **Owner cost:** today the owner's checkout signs in
-  for saved payment cards (`site.py:270-271`) and possibly account-only fares; under this plan the owner
-  also checks out as a guest.
+  (`views.py:113`). Drop `BCF_USER`/`BCF_PASS` (`settings.py:40-42`) and pass `credentials=None`. The app
+  carts as a guest; at checkout the user may continue as a guest or sign in, as they choose (below; cart
+  alerts said "check out as a guest" until 0.6.3). The contact details and card typed at checkout exist only
+  in the pod's memory during one hold, and the pod is destroyed after any viewed hold. **Owner cost:** today
+  the owner's checkout signs in for saved payment cards (`site.py:270-271`) and possibly account-only fares;
+  under this plan nothing signs in for the owner either: any sign-in is typed at checkout.
 - **Guest checkout is assumed to work; no spike tests it** (owner, round 2: "No spike for now,
   assume it works and if not we will adjust later, don't make any one way door decisions on this"). What
   the removed spikes (S1, S2, S2b, S5, S6, S7, the live part of S-FIX) would have told us comes instead from:
@@ -1116,21 +1123,25 @@ is harmless: nothing can cart or open the gate before a check has launched Chrom
      guest checkout has worked on the new stack, not for a fixed 14 days (§12.5).
   6. The VNC ticket's `aud` names its purpose (§5.5) and C22 is scoped to *checkout* viewers, so a later
      sign-in window is a new audience and a named branch, not a rewrite of the checkout gate.
-- **Can users sign in to BC Ferries inside the browser?** (Owner, round 2: "Users can always sign-in on the
-  browser?") **Probably not during checkout, and the plan advises against it.** Every VNC session has a held
-  guest cart, because VNC exists only while a cart is held, and the owner has observed that BC Ferries'
-  login page won't accept a login while a guest cart exists ([top-level README](../../README.md) "Things to
-  know about BC Ferries"; `site.py:288-290`, where the site clears the login form). The page is not blocked
-  (bcferries.com, including `/login`, is allowlisted, §5.6), so a user can try, but should expect the
-  sign-in to fail; whether trying affects the held cart is unverified. There is a security reason too: a
-  password typed there crosses the same plaintext path as card data (Cloudflare, cloudflared, Envoy and
-  vnc-edge, R4) into a Chromium running without its sandbox (R2), and any BC Ferries account session it
-  creates lives on at BC Ferries after the pod exits (the pod itself keeps nothing; the password manager is
-  off). So the cart screen (`/c/<trip>`), the checkout landing page, the cart banner and the invite email
-  say: "Check out as a guest. Don't sign in to BC Ferries here: it doesn't accept a sign-in while a cart is
-  held." Supporting sign-in properly is the attended sign-in option in §15, which comes with the sandbox
-  hardening first. If the owner prefers to make the advice a rule, one `URLBlocklist` entry blocks `/login`
-  (§5.6).
+- **Can users sign in to BC Ferries inside the browser? Yes, if they want to: it's their choice** (owner,
+  after 0.6.3: "Why do we say checkout as guest? BC ferries has a sign in and checkout option that probably
+  works just fine if they want to use it."). BC Ferries' checkout offers both signing in and continuing as a
+  guest, and the app no longer advises either way: the cart alerts, `/c/<trip>`, the trip card, the checkout
+  landing page and the invite email stopped saying "Check out as a guest. Don't sign in to BC Ferries here:
+  it doesn't accept a sign-in while a cart is held." That advice (round 2, until 0.6.3) rested on the
+  owner's observation that BC Ferries' login page won't accept a login while a guest cart exists
+  ([top-level README](../../README.md) "Things to know about BC Ferries"; `site.py:288-290`, where the site
+  clears the login form). That observation came from the single-tenant watcher's *automated* login, which
+  BC Ferries refused when a guest cart already existed (so the watcher logs in first and carts after); it
+  was never about a person signing in at BC Ferries' own checkout step, which nobody had tried. The page is
+  not blocked (bcferries.com, including `/login`, is allowlisted, §5.6). The security note stands, for the
+  user to weigh: a password typed there crosses the same plaintext path as card data (Cloudflare,
+  cloudflared, Envoy and vnc-edge, R4) into a Chromium running without its sandbox (R2), and any BC Ferries
+  account session it creates lives on at BC Ferries after the pod exits (the pod itself keeps nothing; the
+  password manager is off). A sign-in the user chooses is `checkout_login_seen` with `forced: false`: one
+  entry in their activity, counted, alerting nobody (production detection, above). Signing in *before* a
+  cart is still the attended sign-in option in §15, which comes with the sandbox hardening first. If the
+  owner ever wants sign-in blocked, one `URLBlocklist` entry blocks `/login` (§5.6).
 - **Pre-cart sign-in window: not in v1** (owner, round 2: first-list Q1, "No"). VNC stays strictly gated to a held
   cart. An attended sign-in before a cart (the former M5) is listed as a possible future option in §15. It
   is not designed out (doors 1, 2, 4 and 6 above), but adding it is real work, listed there, and needs the
@@ -1528,15 +1539,15 @@ the cluster admin can technically see everything (R1).
 | `POST /auth/logout` | **New.** Revokes the current session and closes its sockets. |
 | `POST /auth/start`, `POST /auth/redeem` | **Only if S-IOS fails:** the handoff-code fallback (§6.2.4). |
 | `GET /api/me/sessions`, `DELETE /api/me/sessions` | **New.** List my sessions; "sign out everywhere". |
-| `GET /api/state` | Per-user snapshot: `me` (`paused` is kept for one release and is always false), `limits` (effective value plus source), `usage`, `trips[].browser{phase, mode (warm, short_check, off), reason, queue_position, next_check_at, last_check_at, effective_interval, next_due, heartbeat_at, cart, viewer, lockdown_ok}`, `trips[].quiet` (in the user's quiet hours and not lifted: not checked; `next_check_at` is then when they end), `capacity{can_add, reason}`, `settings{quiet_hours: {start, end} or null}`, `quiet_hours{start, end, now}` (for one release always an object, which a 0.6.2 dashboard needs: a user with none gets 23:00-06:00 with `now` false; read the setting from `settings`), `links{kofi}`, events. Drops the global `checkout_url`, `login_configured`, `alerts_configured` and `max_trips` (`views.py:118-143`). |
-| `POST/PATCH/DELETE /api/trips[/{id}]` | Scoped to the user, with transactional limits (§9.2): `maxTrips` and the 30-day horizon. Enabling never fails for `maxActiveBrowsers`; the fleet loop picks the warm trip (§6.6). DELETE sends `drain`; the cart is returned before the row is archived. |
+| `GET /api/state` | Per-user snapshot: `me` (`paused` is kept for one release and is always false), `limits` (effective value plus source), `usage`, `trips[].browser{phase, mode (warm, short_check, off), reason, queue_position, next_check_at, last_check_at, effective_interval, next_due, heartbeat_at, cart, viewer, lockdown_ok}`, `trips[].quiet` (in the user's quiet hours and not lifted: not checked; `next_check_at` is then when they end), `capacity{can_add, reason}`, `settings{quiet_hours: {start, end}}` (always set: a user who never changed them gets 22:00-05:00), `quiet_hours{start, end, now}` (the same hours, and whether it's quiet now: the dashboard's "quiet until"), `links{kofi}`, events. Drops the global `checkout_url`, `login_configured`, `alerts_configured` and `max_trips` (`views.py:118-143`). |
+| `POST/PATCH/DELETE /api/trips[/{id}]` | Scoped to the user, with transactional limits (§9.2): `maxTrips` and the 30-day horizon. Enabling never fails for `maxActiveBrowsers`; the fleet loop picks the warm trip (§6.6). DELETE archives the trip at once, and the fleet loop drains its pod within a pass, even one holding a cart (0.6.4): the drain lets the cart go (one being added too) and frees the user's one hold, and since the trip is gone, ferry-control asks no "Did you book it?". A hold mid-payment is left to the site, as any drain does. |
 | `POST /api/trips/{id}/check` | Replaces `POST /api/check` (`server.py:403-407`). On the warm trip it sends `check_now`; on another trip it makes a short check due now (a pod start). Lifts the user's quiet hours for the trip for 10 minutes (`trip_runtime.quiet_lifted_until`). 6/h per user. |
 | `POST /api/trips/{id}/hold` | "Hold it for me": a bookable sailing in the trip's times that nothing holds. Sets `trip_runtime.hold_requested_until` (now + 10 min) and checks now (counted as a manual check). While it lasts, ferry-control's gate skips quiet hours and the trip's auto-cart off for that trip; nothing else. 409 with the reason when there's nothing to hold, the trip is paused, every bookable departure was held once already (`alert_memory.alerted`: the pod never carts those again), or a limit stands in the way (a claim that lapsed doesn't count as holding elsewhere). Each trip in `GET /api/state` and the live socket's state carries `hold{reason, can_request, holdable, requested_at, requested_until}` and `booking_url`. |
 | `POST /api/trips/{id}/cart/release` and `/dismiss` | Scoped. Inserts an `agent_commands` row. |
 | `POST /api/trips/{id}/cart/self-book` | **New.** Release, then return `search_url` for the user to book directly. |
 | `POST /api/trips/{id}/vnc` | **New.** Ticket mint (§3.6 step 4). A bearer-authenticated JSON POST; the existing Origin and JSON checks still apply. |
 | `POST /api/trips/{id}/booked` `{booked: bool, reason?: enum, stop?: bool}` | **New.** The "Did you book it?" answer; until it arrives the trip stays paused (round 3). `true` archives; `false` clears the pause; `{booked: false, stop: true}` ("No, cancel") archives it as DELETE does and records the answer `cancelled` (`stop` with `booked: true` is a 400). `reason` is one of `needed_account`, `tried_sign_in`, `payment_failed`, `checkout_broke`, `ran_out_of_time`, `changed_mind` (§5.7). |
-| `PATCH /api/me` | `{quiet_hours: {start: "HH:MM", end: "HH:MM"} or null}`, exactly: the user's own quiet hours (Pacific; `start` ≠ `end`; null for none, the default), in `user_settings`. Anything else is a 400. It replaced `{paused}` ("pause all my trips") in 0.6.3: trips are paused one at a time with `PATCH /api/trips/{id} {enabled}`. The per-user interval preference is gone: the poll curve is fleet-wide policy (`polling.py`, round 3). |
+| `PATCH /api/me` | `{quiet_hours: {start: "HH:MM", end: "HH:MM"}}`, exactly: the user's own quiet hours (Pacific; `start` ≠ `end`), in `user_settings`. Everyone has quiet hours (22:00-05:00 until they change them), so both times are required: null or a missing time is a 400 ("Quiet hours need a start and an end"), as are the same time twice and anything else. It replaced `{paused}` ("pause all my trips") in 0.6.3: trips are paused one at a time with `PATCH /api/trips/{id} {enabled}`. The per-user interval preference is gone: the poll curve is fleet-wide policy (`polling.py`, round 3). |
 | `DELETE /api/me` | **New.** Delete my data: drain pods, delete trips, push subscriptions, alert memory, sessions and `identities` rows; strip user and trip ids from `hold_outcomes`; redact audit payloads to ids. |
 | `POST/DELETE /api/me/push-subscriptions` | **New.** Web Push. |
 | `POST /api/alerts/test` | Per-user cooldown (6/h) instead of the global 30 s (`server.py:46`, `:410-423`). |
@@ -1562,7 +1573,7 @@ the cluster admin can technically see everything (R1).
 | Table | Key columns | Writer(s) |
 |---|---|---|
 | `users` | `id text pk (uid)`, state (active/suspended), username, email, display, is_admin, paused (0004 moved it onto each trip; for 0.6.3 only, while a 0.6.2 ferry-web may still set it, ferry-control pauses all the user's trips on it and ferry-web moves it onto each trip on the next state read; a later release drops it), created_at, last_seen_at | web |
-| `user_settings` | user_id pk, quiet_start, quiet_end (Pacific `time`s, both or neither, different), updated_at | web; control (read) |
+| `user_settings` | user_id pk, quiet_start, quiet_end (Pacific `time`s, both or neither, different; default 22:00 and 05:00, which a user without a row has too: `DEFAULT_QUIET_HOURS` in `polling.py`), updated_at. 0005 set the nulls 0.6.3 allowed ("off"), and the 23:00-06:00 that 0.6.3 filled in when someone turned them on, to the default; other chosen times stay. The times stay nullable for a release, since a 0.6.3 ferry-web still running during the rollout stores nulls for "off"; no times read as the default, and a later release makes them NOT NULL. | web; control (read) |
 | `identities` | (iss, sub) pk, uid (a cache of the derived uid; must equal it, C23), username, email, last_groups, first/last_seen | web |
 | `unmatched_identities` | (iss, sub) pk, preferred_username, email, first_seen, last_seen | web |
 | `invites` | id, match_claim, match_value, email, limit overrides jsonb, reason, created_by, created_at, expires_at, used_by_uid, used_at | web |
@@ -1586,7 +1597,7 @@ the cluster admin can technically see everything (R1).
 
 - Policy defaults live in Helm values (ConfigMap), not in a DB `policy` table; per-user overrides live in
   `user_limits`. The poll policy (tiers, short-check interval, horizon; `quietStart`/`quietEnd` are deprecated
-  and ignored since 0.6.3, still accepted for a release) is rendered from values
+  and ignored since 0.6.3, still accepted because deployments set them) is rendered from values
   into a `PollPolicy` (`polling.py:33-60`), whose constructor rejects a curve that is unordered, faster for
   a further trip, or below the 30 s floor.
 - **Retention:** events 30 d, notifications 14 d, `browser_pods` 30 d, audit, usage and `hold_outcomes`
@@ -1681,7 +1692,11 @@ and global `maintenance` is off. A trip that is only out for quiet hours is drai
 - Queue order for warm starts: the user with the fewest running browsers, then the nearest sailing, then the
   oldest queued (aging, so nothing starves). Short checks run oldest-due first in the spare slots, then in
   any free slot.
-- No preemption. Holding pods are never displaced, including a short-check pod that carted.
+- No preemption. Holding pods are never displaced, including a short-check pod that carted. The exception is
+  a removed trip: its pod is drained even while holding, which lets the cart go, since nobody can open its
+  checkout any more (0.6.4). The fleet loop reads a removed trip while its pod lives, so only a trip it sees
+  archived counts as removed; a trip whose spec it can't read (a newer ferry-web's field, mid-rollout) keeps
+  its held cart.
 - A successor pod for a trip is created only after its predecessor is gone, so at most one pod per trip
   exists and the quota needs only one pod of headroom (§8.4).
 
@@ -1731,7 +1746,7 @@ recipient; `Message` (`notify.py:31-37`) gains `user_id`, `trip_id` and `kind`; 
 
 | Kind | Channel | Copy (shape) | Link |
 |---|---|---|---|
-| `cart_held` (urgency high, TTL 1800 s) | push + email (same text as subject) | "Held for you: 7:00 am Tsawwassen → Swartz Bay, Fri Aug 1." / "Check out as a guest by 3:42 pm. Have your card and phone ready; your bank may ask you to approve in its app. A computer is easiest." | `/c/<trip>` |
+| `cart_held` (urgency high, TTL 1800 s) | push + email (same text as subject) | "Held for you: 7:00 am Tsawwassen → Swartz Bay, Fri Aug 1." / "Check out by 3:42 pm. Have your card and phone ready; your bank may ask you to approve in its app. A computer is easiest." | `/c/<trip>` |
 | `hold_reminder` (unclaimed, at 15 min), `hold_ending` (session, at T−5) | push | route, date, sailing, absolute deadline | `/c/<trip>` |
 | `bookable` (no cart: auto-cart off, alert-only, limit, quiet hours, or a cart already held on another trip) | push (email when no device works) | route, date, sailings, and why nothing was held (ferry-control's `held_back`, worked out when it records the alert) | `/c/<trip>`, which says why, offers "Hold it for me" and links to `search_url(trip)`; email adds `search_url` as a second link |
 | `cart_failed` (the claim was granted, `add_to_cart` failed; `error_class` says how) | push | route, date, sailings, why BC Ferries refused | `/c/<trip>`, as for `bookable` |
@@ -2041,7 +2056,8 @@ would fail every upgrade.
 The image `ferry-watch-vnc-edge` is `nginxinc/nginx-unprivileged` by digest. It adds:
 - the KasmVNC `www` files extracted unmodified from the same sha256-checked deb (`Dockerfile:20-32`);
 - one inserted line in `vnc.html`: `<script src="/fw/shim.js"></script>` before the client's module script;
-- `/fw/shim.js` (about 60 lines) and the landing page `/fw/landing.html` (about 60 lines);
+- `/fw/shim.js` (the socket wrapper below, and the touch handling in *As built, on a phone*) and the landing
+  page `/fw/landing.html`;
 - a CSP computed at image build from the shipped `vnc.html` (the hash of its one inline `<script>`).
 
 The client's minified bundle is **not** patched. KasmVNC 1.5.0's client reads its settings from the URL hash
@@ -2052,13 +2068,13 @@ matching `^wss://ferry-checkout\.chestr\.dev/t/[a-f0-9]{16}/g/[0-9]{1,6}/ws$` on
 first successful open. If the client gives up reconnecting before the hold deadline it knows from `disp`, the
 shim reloads `vnc.html` with back-off (1, 2, 5, 10 s), so retries are effectively uncapped until the deadline.
 The landing page sets
-`#path=t/<trip>/g/<gen>/ws&autoconnect=1&reconnect=1&reconnect_delay=1000&idle_disconnect=120` and shows the
-sailing and deadlines with `textContent`, plus a static note: "Check out as a guest. Don't sign in to BC Ferries
-here: it doesn't accept a sign-in while a cart is held" (§5.7). If the fragment's ticket has already expired (a
-slow load) and this device holds no lock yet, it sends the user back to `https://ferry.chestr.dev/c/<trip>` to
-mint again; with no ticket and no stored `N` it shows only a link back to the dashboard. A CI test drives the
-stock client in headless Chromium against a fake gate and asserts the path and subprotocols, so a KasmVNC bump
-that changes this fails CI.
+`#path=t/<trip>/g/<gen>/ws&autoconnect=1&reconnect=1&reconnect_delay=1000&idle_disconnect=120&anti_aliasing=1`,
+plus `&virtual_keyboard_visible=1` on a touch screen (*As built, on a phone*), and shows the sailing and deadlines
+with `textContent` (its note advising guest checkout went after 0.6.3, §5.7). If the fragment's ticket has
+already expired (a slow load) and this device holds no lock yet, it sends the user back to
+`https://ferry.chestr.dev/c/<trip>` to mint again; with no ticket and no stored `N` it shows only a link back to
+the dashboard. A CI test drives the stock client in headless Chromium against a fake gate and asserts the path
+and subprotocols, so a KasmVNC bump that changes this fails CI.
 
 ```nginx
 map $http_upgrade $connection_upgrade { default upgrade; '' close; }
@@ -2107,6 +2123,64 @@ from a wrapper function rather than a subclass. `connect-src` also lists `data:`
 probe the browser's video decoders (a `data:` URL never leaves the page). The landing page keeps the pending
 ticket in the tab's sessionStorage, strips it from the address bar, and opens the viewer after two seconds or
 on "Open checkout". The client's request for `/package.json` gets the 404 every unlisted path gets.
+
+*As built, on a phone* (owner feedback: the checkout "works", but scrolls "like a monitor" and is "a bit jank on
+mobile"). The client stays stock; what changes is the fragment the landing page writes, and two more IIFEs in the
+shim, separate from its socket wrapper. Each relies on undocumented client internals and does nothing if they
+change: `tests/browser/test_checkout_screen.py` runs them with a phone-sized viewer (390x664 CSS px at 3x, touch)
+against the pod's real screen, and `test_checkout_edge.py` pins the fragment, so a KasmVNC bump that breaks them
+fails CI.
+- **The checkout at the phone's own size.** With `anti_aliasing` at its default 0, KasmVNC 1.5.0's client
+  auto-scales on a small high-DPI screen (DPR above 1, viewport under 1000 CSS px): it asks for a screen
+  DPR/1.5 times the viewport (DPR/2 above 2x), so an iPhone's 390 px became a 585 px screen and the checkout
+  showed at two thirds of its size. `anti_aliasing=1` skips that: the screen is the phone's CSS viewport
+  (390x664 on an iPhone 13), so bcferries.com lays out for a phone, at its own text size. The client draws the 1x
+  screen smoothed (bilinear) on the phone's 3x display; nearest-neighbour looked blockier. A computer's screen
+  size is unchanged (the auto-scaling never applied at 1000 px and wider); a high-DPI computer's now smoothed
+  too instead of nearest-neighbour.
+- **A keyboard button**, on touch screens only (`navigator.maxTouchPoints > 0`): `virtual_keyboard_visible=1`
+  shows the client's floating keyboard button (draggable; holding it shows Ctrl, Alt, Tab, Esc and other keys,
+  which the side panel's Keys already offered). A phone opens its keyboard only for a field on the viewer's own
+  page, and a tap on a checkout field focuses only the pod's field, so the button is how the keyboard opens.
+- **The side panel out of the way.** The client opens its side panel on load and closes it 2 s after connecting,
+  but on a phone the panel covers most of the screen, and a tap on it in those 2 s keeps it open. The shim
+  closes it as `<html>` gets `noVNC_connected`; its handle still opens it. The client's own close would still
+  come 2 s later and take the focus back, closing a keyboard opened in the meantime, so the shim cancels it as
+  the client does when its panel is in use (an `input` event on the panel). It does this on every connect,
+  since the client arms its close on reconnects too, and only once the panel has opened with the `noVNC_open`
+  class the shim removes: with a renamed class, the closing stays the client's. The shim also hides
+  `#noVNC_notification_overlay`, which names the stream mode ("JPEG/WEBP (Images)") in 30 px type across the
+  top of the screen for 3.5 s.
+- **One finger scrolls.** The client turns touches into `gesturestart`/`gesturemove`/`gestureend` events on its
+  canvas, and sends a one-finger `drag` as a left-button mouse drag, which selects text on the checkout. A
+  capturing listener on `window` sees these first and takes only `detail.type === "drag"`: it gives the client
+  wheel events at the canvas instead, half a delta unit per CSS px of finger travel (Xvnc scrolls the pod's
+  Chromium 2-2.4 px per unit, linearly from 1 to 64; a slow 300 px drag scrolls the page about 310 px),
+  along the axis the drag starts on. After a flick it coasts, decaying with a 200 ms time constant; a new touch
+  stops the coast, and, as in a browser, a tap that stops one doesn't click. Before taking a drag it sends a
+  zero-delta wheel event, and if the client doesn't cancel it (the client cancels every wheel event it
+  forwards), the drag stays the client's. Taps, long press (a right click), two-finger scrolling, pinch
+  (Ctrl+wheel) and the mouse are untouched. The cost: a one-finger mouse drag (a slider, drag-to-select) is no
+  longer possible on a touch screen; nothing in a checkout needs one.
+- **Scrolling costs less.** Xvnc's `-DetectScrolling` (§5.6) sends a scrolled region as a copy of what the
+  viewer already has: a one-finger scroll takes about a tenth of the bytes, which a phone on cellular notices.
+- **What the pod's automation sees.** The screen keeps a viewer's size after it leaves (Xvnc doesn't restore
+  it), so after a phone viewer the pod's Chromium is phone-sized; before this change it stayed 585 px wide. It
+  doesn't matter: a pod that had a checkout viewer only empties the cart (a navigation to a fixed URL) and exits
+  (C22), and a pod nobody viewed keeps its 1280x1000.
+- None of this touches the security design: no new listener, the same tickets, nonce and gate admission, and the
+  same CSP (the shim is `'self'`; vnc.html's inline-script hash still comes from KasmVNC's file).
+
+Still janky on a phone:
+- The keyboard doesn't open when a checkout field is tapped (above): the user taps the keyboard button.
+- The keyboard button answers only a quick tap: the client toggles the keyboard for a press shorter than 150 ms
+  and shows its extra keys after 350 ms, so a press in between does nothing.
+- The client's IME handling loses letters from a composition (what predictive and autocorrecting keyboards
+  send): in emulation, typing "Mike" and then composing "Chester" reached the pod as "MikeCester".
+- Text is drawn at 1x and smoothed onto a 2x or 3x display, so it's softer than a native page. Sharper text would
+  need the pod's Chromium to render at the phone's DPR, a much larger screen to send.
+- Every scroll is a round trip: the page moves when the pod's next frame arrives, so it trails the finger by the
+  network's latency, and there's no rubber-banding at the ends of the page.
 
 ### 7.10 Deployment layout and the home-cluster split
 
@@ -2268,7 +2342,7 @@ This is the only place numbers are defined; other sections refer here. "Compiled
 | interval floor (`MIN_INTERVAL`, `:21`) | 30 s | compiled, in `polling.py` and in the agent (§5.4) | control, agent |
 | short check: every other eligible trip, one check by a short-lived pod (`short_check_interval`, `:40`) | every 6 h, ±15 % jitter; at once when a trip is added, re-enabled or un-paused | admin-configurable up to 24 h; never more often than the slowest warm tier | fleet loop |
 | `shortCheckSlots`: browser slots kept free of warm pods | 1 | < `maxBrowsersTotal` | fleet loop |
-| quiet hours (`QuietHours` in `polling.py`, from `user_settings`): the user's trips aren't checked at all, no pods start, pods not holding a cart are drained; lifted for a trip for 10 minutes by a manual check (`quiet_lifted_until`) or "Hold it for me" (`hold_requested_until`) | none (each user sets their own, Pacific; until 0.6.3 a fleet-wide 23:00-06:00 that only stopped carts) | per user; the deprecated `polling.quietStart`/`quietEnd` are ignored | control (planner, `active`, `auto_cart`, `cart_claim`), web |
+| quiet hours (`QuietHours` in `polling.py`, from `user_settings`): the user's trips aren't checked at all, no pods start, pods not holding a cart are drained; lifted for a trip for 10 minutes by a manual check (`quiet_lifted_until`) or "Hold it for me" (`hold_requested_until`) | 22:00-05:00 Pacific for everyone (`DEFAULT_QUIET_HOURS`), until they change them; they can't be turned off (until 0.6.3 a fleet-wide 23:00-06:00 that only stopped carts; in 0.6.3 per user and off by default) | per user; the deprecated `polling.quietStart`/`quietEnd` are ignored | control (planner, `active`, `auto_cart`, `cart_claim`), web |
 | **Hold clocks** | | | |
 | unclaimed, from control ack (reminder at 15 min) | 30 min; tuned from production (kept ≤ BC Ferries' cart TTL − 5 min once `ferrywatch_site_cart_ttl_seconds` shows it) | compiled 45 | agent; operator backstop |
 | checkout session, from first connect (warning at T−5) | 30 min; tuned from production (`ferrywatch_checkout_seconds` p90 + 5 min) | compiled 45 | agent gate |
@@ -2420,8 +2494,8 @@ destroyed [R:limits-quotas-admin].
   trip's first departure: 7 days to 3 days out every 5 min, 3 days to 24 h every 2 min, 24 h to 6 h every
   60 s, under 6 h every 30 s (`PollPolicy`, `src/ferry_watch/polling.py:33-43`; ±15 % jitter in the agent; a
   30 s floor compiled into both). Every other trip within the 30-day horizon gets one short check every 6 h.
-  A user's own quiet hours (none by default) stop all of their checks, which lowers the load at night
-  (until 0.6.3, fleet-wide quiet hours kept this polling and only stopped new carts).
+  A user's own quiet hours (22:00-05:00 unless they change them) stop all of their checks, which lowers the
+  load at night (until 0.6.3, fleet-wide quiet hours kept this polling and only stopped new carts).
 - **Request rate.** A warm pod makes 0.2, 0.5, 1 or 2 checks a minute depending on its tier; a short check is
   one check plus a pod start's form walk (about 4-5 navigations [R:limits-reaping-lifecycle]) every 6 h.
   - **Worst case:** 7 users all within 6 h of a sailing at once: 7 × 2 = **about 14 checks/min**, under the
@@ -2581,7 +2655,8 @@ The size is L: about 2-2.5k changed or added lines, including tests [R:map-front
    more.
 5. **Components:**
    - Replace `WatcherCard` (`WatcherCard.tsx:159-238`) with an **Account card**: push subscribe and status,
-     a test alert, the user's own quiet hours (0.6.3; "pause all my trips" is gone, each trip has its own
+     a test alert, the user's own quiet hours (a start and an end, 10 pm to 5 am until changed, saved with
+     Save; there's no switch, everyone has them; "pause all my trips" is gone since 0.6.3, each trip has its own
      pause), how checking works (the curve and short checks; read-only, round 3), "Signed in
      through Authelia; tick Remember me", my sessions with "Sign out everywhere", delete my data, and the
      Ko-fi link.
@@ -2589,19 +2664,36 @@ The size is L: about 2-2.5k changed or added lines, including tests [R:map-front
      "Checked every 6 h · next 2:05 pm" (short checks), "Checking now", "Waiting for a free browser (#2)",
      "Starting", "Holding a cart", "Did you book it?" (paused until answered), "Needs attention". The trip
      form says which trip will get close watching and when ("closely watched from Jul 25, 7 days before").
+     Each card has Edit and Remove (0.6.4). Remove asks first, as the trip form's does, and with a cart held
+     or being added it says that removing lets that sailing go.
    - `/c/:trip`: the held sailing, the deadlines, and **Check out on this device** / **I'll use my computer**
-     / **Release and book it myself**, with "Checkout will be locked to the device you choose" and "Check
-     out as a guest. Don't sign in to BC Ferries here: it doesn't accept a sign-in while a cart is held"
-     (§5.7). No automatic POST.
+     / **Release and book it myself**, with "Checkout will be locked to the device you choose" and "Have
+     your card and phone ready; your bank may ask you to approve in its app". Nothing about signing in to
+     BC Ferries: that's the user's choice (owner, after 0.6.3; §5.7). No automatic POST.
    - `CartBanner` (`CartBanner.tsx:44`, `:112-113`, `:136-140`): per-trip "Open checkout" (goes to `/c`),
-     the unclaimed and session countdowns, "paused while paying", the guest wording (including the
-     don't-sign-in advice), and "Release".
+     the unclaimed and session countdowns, "paused while paying", and "Release" (the guest wording and the
+     don't-sign-in advice went after 0.6.3, §5.7).
    - "Did you book it?" ("Yes", "No, cancel", or a "No" that offers the optional one-tap reasons of §5.7; the question stays on the trip
      card until answered, because the trip is paused until then) and "Booked!" screens; the latter carries
      the Ko-fi link.
    - `TripSheet` (`TripSheet.tsx:317`, `:470-500`): auto-cart is always available (guest). Remove the
      `BCF_USER` copy. Show 409 limit errors (saved trips, the 30-day horizon); the date picker stops at 30
      days.
+   - *As built* (feedback after 0.6.3): a route map under the From and To pickers (`RouteMap.tsx`, both
+     add and edit, in the single-container app too). It is a non-interactive SVG (`role="img"`, labelled
+     "Map of the route from Tsawwassen to Swartz Bay") of the chosen route, or of everywhere the departure
+     goes before there is a destination, and nothing at all for a terminal the map doesn't know. Its data
+     is bundled, not fetched from a map service, so no third party learns anyone's route and the CSP is
+     unchanged: `scripts/build_route_map.py` clips Natural Earth's public-domain 10m land and minor islands
+     to the service area and writes `web/src/lib/route-map-data.json` (zoom-13 Web Mercator pixels; about
+     35 KB gzipped, in its own chunk with the maths, loaded the first time a map shows). Berths come from a
+     table in the script and must be within 1.5 km of the coast, apart from four documented gaps in
+     Natural Earth (Tsawwassen's causeway, the Duke Point peninsula, Cormorant Island, the head of Cousins
+     Inlet); a berth that falls inside the land as drawn (Natural Earth leaves out most small bays) is drawn
+     just off the nearest shore, so no marker sits inland. Each bookable route's path is a least-cost path across a water grid that keeps off the shore,
+     steered through the Inside Passage and north of Gabriola where the real ferries go, smoothed, and
+     checked to stay off the land (as drawn) except near its ends. Colours come from the `--map-*` theme
+     tokens; the dashes move only when reduced motion isn't requested.
    - `Header` (`Header.tsx:59-86`): the global "Watch all trips" switch becomes a user menu (settings,
      sign out, admin; trips are paused one at a time; sign-out ends the app session, sets the "signed out" flag and offers a link
      to Authelia's logout page).
@@ -3137,15 +3229,15 @@ Everything in M4 is post-v1. None of it is needed for the guarantees the owner a
    - how checking works: your nearest trip within 7 days is watched closely (every 5 min a week out, down to
      every 30 s in the last 6 hours); your other trips are checked every 6 hours; trips can be at most 30 days
      ahead; between 23:00 and 06:00 you get alerts but no held cart;
-   - check out as a guest, and don't sign in to your BC Ferries account during checkout: BC Ferries doesn't
-     accept a sign-in while a cart is held, and your password would pass through the same unencrypted path
-     as your card;
+   - at checkout you can continue as a guest or sign in to your BC Ferries account, as you like; a password
+     typed there passes through the same unencrypted path as your card (until 0.6.3 this said to check out
+     as a guest and not sign in, §5.7);
    - after a checkout we can't confirm, the trip waits for your answer to "Did you book it?" before it is
      watched again;
    - what we can see: the cluster admin, and the automation that runs with their rights, can technically see
      everything; checkout keystrokes pass through Cloudflare and our servers unencrypted for a moment; your
-     card is never stored; checkout is as a guest; while you hold a cart, the browser can reach any website,
-     from our home connection.
+     card is never stored, and no BC Ferries password is either; while you hold a cart, the browser can
+     reach any website, from our home connection.
 5. Check the Users page shows the person as active (invitation used) with push enabled.
 
 **Removing a person.** Authelia re-checks the group only when the person's session next goes back to it
@@ -3188,7 +3280,7 @@ exec into or screenshot a pod that holds a cart.
 | A checkout is cut off mid-payment | Medium / high | Payment guard pauses session clocks; no navigation away while paying; the 30-minute session default tuned from `ferrywatch_checkout_seconds`; `hold_ending` warning at T−5. |
 | VNC reconnects fail on phones (bank-app switch, network change, Cloudflare idle) | Medium / high | 20 s pings; reconnect with `N` replaces stale sockets; shim reload until the deadline; only failed upgrades count; S-VNC-lite on three clients. |
 | The device that opened checkout is lost (iOS home-screen storage) | Medium / medium | No automatic open; device choice on `/c`; `N` reused across returns; S-VNC-lite checks the iOS path; no takeover ticket (round 3): iPhone users check out in Safari or on a computer if it fails. |
-| The stock KasmVNC client changes on upgrade | Low / medium | No bundle patch; a CI test drives the client through the shim against a fake gate. |
+| The stock KasmVNC client changes on upgrade | Low / medium | No bundle patch; a CI test drives the client through the shim against a fake gate. The shim's phone handling relies on the client's DOM and gesture events (§7.9, *As built, on a phone*): it does nothing if they change, and `test_checkout_screen.py` fails. |
 | Memory is higher than measured (heavy pages, tmpfs, checkout) | Medium / medium | S-MEM measures the cgroup working set including tmpfs; podMemory starts at 1.5 GiB; disk cache capped; recycle at 85 % while Watching, alert while Holding; quota backstop. |
 | A Talos upgrade releases a hold (R8) | Medium / low | "Pause carting" runbook; orderly release with an alert; hold PDB plus `drainTimeout` in M4 if it bites. |
 | A session token stolen through XSS on the dashboard origin (R17) | Low / medium | The strict hash-based CSP (blocks injection and fetch/form exfiltration, not navigation); the 24 h IdP re-verification, which a thief can't pass; idle and absolute expiry; server-side revocation (logout, "sign out everywhere", suspension); VNC still needs the pod's ticket and first-viewer lock. |
@@ -3196,7 +3288,7 @@ exec into or screenshot a pod that holds a cart.
 | Sign-in from the iOS home-screen app lands outside the app (R18) | Unknown / medium | S-IOS on the owner's iPhone in M1; the handoff-code fallback (§6.2.4). |
 | The OIDC issuer is unreachable from ferry-web (egress rule, Authelia down) | Low / medium | S-OIDC proves the rule; existing sessions keep working (only new sign-ins need the issuer); SignInErrors alert. |
 | Invitees can't log in (1-day ban, geo-block, a lost password) | Medium / medium | `one_factor`, so no enrolment step (round 3); a generated password sent out of band; onboarding email; Q2 on the ban; the invitation says Canada and the US only. |
-| iOS Web Push lapses, the app isn't installed, or Focus silences it | High / medium | Email for every cart alert; push health on the Account card; reminder at 15 min; no cart held during quiet hours (23:00-06:00); onboarding asks to allow Ferry Watch in Focus. |
+| iOS Web Push lapses, the app isn't installed, or Focus silences it | High / medium | Email for every cart alert; push health on the Account card; reminder at 15 min; no cart held, or trip checked, during quiet hours (22:00-05:00 unless the user changes them); onboarding asks to allow Ferry Watch in Focus. |
 | PCI and ToS exposure (keystroke relay, automated carting for several people) | Unknown / medium | Disclose to tenants (naming Cloudflare). No payments taken. Short holds, one hold per user, per-user caps, quiet hours, the poll curve, no account automation. The desktop user agent is kept (owner, round 3). |
 | A compromised web races a first VNC connection (R3) | Low / medium | First-viewer lock (visible, before card entry); accepted for invite-only (round 3); S-VNCID in M4. |
 | A Chromium exploit in an unsandboxed browser, or a side channel on `mitigations=off` nodes (R2) | Low / high for that tenant's checkout; critical if chained with a kernel bug (every node is a control-plane node) or a ferry-control parser bug | Per-pod isolation, no secrets, no token and the egress allowlist contain an exploit to one tenant's pod while the kernel and the parser hold. Recommended (pending the owner, Q1): accept for now, with the optional sandbox hardening (M4, about 4 days) before inviting people the owner doesn't know well. |
@@ -3217,7 +3309,8 @@ two small points that now stand alone (Q2, Q3).
 |---|---|---|---|
 | first list Q0 | Identity | Round 2: "Can we use oidc?": yes; app-native OIDC with a cookie-less app session. | §6.2, C29, R17-R21 |
 | first list Q1 | Pre-cart sign-in window | Round 2: no. VNC only while a cart is held; attended sign-in is a possible future option. | §5.7, §15 |
-| first list Q2, Q3, Q3b | Live booking spike; guest checkout, the owner included | Round 2: no spike, assume it works, no one-way doors; guest accepted "for now"; signing in to BC Ferries during checkout probably won't work and is advised against. | §5.7, §12.1 |
+| first list Q2, Q3, Q3b | Live booking spike; guest checkout, the owner included | Round 2: no spike, assume it works, no one-way doors; guest accepted "for now"; signing in to BC Ferries during checkout probably won't work and is advised against (advice dropped after 0.6.3, next row). | §5.7, §12.1 |
+| owner feedback after 0.6.3 | "Why do we say checkout as guest?" | Signing in to BC Ferries during checkout is the user's choice; the app no longer advises against it anywhere. The old "doesn't accept a sign-in while a cart is held" came from the single-tenant watcher's automated login being refused while a guest cart existed, not from a person signing in at checkout. The security note (the password travels the same path as the card number) stays in the docs. | §5.7, §10, §12.5 |
 | first list Q6 | Lua or a separate domain | Planner: mostly moot (the app sets no cookie); a separate domain stays possible later (R12). | §6.2.1, R12 |
 | round-2 Q1 | VNC first-connection race (R3) | Round 3: accepted for invite-only; S-VNCID stays in the backlog. | R3, M4 |
 | round-2 Q1b | iOS takeover ticket | Round 3: no. iPhone users who lose the device lock check out in Safari or on a computer; revisited with the owner's M1 data. | §5.5 |
@@ -3317,7 +3410,7 @@ Each has a recommended default; none is needed for W0 or M1.
 | D14 | **Round 2:** app-native OIDC against Authelia's existing provider (confidential client, Authorization Code + PKCE S256, code in the URL fragment, `id_token` verified by the app), with a cookie-less app session (opaque bearer token in the SPA, hash stored, idle and absolute expiry, re-verification with the IdP every 24 h, server-side revocation, session-bound WebSocket first-message auth). The dashboard route has no gateway auth and drops every Cookie header. `IdentityProvider` interface with issuer, client and claims as config; deterministic `uid = hash(iss, sub)` with GitOps aliases; invitations bound at first sign-in; `bootstrapAdmins` plus a DB flag; trusted headers only as a LAN/dev adapter. | The owner asked for OIDC. It fails closed and is testable without the gateway, unlike ext-auth headers or EG's OIDC with `claimToHeaders`. Setting no cookie lets the route drop the owner's Authelia cookie without Lua or a new domain. A deterministic uid lets the pod verify ownership without trusting DB mappings, and survives an IdP swap through aliases. Costs: R17-R21 and 3-4 days. |
 | D15 | A uv workspace (core, control, agent) with import-linter. Images: control, browser, vnc-edge, plus CI-only agent-e2e and fake-bcferries. A public OCI Helm chart from this repo; cluster-specific bits in home-cluster. Test tiers: unit, Postgres, envtest (VAP matrix, `can-i`), compose integration, kind-lite, home-cluster post-deploy smoke. | Matches the owner's OCI Helm and digest conventions and keeps Playwright out of the control plane. The VAP and RBAC are the isolation, so their negative tests block CI; network behaviour can only be proven on the real cluster, so it gates deploys. |
 | D16 | W0 de-risk spikes (local and cluster only; no live booking spikes), then M1 owner on the new stack, M2 invitees in two stages (household, then wider; the old M3 merged in, round 3), M4 hardening backlog (including the optional sandbox). M5 removed. | Each technical unknown decides a design branch before code depends on it; what we don't know about BC Ferries' guest checkout is learned from real use and production detection behind reversible defaults (owner, round 2). Controls that back up RBAC land just before non-household invitees. |
-| D17 | **Round 3:** the poll model. Each user's nearest eligible trip within 7 days gets the warm browser (automatic, nearest first; `maxActiveBrowsers` default 1), checked on a curve (5 min from 7 days out, 2 min from 3 days, 60 s from 24 h, 30 s from 6 h; ±15 % jitter; 30 s floor). Every other trip gets a short check every 6 h from a pod that checks once and exits, unless it carts, then it stays for checkout; short-check pods count against cluster capacity and the start throttle, not `maxActiveBrowsers`, with one slot kept for them. One hold per user through cart claims. Trips at most 30 days ahead. Quiet hours 23:00-06:00 Pacific: normal polling, alert only (since 0.6.3, each user's own quiet hours, none by default, in which their trips aren't checked). Canonical numbers in `src/ferry_watch/polling.py`. | The owner's "be good users of the api": the fleet makes typically 2-5 checks/min and about 14 at worst, against 12/min for the owner alone today. It replaces the "Pause X to watch this one" choice and the 30-day Dormant window with something automatic. |
+| D17 | **Round 3:** the poll model. Each user's nearest eligible trip within 7 days gets the warm browser (automatic, nearest first; `maxActiveBrowsers` default 1), checked on a curve (5 min from 7 days out, 2 min from 3 days, 60 s from 24 h, 30 s from 6 h; ±15 % jitter; 30 s floor). Every other trip gets a short check every 6 h from a pod that checks once and exits, unless it carts, then it stays for checkout; short-check pods count against cluster capacity and the start throttle, not `maxActiveBrowsers`, with one slot kept for them. One hold per user through cart claims. Trips at most 30 days ahead. Quiet hours 23:00-06:00 Pacific: normal polling, alert only (since 0.6.3, each user's own quiet hours, in which their trips aren't checked; since 0005 everyone has them, 22:00-05:00 until they change them). Canonical numbers in `src/ferry_watch/polling.py`. | The owner's "be good users of the api": the fleet makes typically 2-5 checks/min and about 14 at worst, against 12/min for the owner alone today. It replaces the "Pause X to watch this one" choice and the 30-day Dormant window with something automatic. |
 | D18 | **Round 3:** hold egress. The FQDN allowlist always; a second CiliumNetworkPolicy adds public TCP 443 and any DNS name for pods labelled `ferry-watch.io/egress: hold`, which ferry-control sets at READY and clears at hold end; the pod-lock VAP (now in M1) lets ferry-control change that label and nothing else. Private, cluster, node, metadata, smtp-relay and observability destinations stay denied. Fallback: public HTTPS always. | Any bank's 3DS works without a learned list (S-3DS gone). Keeping the allowlist outside holds keeps an exploited, merely watching pod off the open internet for nearly all of its life, for about 2 days of work (§7.6). |
 
 ## Appendix B: Conflicts resolved

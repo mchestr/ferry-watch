@@ -5,7 +5,15 @@ from datetime import UTC, date, datetime, time, timedelta
 import pytest
 
 from ferry_watch.models import PACIFIC, Trip
-from ferry_watch.polling import PollPolicy, QuietHours, Tier, quiet_hours, time_until, warm_trip
+from ferry_watch.polling import (
+    DEFAULT_QUIET_HOURS,
+    PollPolicy,
+    QuietHours,
+    Tier,
+    quiet_hours,
+    time_until,
+    warm_trip,
+)
 
 NOW = datetime(2026, 10, 11, 12, 0, tzinfo=PACIFIC)
 POLICY = PollPolicy()
@@ -96,7 +104,18 @@ def test_quiet_hours_cover_something() -> None:
     with pytest.raises(ValueError, match="different times"):
         QuietHours(time(6, 0), time(6, 0))
     assert quiet_hours(time(23, 0), time(6, 0)) == NIGHT  # as stored
-    assert quiet_hours(None, None) is None  # none: the default
+    assert quiet_hours(None, None) == DEFAULT_QUIET_HOURS  # no row of their own
+
+
+@pytest.mark.parametrize(
+    ("hour", "minute", "quiet"),
+    [(21, 59, False), (22, 0, True), (23, 0, True), (4, 59, True), (5, 0, False), (12, 0, False)],
+)
+def test_everyone_has_quiet_hours_from_10_pm_to_5_am_unless_they_change_them(
+    hour: int, minute: int, quiet: bool
+) -> None:
+    """The ferries sail from about 5 am to 10 pm, so that's when trips are watched."""
+    assert DEFAULT_QUIET_HOURS.contains(pacific(2026, 10, 11, hour, minute)) is quiet
 
 
 def test_horizon_is_thirty_days() -> None:

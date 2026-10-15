@@ -156,11 +156,9 @@ async def answer_booked(request: web.Request) -> web.Response:
     return await get_state(request)
 
 
-def _quiet_hours(value: Any) -> QuietHours | None:
-    """{"start": "HH:MM", "end": "HH:MM"} (Pacific), or None for no quiet hours."""
-    if value is None:
-        return None
-    if not isinstance(value, dict) or set(value) != {"start", "end"}:
+def _quiet_hours(value: Any) -> QuietHours:
+    """{"start": "HH:MM", "end": "HH:MM"} (Pacific). Everyone has quiet hours, so both times are needed."""
+    if not isinstance(value, dict) or set(value) != {"start", "end"} or None in value.values():
         raise ApiError(400, "Quiet hours need a start and an end", "quiet_hours")
     start, end = value["start"], value["end"]
     if not (isinstance(start, str) and _HHMM.fullmatch(start) and isinstance(end, str) and _HHMM.fullmatch(end)):
@@ -173,9 +171,9 @@ def _quiet_hours(value: Any) -> QuietHours | None:
 async def update_me(request: web.Request) -> web.Response:
     """The user's own settings: their quiet hours, the only one there is."""
     body = await json_body(request)
-    if set(body) != {"quiet_hours"}:
+    if set(body) - {"quiet_hours"}:
         raise ApiError(400, "Only quiet hours can be changed", "quiet_hours")
-    await request.app[STORE].set_settings(signed_in(request).uid, quiet=_quiet_hours(body["quiet_hours"]))
+    await request.app[STORE].set_settings(signed_in(request).uid, quiet=_quiet_hours(body.get("quiet_hours")))
     await request.app[STORE].notify(signed_in(request).uid)
     return await get_state(request)
 

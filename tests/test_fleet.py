@@ -321,6 +321,19 @@ async def test_quiet_hours_stop_a_users_browsers_until_lifted(rig: Rig) -> None:
     assert (await rig.fleet.reconcile()).started == [f"fw-{NEAR.id}-g2"]
 
 
+@pytest.mark.parametrize("stored_off", [False, True])
+async def test_without_quiet_hours_of_their_own_a_user_has_the_default(rig: Rig, stored_off: bool) -> None:
+    """10 pm to 5 am: Ann never changed hers, so her trips aren't checked overnight. A row without times (what a
+    0.6.3 ferry-web stores for "off" during the rollout) is the default too."""
+    await rig.add_trip(NEAR)
+    if stored_off:
+        await rig.run("INSERT INTO user_settings (user_id, quiet_start, quiet_end) VALUES ($1, NULL, NULL)", ANN)
+    rig.clock[0] = datetime(2026, 10, 12, 23, 0, tzinfo=PACIFIC).timestamp()
+    assert (await rig.fleet.reconcile()).started == []
+    rig.clock[0] = datetime(2026, 10, 13, 12, 0, tzinfo=PACIFIC).timestamp()
+    assert (await rig.fleet.reconcile()).started == [f"fw-{NEAR.id}-g1"]
+
+
 async def test_a_disconnected_pod_is_deleted_instead(rig: Rig) -> None:
     await rig.add_trip(NEAR)
     await rig.fleet.reconcile()
@@ -328,6 +341,32 @@ async def test_a_disconnected_pod_is_deleted_instead(rig: Rig) -> None:
     await rig.run("UPDATE trips SET enabled = false")
     report = await rig.fleet.reconcile()
     assert name in report.deleted  # its own SIGTERM drain empties any cart
+
+
+async def test_removing_a_trip_drains_its_pod_even_while_holding(rig: Rig) -> None:
+    await rig.add_trip(NEAR)
+    await rig.fleet.reconcile()
+    name = f"fw-{NEAR.id}-g1"
+    await hold(rig, name)
+    rig.hub.connected.add(name)
+    rig.hub.heard[name] = NOW
+    assert (await rig.fleet.reconcile()).drained == []  # a held cart keeps its pod
+    await rig.run("UPDATE trips SET archived_at = now(), enabled = false")  # as DELETE /api/trips/<id> does
+    assert (await rig.fleet.reconcile()).drained == [name]
+    assert rig.hub.commands == [(name, "drain", "deleted")]
+
+
+async def test_a_held_cart_is_kept_when_its_trip_can_t_be_read(rig: Rig) -> None:
+    """A trip ferry-control can't read (a field from a newer ferry-web, mid-rollout) wasn't removed."""
+    await rig.add_trip(NEAR)
+    await rig.fleet.reconcile()
+    name = f"fw-{NEAR.id}-g1"
+    await hold(rig, name)
+    rig.hub.connected.add(name)
+    rig.hub.heard[name] = NOW
+    await rig.run("UPDATE trips SET spec = spec || '{\"new_field\": 1}'::jsonb")
+    assert (await rig.fleet.reconcile()).drained == []
+    assert rig.hub.commands == []
 
 
 async def test_a_nearer_trip_takes_the_warm_browser(rig: Rig) -> None:

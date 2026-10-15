@@ -53,8 +53,8 @@ function myState(overrides: Partial<MyState> = {}): MyState {
       },
     ],
     capacity: { can_add: true, reason: null },
-    settings: { quiet_hours: null },
-    quiet_hours: null,
+    settings: { quiet_hours: { start: "22:00", end: "05:00" } },
+    quiet_hours: { start: "22:00", end: "05:00", now: false },
     devices: 0,
     events: [],
     links: { kofi: null },
@@ -371,6 +371,98 @@ describe("releasing a held cart", () => {
   });
 });
 
+describe("removing a trip", () => {
+  beforeEach(() => {
+    localStorage.setItem("fw.token", "t-1");
+  });
+
+  type Cart = MyState["trips"][number]["browser"]["cart"];
+
+  /** ferry-web archives the trip at once (ferry-control then lets any cart go); a second DELETE is a 404. */
+  function api(cart?: Cart) {
+    const base = myState().trips[0];
+    if (!base) throw new Error("no trip");
+    let state = cart === undefined ? myState() : myState({ trips: [{ ...base, browser: { ...base.browser, cart } }] });
+    return mockFetch((r) => {
+      if (r.url === `/api/trips/${TRIP_ID}` && r.method === "DELETE") {
+        if (state.trips.length === 0) return jsonResponse({ error: "No such trip" }, 404);
+        state = myState({ trips: [] });
+      }
+      if (r.url === "/api/state" || r.url.startsWith("/api/trips/")) return jsonResponse(state);
+      return jsonResponse({ terminals: [] });
+    });
+  }
+
+  const removals = (requests: { method: string; url: string }[]) =>
+    requests.filter((r) => r.method === "DELETE" && r.url === `/api/trips/${TRIP_ID}`).length;
+
+  const held = myState().trips[0]?.browser.cart ?? null;
+
+  it.each<[string, Cart, string]>([
+    ["a held cart", held, "Removing it releases the 9:00 am sailing in your cart."],
+    [
+      "a cart being added",
+      held && { ...held, status: "adding" },
+      "Removing it stops adding the 9:00 am sailing to your cart.",
+    ],
+    ["nothing held", null, "You'll stop getting alerts for it."],
+  ])("asks first, from the card, and says what happens to %s", async (_, cart, consequence) => {
+    const { requests } = api(cart);
+    const { user } = renderWithProviders(<MtApp />);
+    await user.click(await screen.findByRole("button", { name: "Remove" }));
+    const dialog = screen.getByRole("alertdialog", { name: "Remove this trip?" });
+    expect(dialog).toHaveTextContent(consequence);
+    expect(removals(requests)).toBe(0);
+
+    await user.click(within(dialog).getByRole("button", { name: "Remove trip" }));
+    expect(await screen.findByText("Trip removed")).toBeInTheDocument();
+    expect(screen.getByText("No trips yet")).toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(removals(requests)).toBe(1);
+  });
+
+  it("keeps the trip on cancel", async () => {
+    const { requests } = api();
+    const { user } = renderWithProviders(<MtApp />);
+    await user.click(await screen.findByRole("button", { name: "Remove" }));
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(screen.getByText("9:00 am is held for you (Saver, $93.45)")).toBeInTheDocument();
+    expect(removals(requests)).toBe(0);
+  });
+
+  it("says so when it was already removed somewhere else", async () => {
+    const { requests } = api();
+    const { user, queryClient } = renderWithProviders(<MtApp />);
+    await user.click(await screen.findByRole("button", { name: "Remove" }));
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Remove trip" }));
+    expect(await screen.findByText("No trips yet")).toBeInTheDocument();
+    act(() => {
+      queryClient.setQueryData(MY_STATE_KEY, myState()); // a stale view, from before the removal
+    });
+    await user.click(await screen.findByRole("button", { name: "Remove" }));
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Remove trip" }));
+    expect(await screen.findByText("That trip was already removed.")).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(await screen.findByText("No trips yet")).toBeInTheDocument(); // fetched afresh
+    expect(removals(requests)).toBe(2);
+  });
+
+  it("still works from the trip form", async () => {
+    const { requests } = api();
+    const { user } = renderWithProviders(<MtApp />);
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    const sheet = await screen.findByRole("dialog", { name: "Edit trip" });
+    await user.click(within(sheet).getByRole("button", { name: "Remove" }));
+    const dialog = screen.getByRole("alertdialog", { name: "Remove this trip?" });
+    expect(dialog).toHaveTextContent("Removing it releases the 9:00 am sailing in your cart.");
+    await user.click(within(dialog).getByRole("button", { name: "Remove trip" }));
+    expect(await screen.findByText("Trip removed")).toBeInTheDocument();
+    expect(await screen.findByText("No trips yet")).toBeInTheDocument();
+    expect(removals(requests)).toBe(1);
+  });
+});
+
 describe("did you book it?", () => {
   beforeEach(() => {
     localStorage.setItem("fw.token", "t-1");
@@ -502,12 +594,13 @@ describe("quiet hours", () => {
     history.replaceState(null, "", "/settings");
   });
 
-  const NIGHT = { start: "23:00", end: "06:00" };
+  const DEFAULT = { start: "22:00", end: "05:00" }; // everyone's, until they change them
+  const group = () => screen.findByRole("group", { name: "Quiet hours (Pacific time)" });
 
   /** ferry-web as the contract has it: PATCH /api/me {quiet_hours} answers with the whole state. */
-  function api(initial: { start: string; end: string } | null) {
+  function api(initial: { start: string; end: string }) {
     let quiet = initial;
-    const state = () => myState({ settings: { quiet_hours: quiet }, quiet_hours: quiet && { ...quiet, now: false } });
+    const state = () => myState({ settings: { quiet_hours: quiet }, quiet_hours: { ...quiet, now: false } });
     return mockFetch((r) => {
       if (r.url === "/api/me" && r.method === "PATCH") quiet = (r.body as { quiet_hours: typeof quiet }).quiet_hours;
       if (r.url === "/api/state" || r.url === "/api/me") return jsonResponse(state());
@@ -515,69 +608,72 @@ describe("quiet hours", () => {
     });
   }
 
-  it("are off unless turned on, and start as 11 pm to 6 am", async () => {
-    const { requests } = api(null);
-    const { user } = renderWithProviders(<MtApp />);
-    const quiet = await screen.findByRole("switch", { name: "Quiet hours (Pacific time)" });
-    expect(quiet).not.toBeChecked();
+  it("are always on: 10 pm to 5 am unless changed, with no switch", async () => {
+    api(DEFAULT);
+    renderWithProviders(<MtApp />);
+    const quiet = await group();
+    expect(within(quiet).getByLabelText("Start")).toHaveValue("22:00");
+    expect(within(quiet).getByLabelText("End")).toHaveValue("05:00");
     expect(
-      screen.getByText(
+      within(quiet).getByText(
         "Your trips aren't checked during them, so nothing is held and you get no alerts. Check now and Hold it for me still work.",
       ),
     ).toBeInTheDocument();
-    expect(screen.queryByLabelText("Start")).toBeNull();
-    await user.click(quiet);
-    expect(await screen.findByText("Quiet hours: 11:00 pm to 6:00 am")).toBeInTheDocument();
-    expect(requests.find((r) => r.method === "PATCH")).toMatchObject({ url: "/api/me", body: { quiet_hours: NIGHT } });
-    expect(quiet).toBeChecked();
-    expect(screen.getByLabelText("Start")).toHaveValue("23:00");
-    expect(screen.getByLabelText("End")).toHaveValue("06:00");
-  });
-
-  it("saves changed times, and turns off as null", async () => {
-    const { requests } = api(NIGHT);
-    const { user } = renderWithProviders(<MtApp />);
-    const start = await screen.findByLabelText("Start");
+    expect(screen.queryByRole("switch")).toBeNull();
     expect(screen.queryByRole("button", { name: "Save" })).toBeNull(); // nothing changed yet
-    fireEvent.change(start, { target: { value: "22:30" } });
-    await user.click(screen.getByRole("button", { name: "Save" }));
-    expect(await screen.findByText("Quiet hours: 10:30 pm to 6:00 am")).toBeInTheDocument();
-    await user.click(screen.getByRole("switch", { name: "Quiet hours (Pacific time)" }));
-    expect(await screen.findByText("Quiet hours are off")).toBeInTheDocument();
-    expect(requests.filter((r) => r.method === "PATCH").map((r) => r.body)).toEqual([
-      { quiet_hours: { start: "22:30", end: "06:00" } },
-      { quiet_hours: null },
-    ]);
-    expect(screen.queryByLabelText("Start")).toBeNull();
   });
 
-  it("won't save a start and end that are the same", async () => {
-    const { requests } = api({ start: "22:00", end: "07:00" });
+  it("save changed times", async () => {
+    const { requests } = api(DEFAULT);
     const { user } = renderWithProviders(<MtApp />);
-    const end = await screen.findByLabelText("End");
-    fireEvent.change(end, { target: { value: "22:00" } });
-    expect(screen.getByLabelText("Start")).toHaveAccessibleDescription("Start and end can't be the same.");
-    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
-    expect(requests.some((r) => r.method === "PATCH")).toBe(false);
-    // Off and on again: back to the night.
-    const quiet = screen.getByRole("switch", { name: "Quiet hours (Pacific time)" });
-    await user.click(quiet);
-    await waitFor(() => expect(quiet).not.toBeChecked());
-    await user.click(quiet);
-    await waitFor(() => expect(quiet).toBeChecked());
-    expect(requests.filter((r) => r.method === "PATCH").map((r) => r.body)).toEqual([
-      { quiet_hours: null },
-      { quiet_hours: NIGHT },
+    const quiet = await group();
+    fireEvent.change(within(quiet).getByLabelText("Start"), { target: { value: "22:30" } });
+    fireEvent.change(within(quiet).getByLabelText("End"), { target: { value: "06:00" } });
+    await user.click(within(quiet).getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Quiet hours: 10:30 pm to 6:00 am")).toBeInTheDocument();
+    expect(requests.filter((r) => r.method === "PATCH")).toMatchObject([
+      { url: "/api/me", body: { quiet_hours: { start: "22:30", end: "06:00" } } },
     ]);
+    await waitFor(() => expect(within(quiet).queryByRole("button", { name: "Save" })).toBeNull()); // saved
+    expect(within(quiet).getByLabelText("Start")).toHaveValue("22:30");
   });
 
-  it("are off for a server that doesn't send them", async () => {
+  it("hide Save again once the saved times are back", async () => {
+    api(DEFAULT);
+    renderWithProviders(<MtApp />);
+    const start = within(await group()).getByLabelText("Start");
+    fireEvent.change(start, { target: { value: "23:00" } });
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+    fireEvent.change(start, { target: { value: "22:00" } });
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+  });
+
+  it("won't save a start and end that are the same, or a blank one", async () => {
+    const { requests } = api({ start: "22:00", end: "07:00" });
+    renderWithProviders(<MtApp />);
+    const quiet = await group();
+    const start = within(quiet).getByLabelText("Start");
+    const end = within(quiet).getByLabelText("End");
+    fireEvent.change(end, { target: { value: "22:00" } });
+    expect(start).toHaveAccessibleDescription("Start and end can't be the same.");
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    fireEvent.change(end, { target: { value: "" } });
+    expect(start).toHaveAccessibleDescription("Enter a start and an end.");
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    fireEvent.submit(end);
+    expect(requests.some((r) => r.method === "PATCH")).toBe(false);
+  });
+
+  it("are the default for a server that doesn't send them", async () => {
     const older: Partial<MyState> = myState();
     delete older.settings;
     delete older.quiet_hours;
     mockFetch((r) => (r.url === "/api/state" ? jsonResponse(older) : jsonResponse({ terminals: [] })));
     renderWithProviders(<MtApp />);
-    expect(await screen.findByRole("switch", { name: "Quiet hours (Pacific time)" })).not.toBeChecked();
+    const quiet = await group();
+    expect(within(quiet).getByLabelText("Start")).toHaveValue("22:00");
+    expect(within(quiet).getByLabelText("End")).toHaveValue("05:00");
+    expect(screen.queryByRole("switch")).toBeNull();
   });
 
   it("say when it's quiet now, on the trips", async () => {
@@ -585,14 +681,14 @@ describe("quiet hours", () => {
     const base = myState().trips[0];
     if (!base) throw new Error("no trip");
     const state = myState({
-      settings: { quiet_hours: NIGHT },
-      quiet_hours: { ...NIGHT, now: true },
+      settings: { quiet_hours: DEFAULT },
+      quiet_hours: { ...DEFAULT, now: true },
       trips: [{ ...base, quiet: true, browser: { ...base.browser, phase: "off", mode: "off", cart: null } }],
     });
     mockFetch((r) => (r.url === "/api/state" ? jsonResponse(state) : jsonResponse({ terminals: [] })));
     renderWithProviders(<MtApp />);
     const heading = await screen.findByRole("heading", { name: "Your trips" });
-    expect(heading.nextElementSibling).toHaveTextContent("1 of 3 watched · quiet until 6:00 am PT");
+    expect(heading.nextElementSibling).toHaveTextContent("1 of 3 watched · quiet until 5:00 am PT");
     expect(statusBadge()).toBe("Quiet hours");
   });
 
@@ -601,14 +697,14 @@ describe("quiet hours", () => {
     const base = myState().trips[0];
     if (!base) throw new Error("no trip");
     const state = myState({
-      settings: { quiet_hours: NIGHT },
-      quiet_hours: { ...NIGHT, now: true },
+      settings: { quiet_hours: DEFAULT },
+      quiet_hours: { ...DEFAULT, now: true },
       trips: [{ ...base, quiet: true, browser: { ...base.browser, phase: "off", mode: "off", cart: null } }],
     });
     mockFetch((r) => (r.url === "/api/state" ? jsonResponse(state) : jsonResponse({ terminals: [] })));
     renderWithProviders(<MtApp />);
     expect(
-      await screen.findByText("It's your quiet hours, so this trip isn't checked until 6:00 am PT."),
+      await screen.findByText("It's your quiet hours, so this trip isn't checked until 5:00 am PT."),
     ).toBeVisible();
     expect(screen.getByText("Quiet hours")).toBeInTheDocument();
   });

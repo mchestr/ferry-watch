@@ -27,6 +27,9 @@
     --danger-soft: 4 80% 96%;
     --warning: 33 92% 33%;
     --warning-soft: 40 90% 94%;
+    --map-water: 210 72% 90%;
+    --map-land: 0 0% 100%;
+    --map-coast: 212 30% 78%;
     --radius: 0.75rem;
   }
   .dark {
@@ -53,6 +56,9 @@
     --danger-soft: 4 45% 13%;
     --warning: 38 85% 60%;
     --warning-soft: 36 45% 12%;
+    --map-water: 218 38% 8%;
+    --map-land: 218 24% 15%;
+    --map-coast: 217 20% 23%;
   }
   * {
     @apply border-border;

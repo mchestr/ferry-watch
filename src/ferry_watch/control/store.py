@@ -18,7 +18,7 @@ import asyncpg
 import msgspec
 
 from ferry_watch.models import Trip, ValidationError
-from ferry_watch.polling import quiet_hours
+from ferry_watch.polling import DEFAULT_QUIET_HOURS, quiet_hours
 from ferry_watch.protocol import Alert, Brake, Bye, ClaimReason, Event, Mode, State
 
 from .configure import Allowance, Switches, TripRow, pacific_date
@@ -147,7 +147,7 @@ class ControlStore:
             holds_today=usage.get("holds", 0),
             cart_attempts_today=usage.get("cart_attempts", 0),
             vnc_seconds_today=usage.get("vnc_seconds", 0),
-            quiet=quiet_hours(settings["quiet_start"], settings["quiet_end"]) if settings else None,
+            quiet=quiet_hours(settings["quiet_start"], settings["quiet_end"]) if settings else DEFAULT_QUIET_HOURS,
         )
 
     async def switches(self) -> Switches:
@@ -367,6 +367,8 @@ class ControlStore:
                     "UPDATE trips SET archived_at = now(), updated_at = now() WHERE id = $1", binding.trip_id
                 )
                 kind = "booked"
+            elif not await conn.fetchval("SELECT archived_at IS NULL FROM trips WHERE id = $1", binding.trip_id):
+                return  # the user removed the trip, which drained the pod: they know, and there's nothing to ask
             else:
                 # Did they book it? The trip stays paused until they answer (owner, round 3).
                 await conn.execute(

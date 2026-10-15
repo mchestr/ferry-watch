@@ -31,6 +31,7 @@ export default {
           soft: "hsl(var(--danger-soft))",
         },
         warning: { DEFAULT: "hsl(var(--warning))", soft: "hsl(var(--warning-soft))" },
+        map: { water: "hsl(var(--map-water))", land: "hsl(var(--map-land))", coast: "hsl(var(--map-coast))" },
       },
       borderRadius: { lg: "var(--radius)", md: "calc(var(--radius) - 2px)", sm: "calc(var(--radius) - 4px)" },
       keyframes: {
@@ -38,8 +39,10 @@ export default {
           "0%": { boxShadow: "0 0 0 0 hsl(var(--success) / .55)" },
           "70%,100%": { boxShadow: "0 0 0 7px hsl(var(--success) / 0)" },
         },
+        // The route map's dashes, moving from departure to arrival: two dash lengths (8 + 5) a cycle.
+        "route-flow": { to: { strokeDashoffset: "-26" } },
       },
-      animation: { "pulse-ring": "pulse-ring 2s infinite" },
+      animation: { "pulse-ring": "pulse-ring 2s infinite", "route-flow": "route-flow 1.6s linear infinite" },
     },
   },
   plugins: [animate],

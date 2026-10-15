@@ -332,7 +332,7 @@ async def test_a_claim_waiting_for_its_cart_is_kept(rig: Rig, agent: Agent) -> N
 
 
 async def quiet_hours(rig: Rig, start: time = time(23, 0), end: time = time(6, 0)) -> None:
-    """The user's own quiet hours (there are none unless they set some)."""
+    """Quiet hours the user chose (without any, they have the default: 10 pm to 5 am)."""
     owner = await rig.db.connect()
     try:
         await owner.execute(
@@ -358,8 +358,10 @@ async def test_no_carts_in_the_users_quiet_hours(rig: Rig, agent: Agent) -> None
     assert await rig.fetch("SELECT * FROM hold_claims") == []
 
 
-async def test_no_quiet_hours_unless_the_user_sets_some(rig: Rig, agent: Agent) -> None:
-    rig.clock[0] = NIGHT
+async def test_a_user_who_never_chose_quiet_hours_has_the_default(rig: Rig, agent: Agent) -> None:
+    rig.clock[0] = datetime(2026, 10, 15, 22, 0, tzinfo=PACIFIC).timestamp()  # 10 pm to 5 am
+    assert await agent.client.claim("09:00", "saver") is False
+    rig.clock[0] = datetime(2026, 10, 16, 5, 0, tzinfo=PACIFIC).timestamp()
     assert await agent.client.claim("09:00", "saver") is True
 
 
@@ -493,6 +495,21 @@ async def test_a_viewed_hold_that_ended_otherwise_still_asks(rig: Rig, agent: Ag
     await until(lambda: agent.client.acked(bye.seq))
     assert (await rig.fetch("SELECT paused_reason FROM trips"))[0]["paused_reason"] == "after_checkout"
     assert [r["kind"] for r in await rig.fetch("SELECT kind FROM notifications")] == ["booked_it"]
+
+
+async def test_a_hold_drained_because_the_trip_was_removed_asks_nothing(rig: Rig, agent: Agent) -> None:
+    """Removing a trip drains its pod, which lets the cart go: no "Did you book it?" about a trip that's gone."""
+    owner = await rig.db.connect()
+    try:
+        await owner.execute("UPDATE trips SET archived_at = now(), enabled = false")
+    finally:
+        await owner.close()
+    bye = Bye(**agent.client.envelope(), reason="drained", outcome="released", viewer_was_connected=True)
+    agent.client.send(bye)
+    await until(lambda: agent.client.acked(bye.seq))
+    assert (await rig.fetch("SELECT paused_reason FROM trips"))[0]["paused_reason"] is None
+    assert await rig.fetch("SELECT kind FROM notifications") == []
+    assert [r["outcome"] for r in await rig.fetch("SELECT outcome FROM hold_outcomes")] == ["released"]
 
 
 async def test_a_booking_archives_the_trip(rig: Rig, agent: Agent) -> None:

@@ -156,13 +156,13 @@ describe("fleet", () => {
     const dialog = await screen.findByRole("dialog", { name: "Pause everything?" });
     const confirm = within(dialog).getByRole("button", { name: "Turn on" });
     expect(confirm).toBeDisabled(); // no reason yet
-    await user.type(within(dialog).getByLabelText("Reason"), "Talos upgrade");
+    await user.type(within(dialog).getByLabelText("Reason"), "Node upgrade");
     await user.click(confirm);
     await waitFor(() =>
       expect(requests.find((r) => r.url === "/api/admin/switches")?.body).toEqual({
         switch: "maintenance",
         on: true,
-        reason: "Talos upgrade",
+        reason: "Node upgrade",
       }),
     );
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());

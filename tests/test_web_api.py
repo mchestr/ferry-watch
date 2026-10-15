@@ -331,10 +331,11 @@ async def test_a_sailing_the_state_cant_read_doesnt_break_it(rig: Rig) -> None:
 
 async def test_the_state_says_why_a_trip_wouldnt_be_held(rig: Rig) -> None:
     trip_id = await rig.add(auto_cart=False)
+    rig.clock[0] = today_at(12)  # outside the quiet hours everyone has
     state = await (await rig.call("GET", "/api/state")).json()
     hold = state["trips"][0]["hold"]
     assert hold == {
-        "reason": "auto_cart_off",  # at any hour: there are no quiet hours unless the user sets some
+        "reason": "auto_cart_off",
         "can_request": True,
         "holdable": [],
         "requested_at": None,
@@ -438,24 +439,50 @@ async def test_the_old_account_pause_moves_onto_each_trip(rig: Rig) -> None:
 # ---- quiet hours
 
 
-NOT_QUIET = {"start": "23:00", "end": "06:00", "now": False}  # for a 0.6.2 dashboard, which needs an object
+DEFAULT = {"start": "22:00", "end": "05:00"}  # everyone's, until they change them
 
 
 async def test_quiet_hours_are_each_users_own(rig: Rig) -> None:
+    rig.clock[0] = today_at(12)
     state = await (await rig.call("GET", "/api/state")).json()
-    assert (state["settings"], state["quiet_hours"]) == ({"quiet_hours": None}, NOT_QUIET)  # none, by default
+    assert (state["settings"], state["quiet_hours"]) == ({"quiet_hours": DEFAULT}, DEFAULT | {"now": False})
+    assert await rig.sql("SELECT * FROM user_settings") == []  # the default needs no row
     night = {"start": "23:00", "end": "06:30"}
     response = await rig.call("PATCH", "/api/me", json={"quiet_hours": night})
     assert response.status == 200, await response.text()
     state = await response.json()
-    assert state["settings"] == {"quiet_hours": night}
-    assert {k: v for k, v in state["quiet_hours"].items() if k != "now"} == night
+    assert (state["settings"], state["quiet_hours"]) == ({"quiet_hours": night}, night | {"now": False})
     rows = await rig.sql("SELECT user_id, quiet_start, quiet_end FROM user_settings")
     assert [tuple(r) for r in rows] == [(ANN, dt_time(23, 0), dt_time(6, 30))]
+
+    rig.clock[0] = today_at(22, 30)
+    bobs = await rig.add(BOB)
+    await rig.sql("UPDATE trip_runtime SET next_check_at = to_timestamp($1)", today_at(22, 45))
     bob = await (await rig.call("GET", "/api/state", BOB)).json()
-    assert (bob["settings"], bob["quiet_hours"]) == ({"quiet_hours": None}, NOT_QUIET)
-    state = await (await rig.call("PATCH", "/api/me", json={"quiet_hours": None})).json()
-    assert (state["settings"], state["quiet_hours"]) == ({"quiet_hours": None}, NOT_QUIET)
+    assert (bob["settings"], bob["quiet_hours"]) == ({"quiet_hours": DEFAULT}, DEFAULT | {"now": True})
+    (trip,) = bob["trips"]
+    five = datetime.combine(datetime.now(PACIFIC).date() + timedelta(days=1), dt_time(5), PACIFIC).timestamp()
+    assert (trip["trip"]["id"], trip["quiet"], trip["browser"]["next_check_at"]) == (bobs, True, five)
+    state = await (await rig.call("GET", "/api/state")).json()
+    assert state["quiet_hours"]["now"] is False  # Ann's start at 11 pm
+
+
+async def test_quiet_hours_a_063_ferry_web_turned_off_are_the_default(rig: Rig) -> None:
+    """During the rollout a 0.6.3 ferry-web can still store "off" (no times): everyone has quiet hours now."""
+    await rig.sql("INSERT INTO user_settings (user_id, quiet_start, quiet_end) VALUES ($1, NULL, NULL)", ANN)
+    rig.clock[0] = today_at(23)
+    state = await (await rig.call("GET", "/api/state")).json()
+    assert (state["settings"], state["quiet_hours"]) == ({"quiet_hours": DEFAULT}, DEFAULT | {"now": True})
+
+
+async def test_quiet_hours_cant_be_turned_off(rig: Rig) -> None:
+    for body in ({"quiet_hours": None}, {}):
+        response = await rig.call("PATCH", "/api/me", json=body)
+        assert (response.status, await response.json()) == (
+            400,
+            {"error": "Quiet hours need a start and an end", "field": "quiet_hours"},
+        )
+    assert await rig.sql("SELECT * FROM user_settings") == []
 
 
 @pytest.mark.parametrize(
@@ -464,8 +491,11 @@ async def test_quiet_hours_are_each_users_own(rig: Rig) -> None:
         {},
         {"paused": True},  # pausing is per trip now
         {"quiet_hours": None, "paused": False},
+        {"quiet_hours": {"start": "23:00", "end": "06:00"}, "paused": False},
         {"quiet_hours": "23:00-06:00"},
         {"quiet_hours": {"start": "23:00"}},
+        {"quiet_hours": {"start": "23:00", "end": None}},
+        {"quiet_hours": {"start": None, "end": None}},
         {"quiet_hours": {"start": "23:00", "end": "06:00", "days": "weekdays"}},
         {"quiet_hours": {"start": "24:00", "end": "06:00"}},
         {"quiet_hours": {"start": "7:00", "end": "09:00"}},
@@ -649,7 +679,7 @@ async def test_limit_overrides_stop_at_the_ceiling(rig: Rig) -> None:
 
 async def test_the_fleet_switches(rig: Rig) -> None:
     await make_admin(rig)
-    body = {"switch": "pause_carting", "on": True, "reason": "Talos upgrade"}
+    body = {"switch": "pause_carting", "on": True, "reason": "Node upgrade"}
     assert (await rig.call("POST", "/api/admin/switches", json=body)).status == 200
     overview = await (await rig.call("GET", "/api/admin/overview")).json()
     assert overview["switches"]["pause_carting"] is True

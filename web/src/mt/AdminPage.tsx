@@ -65,8 +65,8 @@ const SWITCHES: readonly FleetSwitchCopy[] = [
   {
     name: "pause_carting",
     label: "Pause carting",
-    on: "Alerts only: nobody's sailing is put in a cart (for a Talos upgrade, or if guest checkout breaks).",
-    off: "Bookable sailings go into a guest cart for their owner again.",
+    on: "Alerts only: nobody's sailing is put in a cart.",
+    off: "Bookable sailings go into a cart for their owner again.",
     ask: ["Pause carting?", "Cart sailings again?"],
     done: ["Carting is paused", "Carting is back on"],
   },

@@ -175,7 +175,8 @@ research/cluster-platform-services.md. Verified facts that the plan MUST reflect
   ([top-level README](../../README.md) "Things to know about BC Ferries"; `site.py:288-290`), so a sign-in
   will most likely fail; whether trying affects the cart is unverified. A password typed there would also
   cross the plaintext VNC path into an unsandboxed Chromium. The plan does not rely on it. Nothing persists
-  in the pod after it exits, and the password manager stays off.
+  in the pod after it exits, and the password manager stays off. (Superseded after 0.6.3; see "Signing in
+  to BC Ferries at checkout" below.)
 - **No live-site spike for guest checkout (Q2 = no).** "No spike for now, assume it works and if not we
   will adjust later, don't make any one way door decisions on this." => W0 is no longer gated on S1/S2/S2b/
   S5/S6/S7. Guest checkout is assumed to work. The plan must stay reversible: keep `SiteSession.login()` and
@@ -234,3 +235,18 @@ research/cluster-platform-services.md. Verified facts that the plan MUST reflect
 10. **Postgres superuser Secret:** keep the standard `components/cnpg` permanently; accepted residual.
 11. **Self-hosted CI runner:** leave as is; stated as a residual to tenants.
 12. **Cloudflare geo-block:** unchanged; onboarding tells invitees it only works from Canada/US.
+
+## Signing in to BC Ferries at checkout (owner feedback after 0.6.3; authoritative)
+
+- Owner: "Why do we say checkout as guest? BC ferries has a sign in and checkout option that probably works
+  just fine if they want to use it."
+  => Signing in to BC Ferries during checkout is the user's choice. The app no longer tells anyone to check
+  out as a guest or not to sign in: not in the cart alerts, `/c/<trip>`, the trip card, the checkout landing
+  page or the invite email. Carts are still added as a guest, and nothing stores a BC Ferries password.
+- The old "it doesn't accept a sign-in while a cart is held" came from the single-tenant watcher's automated
+  login, which BC Ferries refused while a guest cart already existed (so that watcher logs in first and carts
+  after). It never covered a person signing in at BC Ferries' own checkout step.
+- The security note stays: a password typed during checkout travels the same plaintext path as the card
+  number (Cloudflare, cloudflared, Envoy, vnc-edge) into an unsandboxed Chromium, and the BC Ferries session
+  it creates outlives the pod. A sign-in the user chooses is recorded as `checkout_login_seen` with
+  `forced: false` and alerts nobody.

@@ -108,7 +108,7 @@ function useTripSource(state: MyState | undefined, terminals: ReturnType<typeof 
       remove: async (id) => {
         write(await myApi.removeTrip(id));
       },
-      autoCartHint: "Holds the sailing in a guest cart; you check out in a browser we keep for you.",
+      autoCartHint: "Holds the sailing in a cart; you check out in a browser we keep for you.",
       addedMessage: "Trip added. It'll be checked shortly.",
     };
   }, [qc, state, terminals.data]);

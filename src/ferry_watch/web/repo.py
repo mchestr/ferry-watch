@@ -21,7 +21,7 @@ from ferry_watch.control.configure import Allowance, HubSettings, Switches, cart
 from ferry_watch.control.limits import LimitKey, Limits
 from ferry_watch.control.store import CLAIM_LAPSE_SECONDS, USER_CHANNEL
 from ferry_watch.models import PACIFIC, Trip, ValidationError
-from ferry_watch.polling import PollPolicy, QuietHours, quiet_hours
+from ferry_watch.polling import DEFAULT_QUIET_HOURS, PollPolicy, QuietHours, quiet_hours
 
 from .http import ApiError
 from .push import Subscription
@@ -74,19 +74,13 @@ async def _archive(conn: asyncpg.pool.PoolConnectionProxy, uid: str, trip_id: st
 
 def _after_quiet(due: float | None, context: HoldContext, lifted_until: float | None) -> float | None:
     """When a short check due at `due` runs: not in the user's quiet hours, unless they're lifted for it."""
-    quiet = context.allowance.quiet
-    if due is None or quiet is None or (lifted_until is not None and due < lifted_until):
+    if due is None or (lifted_until is not None and due < lifted_until):
         return due
-    return quiet.end_after(datetime.fromtimestamp(due, PACIFIC)).timestamp()
+    return context.allowance.quiet.end_after(datetime.fromtimestamp(due, PACIFIC)).timestamp()
 
 
-_OLD_QUIET_HOURS = {"start": "23:00", "end": "06:00"}  # 0.6.2's fleet-wide quiet hours, for its dashboard
-
-
-def _quiet_json(quiet: QuietHours | None) -> dict[str, Any] | None:
-    """Quiet hours as the API has them: {"start": "HH:MM", "end": "HH:MM"}, or None for none."""
-    if quiet is None:
-        return None
+def _quiet_json(quiet: QuietHours) -> dict[str, Any]:
+    """Quiet hours as the API has them: {"start": "HH:MM", "end": "HH:MM"}."""
     return {"start": quiet.start.strftime("%H:%M"), "end": quiet.end.strftime("%H:%M")}
 
 
@@ -105,7 +99,7 @@ class HoldContext:
     at: datetime
 
     def quiet(self, lifted_until: float | None, now: float) -> bool:
-        """Whether a trip isn't checked now for the user's quiet hours: they're on, and not lifted for it."""
+        """Whether a trip isn't checked now for the user's quiet hours: it's in them, and they're not lifted."""
         return self.allowance.quiet_now(self.at) and not (lifted_until is not None and now < lifted_until)
 
     def hold(
@@ -436,19 +430,19 @@ class WebStore:
 
     # ---- settings
 
-    async def user_quiet_hours(self, uid: str) -> QuietHours | None:
-        """The user's quiet hours (none unless they set some)."""
+    async def user_quiet_hours(self, uid: str) -> QuietHours:
+        """The user's quiet hours: the default until they change them."""
         row = await self._pool.fetchrow("SELECT quiet_start, quiet_end FROM user_settings WHERE user_id = $1", uid)
-        return quiet_hours(row["quiet_start"], row["quiet_end"]) if row else None
+        return quiet_hours(row["quiet_start"], row["quiet_end"]) if row else DEFAULT_QUIET_HOURS
 
-    async def set_settings(self, uid: str, *, quiet: QuietHours | None) -> None:
-        """The user's own settings: their quiet hours, or None for none."""
+    async def set_settings(self, uid: str, *, quiet: QuietHours) -> None:
+        """The user's own settings: their quiet hours."""
         await self._pool.execute(
             "INSERT INTO user_settings (user_id, quiet_start, quiet_end) VALUES ($1, $2, $3) ON CONFLICT (user_id)"
             " DO UPDATE SET quiet_start = $2, quiet_end = $3, updated_at = now()",
             uid,
-            quiet.start if quiet else None,
-            quiet.end if quiet else None,
+            quiet.start,
+            quiet.end,
         )
 
     # ---- alerts
@@ -652,9 +646,8 @@ class WebStore:
                 "reason": None if len(trips) < max_trips else f"You can watch up to {max_trips} trips",
             },
             "settings": {"quiet_hours": quiet_json},
-            # The same quiet hours, and whether it's quiet now. Always an object for a release: a 0.6.2
-            # dashboard still open requires one, so a user with none gets the old fleet-wide hours, never now.
-            "quiet_hours": (quiet_json or _OLD_QUIET_HOURS) | {"now": context.allowance.quiet_now(context.at)},
+            # The same quiet hours, and whether it's quiet now.
+            "quiet_hours": quiet_json | {"now": context.allowance.quiet_now(context.at)},
             "devices": await self.devices(uid),
             "events": [
                 {

@@ -106,10 +106,28 @@
   }
 
   ready(record && record.disp);
-  const viewer = `/vnc.html#path=t/${trip}/g/${gen}/ws&autoconnect=1&reconnect=1&reconnect_delay=1000&idle_disconnect=120`;
-  const go = () => location.replace(viewer);
+  const go = () => location.replace(viewerUrl());
   document.getElementById("open").addEventListener("click", go);
   setTimeout(go, OPEN_AFTER_MS);
+
+  /** vnc.html, with the client's settings in the fragment, where it reads them first. */
+  function viewerUrl() {
+    const settings = [
+      `path=t/${trip}/g/${gen}/ws`,
+      "autoconnect=1",
+      "reconnect=1",
+      "reconnect_delay=1000",
+      "idle_disconnect=120",
+      // Smoothing on, which also turns off the client's auto-scaling on small high-DPI screens. That makes the
+      // screen about 1.5x a phone's viewport (585 px wide on an iPhone's 390), so the checkout shows at two
+      // thirds of its size. Without it the screen is the phone's viewport, and the checkout lays out for a phone.
+      "anti_aliasing=1",
+    ];
+    // A touch screen has no keyboard until a text field on this page has focus: the client's floating
+    // keyboard button gives it one. A tap on a field in the checkout focuses only the pod's field.
+    if (navigator.maxTouchPoints > 0) settings.push("virtual_keyboard_visible=1");
+    return `/vnc.html#${settings.join("&")}`;
+  }
 
   function fail(title, text) {
     document.getElementById("title").textContent = title;
