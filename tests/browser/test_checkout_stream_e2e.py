@@ -243,8 +243,15 @@ class Visit:
         assert await self.checkout.tab("__sizes") == sizes
         assert await card_values(self.checkout) == [CARD, "1228"]
 
+    async def zooms_in(self) -> None:
+        """Two fingers apart: the pod's page at twice its size."""
+        await midpoint.pinch(self.viewer, [(145, 300), (245, 300)], [(95, 300), (295, 300)])
+        await value_reaches(lambda: self.checkout.tab("Math.round(visualViewport.scale * 10) / 10"), 2)
+        await showing(self.viewer, self.checkout.pod)
+
     async def goes_classic(self) -> None:
-        """ "Use the classic viewer": KasmVNC by the same nonce, on the pod's own screen at 1x, the page as it was."""
+        """The menu's "Use the classic viewer": KasmVNC by the same nonce, on the pod's own screen at 1x and page
+        scale 1, the page as it was."""
         checkout = self.checkout
         await checkout.tab("window.__classic = []; addEventListener('resize', () => __classic.push(devicePixelRatio))")
         nonce = (await viewers.device_record(self.viewer))["n"]
@@ -257,7 +264,7 @@ class Visit:
         assert sorted(checkout.offers[-1]) == sorted(["binary", f"fw.n1.{nonce}"])
         assert (await viewers.device_record(self.viewer))["viewer_fallback"] is True
         assert checkout.rig.screen.current is None
-        assert await checkout.tab("devicePixelRatio") == 1
+        assert await checkout.tab("[devicePixelRatio, visualViewport.scale]") == [1, 1], "not the pod's own screen"
         assert set(await checkout.tab("__classic")) == {1}
         assert await checkout.pod.tab.input_value("#prov") == "ON"
         assert await card_values(checkout) == [CARD, "1228"]
@@ -284,6 +291,8 @@ async def test_a_whole_checkout_in_the_streamed_viewer_then_the_classic_one(
         await visit.answers_dialogs()
         await visit.comes_back()
         assert checkout.rig.gate._lock == lock
+        if visit.hands.touch:
+            await visit.zooms_in()
         await visit.goes_classic()
         assert checkout.rig.gate._lock == lock, "the classic viewer came in by another lock"
 

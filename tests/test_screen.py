@@ -153,7 +153,9 @@ async def test_a_desktop_at_1x_stops_xsettingsd_before_the_mode(tools: Tools) ->
 async def test_restore_puts_back_the_pods_own_screen(tools: Tools) -> None:
     await tools.screen.restore()  # nothing to restore: nothing runs
     assert tools.calls() == []
+    changed = [tools.screen.changed]  # since the screen was last restored
     await tools.screen.apply(390, 664, 2)
+    changed.append(tools.screen.changed)
     await tools.screen.apply(1280, 800, 1)
     await tools.screen.apply(390, 664, 2)
     await until(lambda: sum(line.startswith("xsettingsd -c") for line in tools.lines()) == 2)
@@ -171,6 +173,8 @@ async def test_restore_puts_back_the_pods_own_screen(tools: Tools) -> None:
         "xrandr --rmmode fw1280x800",
     ]
     assert tools.screen.current is None
+    changed.append(tools.screen.changed)
+    assert changed == [False, True, False]
     tools.forget()
     await tools.screen.restore()  # done: nothing more to do
     assert tools.calls() == []

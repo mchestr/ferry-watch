@@ -200,6 +200,10 @@ feasibility 6).
   - Bounded to 3 s in total, with 2 s per `xrandr` and a timed-out `xrandr` killed. Measured 44 ms; afterwards
     xsettingsd was stopped and no modes were left.
   - It never runs at hold end or drain, because the pod exits anyway (C22).
+  - As built, the gate's restore is `stream.ClassicScreen`: when a stream has changed the screen since the last
+    classic viewer, it first pinches every zoomed page of the checkout back to page scale 1 (bounded to 2 s), then
+    calls `Screen.restore()`. Found in integration: after a stream's pinch, KasmVNC found the page at scale 2, which
+    a classic viewer on a phone can't pinch back.
 - **The escape hatch on the same phone** restores 1280x1000@1 and then KasmVNC resizes to its own size, so the page
   goes 390@2 → 1280@1 → 390@1 once. That is the price of KasmVNC finding exactly 0.6.4's state. It happens at most
   once per checkout, and only when the user leaves the beta.
@@ -594,8 +598,8 @@ C12 (single viewer) holds across kinds: one slot, and the replaced viewer is clo
 |---|---|
 | `src/ferry_watch/agent/cast_protocol.py` (new) | msgspec inbound structs with types only; `check(msg) -> str | None` for the value rules; `typed_text_ok()`; the header `struct.Struct("<BBHIHHffffBBH")`; outbound builders with caps and cleaning (`clean()`, `origin_of()`, `strip_credential_tokens()`); `CloseCode` IntEnum; the rate table; the conformance-pack loader for tests |
 | `src/ferry_watch/agent/cast_scripts.py` (new) | The fixed isolated-world scripts (reference: `round2/cast_scripts.py`) and `call(script, *args) -> str`, which formats the expression from ints/finite floats only |
-| `src/ferry_watch/agent/screen.py` (new) | `Screen.apply(w, h, dsf) -> bool` (no-op when unchanged; DPI then mode), `Screen.restore()` (bounded 3 s, never raises), `Screen.current` (reference: `round2/screen2.py`) |
-| `src/ferry_watch/agent/stream.py` (new) | `CastSession` (opening, inbound, the worker, the ticker, outbound with the verdict, teardown); `InboundQueue` (coalescing, bound 64); `RateLimiter`; `CastPod` and `factory()` for the gate |
+| `src/ferry_watch/agent/screen.py` (new) | `Screen.apply(w, h, dsf) -> bool` (no-op when unchanged; DPI then mode), `Screen.restore()` (bounded 3 s, never raises), `Screen.current`, `Screen.changed` (reference: `round2/screen2.py`) |
+| `src/ferry_watch/agent/stream.py` (new) | `CastSession` (opening, inbound, the worker, the ticker, outbound with the verdict, teardown); `InboundQueue` (coalescing, bound 64); `RateLimiter`; `CastPod` and `factory()` for the gate; `ClassicScreen`, the gate's restore before a classic viewer (pages back to scale 1, then `Screen.restore()`) |
 | `src/ferry_watch/agent/cast_cdp.py` (new) | `Cdp` (the allowlist wrapper, C34; every call bounded to 2 s); `Worlds` (per-frame worlds, out-of-process frames' own sessions, the owner chain, invalidation on `framenavigated`/`framedetached`) |
 | `src/ferry_watch/agent/cast_frames.py` (new) | `FramePump` (live/still/paused, seeding, window, repeat cache) |
 | `src/ferry_watch/agent/cast_pages.py` (new) | `PageList` (ids, at most 8 listed, one CDP session each, titles from `Target.getTargetInfo`) |
@@ -642,7 +646,8 @@ class CloseCode(IntEnum):  # in cast_protocol.py
   - Inside the swap: `_disconnect(old)`, `prepare`, `self._last_cast_start = monotonic()`,
     `_serve_cast(viewer, cart_id)`.
 - **`_upgrade`, rfb branch.** Inside the swap, after `_disconnect(old)`: `await self._dialogs.keep()`, then
-  `await self._screen.restore()` (both bounded; the restore is a no-op when no stream ever ran), then today's code.
+  `await self._screen.restore()` (both bounded; the restore is a no-op when no stream ever ran; as built it also
+  pinches zoomed pages back to scale 1, §4.1), then today's code.
   The cast branch calls `keep()` too: dialogs are kept from the first viewer of either kind (§13).
 - **`_serve_cast`.**
   - `asyncio.wait_for(session.run(), MAX_CONNECTION_SECONDS)`. A timeout closes 4004; an exception closes 4500,

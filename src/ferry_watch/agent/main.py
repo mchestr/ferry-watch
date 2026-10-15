@@ -48,7 +48,7 @@ from .processes import pod_processes
 from .screen import Screen
 from .settings import AgentSettings, SettingsError
 from .store import OneTripStore
-from .stream import CastPod, factory
+from .stream import CastPod, ClassicScreen, factory
 from .watch import Browser, Finish, TripWatcher
 
 log = logging.getLogger("ferry_watch.agent")
@@ -117,7 +117,7 @@ class Agent:
             viewer_changed=self.watcher.viewer_changed,
             cast=factory(stream),
             verdict=self.watcher.viewer_verdict,
-            screen=self.screen,
+            screen=ClassicScreen(self.screen, self._checkout_page),
             dialogs=self.dialogs,
         )
         self.gate_port: int | None = None

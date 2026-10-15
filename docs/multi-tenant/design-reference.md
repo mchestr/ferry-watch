@@ -978,8 +978,9 @@ stream also when `cast_allowed` turns false. After a viewed hold the pod exits.
   is bounded and can't be cancelled halfway: the gate waits for it before admitting the next viewer.
 - **The screen.** A stream sets the pod's X screen to the viewer's size and scale (a RandR mode, and Xft/DPI
   through `xsettingsd`), and leaves it in place at teardown so that a reconnect from the same device changes
-  nothing. Before any `binary` viewer is bridged the gate restores 1280x1000 at scale 1, removes the modes and
-  stops `xsettingsd`, so the classic viewer sees 0.6.4's screen.
+  nothing. Before any `binary` viewer is bridged after a stream, the gate pinches any page the stream zoomed back
+  to page scale 1, restores 1280x1000 at scale 1, removes the modes and stops `xsettingsd`, so the classic viewer
+  sees 0.6.4's screen.
 - **Dialogs** (a change to the classic path too, owner decision for 0.7.0). Before 0.7.0 Playwright dismissed
   every JavaScript dialog the moment it opened, so a `confirm()` in the checkout returned false and an `alert()`
   vanished, unseen by the classic viewer. From the gate's first admission of a viewer of either kind in a pod's

@@ -38,7 +38,7 @@ from ferry_watch.agent.dialogs import DialogKeeper
 from ferry_watch.agent.gate import Gate, GateSettings, ViewerKind
 from ferry_watch.agent.processes import pod_processes
 from ferry_watch.agent.screen import Screen
-from ferry_watch.agent.stream import CastPod, factory
+from ferry_watch.agent.stream import CastPod, ClassicScreen, factory
 from ferry_watch.bcferries.site import PodBrowser
 from tests.browser import test_checkout_edge as edge
 from tests.browser import test_checkout_screen as screen
@@ -227,7 +227,7 @@ async def make_rig(
             )
         ),
         verdict=verdict,
-        screen=screen_,
+        screen=ClassicScreen(screen_, lambda: (pod.context, pod.tab)),
         dialogs=keeper,
     )
     server = TestServer(app(gate) if app is not None else gate.app(), host="127.0.0.1", port=port)

@@ -736,6 +736,46 @@ async def test_a_frame_that_arrives_as_the_session_ends_leaves_no_call_unawaited
     gc.collect()
 
 
+@dataclass
+class StreamedScreen:
+    changed: bool
+    restored: int = 0
+
+    async def restore(self) -> None:
+        self.restored += 1
+
+
+async def test_a_classic_viewer_after_a_stream_finds_the_pages_at_scale_1(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Before a classic viewer, after a stream: every page the stream zoomed is pinched back to scale 1, then the
+    screen is restored. Without a stream since the last classic viewer, the pages aren't touched at all."""
+    zoomed, plain, blocked = FakePage(), FakePage("https://pay.example/bank"), FakePage("https://pay.example/3ds")
+    zoomed.scale, zoomed.w, zoomed.h = 2.0, 390, 664
+    context = FakeContext(zoomed, plain)
+    untouched = StreamedScreen(changed=False)
+    await stream.ClassicScreen(untouched, lambda: (cast(Any, context), cast(Any, zoomed))).restore()
+    assert (untouched.restored, context.sessions) == (1, [])
+
+    after_a_stream = StreamedScreen(changed=True)
+    await stream.ClassicScreen(after_a_stream, lambda: (cast(Any, context), cast(Any, zoomed))).restore()
+    assert after_a_stream.restored == 1
+    (pinch,) = zoomed.sent("Input.")
+    assert pinch == (
+        "Input.synthesizePinchGesture",
+        {"x": 195.0, "y": 332.0, "scaleFactor": 0.5, "gestureSourceType": "mouse", "relativeSpeed": 3000},
+    )
+    assert plain.sent("Input.") == []
+    assert all(s.detached for s in context.sessions)
+
+    # A page that answers nothing (a dialog is open on it) holds the classic viewer up only so long.
+    monkeypatch.setattr(stream, "UNZOOM_SECONDS", 0.2)
+    blocked.hang = {"Page.getLayoutMetrics"}
+    context = FakeContext(zoomed, blocked)
+    started = time.monotonic()
+    await stream.ClassicScreen(after_a_stream, lambda: (cast(Any, context), cast(Any, zoomed))).restore()
+    assert time.monotonic() - started < 1
+    assert after_a_stream.restored == 2
+
+
 async def test_typed_text_is_never_logged(rig: Rig, caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.DEBUG)
     rig.dialogs.open = [(1, dialog(rig.page, "prompt", "Promo code?"))]

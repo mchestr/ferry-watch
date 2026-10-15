@@ -81,6 +81,11 @@ class Screen:
         self.current = (w, h, dsf)
         return True
 
+    @property
+    def changed(self) -> bool:
+        """A stream has changed the screen since it was last restored."""
+        return self._touched
+
     async def restore(self) -> None:
         """The pod's own screen: its launch size at 1x, xsettingsd stopped, our modes gone. Never raises."""
         if not self._touched:

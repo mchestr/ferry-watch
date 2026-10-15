@@ -34,7 +34,7 @@ from aiohttp import WSMsgType, web
 from .cast_cdp import CALL_SECONDS, Cdp, CdpError, Worlds
 from .cast_fields import FieldMapper, FocusReporter, Front
 from .cast_frames import FramePump
-from .cast_input import ImageRing, InputMapper
+from .cast_input import MOVED_SCALE, PINCH_SPEED, ImageRing, InputMapper
 from .cast_pages import PageEntry, PageList
 from .cast_protocol import (
     DROP_WINDOW_SECONDS,
@@ -93,6 +93,7 @@ MAX_SIZES: Final = 16  # distinct screen sizes in one session
 ERROR_EVERY_SECONDS: Final = 1.0  # one `error` a second per code
 MAX_MERGED_DELTA: Final = 8000.0
 LOCALE: Final = "en-US"
+UNZOOM_SECONDS: Final = 2.0  # for every page to be pinched back before a classic viewer
 
 # What the field map waits for (PROTOCOL §5.3.4), once carried out.
 _MAP_AFTER: Final = (Tap, Wheel, Key, Text, Compose, Choose, SetDate, Answer, PageOp, Pinch, Resize)
@@ -128,6 +129,51 @@ def factory(pod: CastPod) -> Callable[[web.WebSocketResponse, Callable[[], Close
         return CastSession(ws, verdict, pod)
 
     return make
+
+
+class StreamedScreen(Protocol):
+    @property
+    def changed(self) -> bool:
+        """A stream has changed the screen since it was last restored."""
+
+    async def restore(self) -> None: ...
+
+
+class ClassicScreen:
+    """What the gate restores before it bridges a classic (KasmVNC) viewer, after a stream: the pod's own screen
+    (screen.py), and the checkout's pages at page scale 1. A stream's pinch zoom is the stream's: a classic viewer on
+    a phone has no way to pinch the pod's page back, and 0.6.4's never found it zoomed. When no stream has changed
+    the screen since the last classic viewer, nothing is done at all. Bounded; never raises."""
+
+    def __init__(self, screen: StreamedScreen, target: Callable[[], tuple[BrowserContext, Page] | None]) -> None:
+        self._screen = screen
+        self._target = target
+
+    async def restore(self) -> None:
+        target = self._target() if self._screen.changed else None
+        if target is not None:
+            try:
+                async with asyncio.timeout(UNZOOM_SECONDS):
+                    await asyncio.gather(*(_unzoom(target[0], page) for page in target[0].pages))
+            except Exception as e:  # noqa: BLE001 - a classic viewer is waiting: it gets the page as it is
+                log.warning("Couldn't zoom the checkout back out: %s", type(e).__name__)
+        await self._screen.restore()
+
+
+async def _unzoom(context: BrowserContext, page: Page) -> None:
+    """A trackpad's pinch back to page scale 1, about the middle of the window, if the page is zoomed."""
+    session = await context.new_cdp_session(page)
+    cdp = Cdp(session)
+    try:
+        viewport = (await cdp.send("Page.getLayoutMetrics")).get("cssVisualViewport", {})
+        scale = float(viewport.get("scale", 1.0))
+        if scale > 1 + MOVED_SCALE:
+            centre = {"x": float(viewport.get("clientWidth", 0)) / 2, "y": float(viewport.get("clientHeight", 0)) / 2}
+            pinch = {"scaleFactor": max(1 / scale, 0.25), "gestureSourceType": "mouse", "relativeSpeed": PINCH_SPEED}
+            await cdp.send("Input.synthesizePinchGesture", centre | pinch)
+    finally:
+        with contextlib.suppress(Exception):
+            await session.detach()
 
 
 # ---- rates (§7.1)
