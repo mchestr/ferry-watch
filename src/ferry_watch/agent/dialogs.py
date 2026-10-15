@@ -92,6 +92,7 @@ class DialogKeeper:
         self._sink: DialogSink | None = None
         self._numbers: dict[KeptDialog, int] = {}  # in the attached session
         self._next_number = 1
+        self._listeners: list[Callable[[], None]] = []
 
     @property
     def keeping(self) -> bool:
@@ -100,6 +101,16 @@ class DialogKeeper:
     @property
     def open_dialogs(self) -> list[KeptDialog]:
         return list(self._open)
+
+    def on_change(self, listener: Callable[[], None]) -> Callable[[], None]:
+        """Call `listener` whenever a dialog opens or goes. Returns the way to stop."""
+        self._listeners.append(listener)
+
+        def stop() -> None:
+            with contextlib.suppress(ValueError):
+                self._listeners.remove(listener)
+
+        return stop
 
     # ---- the gate
 
@@ -189,6 +200,7 @@ class DialogKeeper:
             handle=handle,
         )
         self._open.append(dialog)
+        self._changed()
         opening = self._claim_opening(page, handle.type, handle.message)
         if opening is not None:
             self._located(dialog, opening.url)
@@ -283,13 +295,21 @@ class DialogKeeper:
         if dialog._waiting is not None:
             dialog._waiting.cancel()
             dialog._waiting = None
-        with contextlib.suppress(ValueError):
+        if dialog in self._open:
             self._open.remove(dialog)
+            self._changed()
         if ours:
             self._answered[dialog.page] = self._answered.get(dialog.page, 0) + 1
         number = self._numbers.pop(dialog, None)
         if number is not None and tell:
             self._tell(lambda sink: sink.dialog_closed(number))
+
+    def _changed(self) -> None:
+        for listener in list(self._listeners):
+            try:
+                listener()
+            except Exception:
+                log.exception("A dialog listener failed")
 
     def _tell(self, call: Callable[[DialogSink], None]) -> None:
         if self._sink is None:

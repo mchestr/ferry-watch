@@ -64,10 +64,21 @@ class FakeDialogs:
     answers: list[tuple[int, bool, str | None]] = field(default_factory=list)
     log: list[str] = field(default_factory=list)
     sink: Any = None
+    listeners: list[Callable[[], None]] = field(default_factory=list)
 
     @property
     def open_dialogs(self) -> list[KeptDialog]:
         return [d for _, d in self.open]
+
+    def on_change(self, listener: Callable[[], None]) -> Callable[[], None]:
+        self.listeners.append(listener)
+        return lambda: self.listeners.remove(listener)
+
+    def change(self, now_open: list[tuple[int, KeptDialog]]) -> None:
+        """Dialogs open or go, as the keeper tells its listeners."""
+        self.open = now_open
+        for listener in list(self.listeners):
+            listener()
 
     def attach(self, sink: Any) -> list[tuple[int, KeptDialog]]:
         self.sink = sink
@@ -765,9 +776,16 @@ async def test_a_frame_that_arrives_as_the_session_ends_leaves_no_call_unawaited
 class StreamedScreen:
     changed: bool
     restored: int = 0
+    calls: list[str] = field(default_factory=list)
 
     async def restore(self) -> None:
         self.restored += 1
+
+    async def widen(self) -> None:
+        self.calls.append("widen")
+
+    async def narrow(self) -> None:
+        self.calls.append("narrow")
 
 
 async def test_a_classic_viewer_after_a_stream_finds_the_pages_at_scale_1(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -810,6 +828,32 @@ async def test_a_classic_viewer_after_a_stream_finds_the_pages_at_scale_1(monkey
     await classic(after_a_stream).restore()
     assert time.monotonic() - started < 1
     assert after_a_stream.restored == 2
+
+
+async def test_while_a_classic_viewer_is_bridged_each_dialog_gets_room(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ClassicScreen.fit_dialogs: the screen widened while a dialog is open (and looked at again now and then: the
+    classic viewer may turn the phone), the viewer's own again once none is, and when the viewer goes."""
+    monkeypatch.setattr(stream, "FIT_POLL_SECONDS", 0.05)
+    page = FakePage()
+    dialogs = FakeDialogs()
+    screen = StreamedScreen(changed=False)
+    classic = stream.ClassicScreen(screen, lambda: (cast(Any, FakeContext(page)), cast(Any, page)), dialogs)
+    fitting = asyncio.ensure_future(classic.fit_dialogs())
+    await eventually(lambda: screen.calls == ["narrow"])  # no dialog: nothing widened (narrow() then runs nothing)
+    dialogs.change([(1, dialog(page, "alert", "Your session will expire soon"))])
+    await eventually(lambda: screen.calls.count("widen") >= 3)
+    dialogs.change([])
+    await eventually(lambda: screen.calls[-1] == "narrow")
+    calls = len(screen.calls)
+    await asyncio.sleep(0.2)
+    assert len(screen.calls) == calls  # nothing more while no dialog is open
+    dialogs.change([(2, dialog(page))])
+    await eventually(lambda: screen.calls[-1] == "widen")
+    fitting.cancel()  # the classic viewer went
+    with pytest.raises(asyncio.CancelledError):
+        await fitting
+    assert screen.calls[-1] == "narrow"
+    assert dialogs.listeners == []
 
 
 async def test_typed_text_is_never_logged(rig: Rig, caplog: pytest.LogCaptureFixture) -> None:

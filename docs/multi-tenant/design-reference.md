@@ -985,11 +985,13 @@ stream also when `cast_allowed` turns false. After a viewed hold the pod exits.
   every JavaScript dialog the moment it opened, so a `confirm()` in the checkout returned false and an `alert()`
   vanished, unseen by the classic viewer. From the gate's first admission of a viewer of either kind in a pod's
   life, dialogs are kept open for the viewer: a stream viewer answers them in its own sheet, headed with the
-  opening frame's origin (C41); a classic viewer answers them on the pod's screen, where Chromium draws them. They
-  stay open across reconnects and switches between kinds. When the gate closes with 4000, 4002 or 4003 they are
-  dismissed and no longer kept, so the agent's own browsing afterwards (emptying the cart) can't wait on one. A hold
-  that ends stops being offered to viewers before its viewer is closed, so none is let in again (and none keeps
-  dialogs again) while the cart is emptied.
+  opening frame's origin (C41); a classic viewer answers them on the pod's screen, where Chromium draws them. On a
+  classic viewer narrower than Chromium's 500 px minimum window (a phone), the screen is 500 px wide while a
+  dialog is open, so the whole dialog is on it, and the viewer's own size again once it is answered. They stay
+  open across reconnects and switches between kinds. When the gate closes with 4000, 4002 or 4003 they are
+  dismissed and no longer kept, so the agent's own browsing afterwards (emptying the cart) can't wait on one. A
+  hold that ends stops being offered to viewers before its viewer is closed, so none is let in again (and none
+  keeps dialogs again) while the cart is emptied.
 
 **Rate and usage:** viewer seconds are reported in `state` and charged to `vncMinutesPerDay`. The gate
 refuses more than 5 *failed* upgrade attempts per minute; successful reconnects are not counted.
@@ -1065,8 +1067,8 @@ existing socket (:6080), and it reaches Chromium only through Playwright's exist
 opened per page and the C34 allowlist in front of them; there is no remote-debugging port. Chromium's arguments,
 the managed policy, Xvnc's flags and the self-tests are unchanged, and check 2's "nothing else" still holds. It
 adds two programs, which the agent starts without a shell, with arguments built from validated integers only:
-- `xrandr`, which adds, selects and deletes the screen modes of a stream's size (each call bounded to 2 s, a
-  restore to 3 s in all, and a hung one killed);
+- `xrandr`, which adds, selects and deletes the screen modes of a stream's size, and of a dialog's room on a
+  classic viewer's phone-sized screen (each call bounded to 2 s, a restore to 3 s in all, and a hung one killed);
 - `xsettingsd`, which serves the stream's Xft/DPI (192 at 2x) to Chromium through the X server; it is an X client
   of the pod's own display with no socket of its own, its config is written atomically with mode 0600 in a 0700
   directory under `/tmp`, and it is stopped before a classic viewer is bridged (§5.5).

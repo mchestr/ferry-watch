@@ -11,6 +11,9 @@ and at 2x `xsettingsd` serves `Xft/DPI` 192, which Chromium follows live (device
 - `restore()` puts back the pod's own screen (its launch size at 1x, xsettingsd stopped, our modes deleted but
   the one it shows, if Xvnc no longer has its own of that size). The gate calls it only before it bridges a
   classic (KasmVNC) viewer, which therefore finds the pod exactly as 0.6.4 left it. It's bounded and never raises.
+- `widen()` and `narrow()` are for a classic viewer narrower than Chromium's minimum window (a phone): while a
+  JavaScript dialog is open the screen is made that wide, so the whole dialog is on it, and then put back to the
+  viewer's own mode (DESIGN §13). Both are bounded and never raise.
 
 Every argument is built from validated integers, and nothing runs through a shell. xsettingsd opens no
 listener (it is an X client), and if it dies the page falls back to 1x.
@@ -34,6 +37,8 @@ log = logging.getLogger(__name__)
 DPI_PER_SCALE: Final = 96 * 1024  # Xft/DPI is in 1024ths of a dot per inch
 XRANDR_TIMEOUT_SECONDS: Final = 2.0
 RESTORE_SECONDS: Final = 3.0
+FIT_SECONDS: Final = 3.0  # for widen() or narrow() in all
+DIALOG_WIDTH: Final = 500  # Chromium's minimum window width, in DIP: it centres a JavaScript dialog in it
 XSETTINGSD_STOP_SECONDS: Final = 1.0
 MAX_MODES: Final = 16  # of ours on the X server at once: a new one replaces the least recently used
 MAX_PIXELS: Final = (3840, 3200)  # 1920x1600 CSS px at 2x, the most a hello can ask for
@@ -74,6 +79,9 @@ class Screen:
         self._xsettingsd: asyncio.subprocess.Process | None = None
         self._dsf = 1  # what Chromium is told
         self._touched = False  # anything to restore
+        self._wide: str | None = None  # our mode widen() switched to
+        self._narrow: str | None = None  # the classic viewer's mode it switched from
+        self._busy = asyncio.Lock()  # one change at a time
         self.current: tuple[int, int, int] | None = None  # (w, h, dsf) a stream applied; None: the pod's own
 
     async def apply(self, w: int, h: int, dsf: int) -> bool:
@@ -83,13 +91,14 @@ class Screen:
         width, height = w * dsf, h * dsf
         if dsf not in (1, 2) or not (0 < width <= MAX_PIXELS[0] and 0 < height <= MAX_PIXELS[1]):
             raise ValueError(f"no screen of {w}x{h} at {dsf}x")
-        self.current = None  # until it's all done: a failure leaves it to be applied again
-        self._touched = True
-        output = await self._output_name()
-        name = await self._ours(output, width, height)
-        await self._set_scale(dsf)  # DPI first, then the mode, with no wait in between
-        await self._show(output, name)
-        self.current = (w, h, dsf)
+        async with self._busy:
+            self.current = None  # until it's all done: a failure leaves it to be applied again
+            self._touched = True
+            output = await self._output_name()
+            name = await self._ours(output, width, height)
+            await self._set_scale(dsf)  # DPI first, then the mode, with no wait in between
+            await self._show(output, name)
+            self.current = (w, h, dsf)
         return True
 
     @property
@@ -99,11 +108,11 @@ class Screen:
 
     async def restore(self) -> None:
         """The pod's own screen: its launch size at 1x, xsettingsd stopped, our other modes gone. Never raises."""
-        if not self._touched:
+        if not self._touched and self._wide is None:
             return
         restored = False
         try:
-            async with asyncio.timeout(RESTORE_SECONDS):
+            async with asyncio.timeout(RESTORE_SECONDS), self._busy:
                 try:
                     output, name = await self._mode_for(*self._default)
                     await self._set_scale(1)  # as apply(): DPI, then the mode, with no wait in between
@@ -120,6 +129,49 @@ class Screen:
             self._dsf = 1
             self.current = None
             self._touched = not restored  # tried again next time
+            self._wide = self._narrow = None
+
+    async def widen(self) -> None:
+        """Room for a JavaScript dialog on a classic viewer's screen: when it's narrower than DIALOG_WIDTH, the screen
+        at that width and its height, until `narrow()` (KasmVNC scales it into the viewer). A dialog is centred in
+        Chromium's window, which is never narrower, so on a phone it ran off the screen, an alert's only button with
+        it. Called again while widened, it checks the classic viewer hasn't resized the screen since (a phone
+        turned): that viewer's new mode is then the one to go back to. Bounded; never raises."""
+        try:
+            async with asyncio.timeout(FIT_SECONDS), self._busy:
+                shown = await self._query()
+                if self._wide is not None:
+                    if shown.active == self._wide:
+                        return
+                    await self._unwiden(shown)  # the viewer resized the screen since: its new mode counts
+                width, height = shown.size
+                if width >= DIALOG_WIDTH or shown.active is None:
+                    return
+                self._narrow = shown.active
+                self._wide = await self._ours(shown.output, DIALOG_WIDTH, height)
+                await self._show(shown.output, self._wide)
+        except Exception as e:  # noqa: BLE001 - the dialog is there, if only partly on the screen
+            log.warning("Couldn't make room for the checkout's dialog: %s", type(e).__name__)
+
+    async def narrow(self) -> None:
+        """Back to the classic viewer's own mode after `widen()`, unless that viewer has resized the screen since.
+        Bounded; never raises."""
+        try:
+            async with asyncio.timeout(FIT_SECONDS), self._busy:
+                if self._wide is not None:  # else nothing runs
+                    await self._unwiden(await self._query())
+        except Exception as e:  # noqa: BLE001 - left for the next classic viewer's restore
+            log.warning("Couldn't put the classic viewer's screen back: %s", type(e).__name__)
+
+    async def _unwiden(self, shown: _Shown) -> None:
+        wide, narrow = self._wide, self._narrow
+        if shown.active == wide and narrow is not None:
+            await self._show(shown.output, narrow)
+        elif self._showing == wide:
+            self._showing = None  # the classic viewer's own mode is on the screen since
+        if wide is not None and wide in self._modes:
+            await self._remove(shown.output, wide)
+        self._wide = self._narrow = None
 
     async def close(self) -> None:
         """Stop xsettingsd (the agent is exiting)."""

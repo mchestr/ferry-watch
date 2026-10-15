@@ -322,9 +322,17 @@ class Stand:
     """The screen and the dialog keeper, as the gate sees them: they note when they're used."""
 
     log: list[str]
+    narrowing_s: float = 0.0  # how long the classic viewer's screen takes to be put back
 
     async def restore(self) -> None:
         self.log.append("screen restored")
+
+    async def fit_dialogs(self) -> None:
+        try:
+            await asyncio.Event().wait()
+        finally:
+            await asyncio.sleep(self.narrowing_s)
+            self.log.append("classic screen back")
 
     async def keep(self) -> None:
         self.log.append("dialogs kept")
@@ -344,6 +352,7 @@ class CastRig:
     sessions: list[FakeSession]
     allowed: list[bool]
     teardown_s: list[float]
+    stand: Stand
 
     async def connect(self, offered: list[str]) -> aiohttp.ClientWebSocketResponse:
         return await self.client.ws_connect("/ws", protocols=offered, origin=ORIGIN)
@@ -408,7 +417,7 @@ def make_cast_rig(aiohttp_client: Callable[..., Any], tmp_path: Path, **gate_kw:
         )
         client: TestClient = await aiohttp_client(gate.app())
         try:
-            yield CastRig(gate, client, xvnc, viewers, cart, log, sessions, allowed, teardown_s)
+            yield CastRig(gate, client, xvnc, viewers, cart, log, sessions, allowed, teardown_s, stand)
         finally:
             await gate.close("test over")
             await client.close()
@@ -617,6 +626,24 @@ async def test_the_screen_is_restored_only_before_a_classic_viewer(cast_rig: Cas
     await cast_rig.gate.close("hold ended")
     assert cast_rig.log[-1] == "dialogs released"
     assert cast_rig.log.count("screen restored") == 1
+
+
+async def test_a_classic_viewers_screen_is_back_before_the_next_viewer(cast_rig: CastRig) -> None:
+    """While a classic viewer is bridged the screen may be widened for a dialog (stream.ClassicScreen.fit_dialogs):
+    the gate stops that, and waits for the viewer's own screen to be back, before it lets the next viewer in."""
+    cast_rig.stand.narrowing_s = 0.3
+    classic = await cast_rig.connect(protocols(tkt=ticket()))
+    await greeted(classic)
+    assert "classic screen back" not in cast_rig.log
+    cast_rig.clear()
+    stream = await cast_rig.stream(cast_protocols())
+    assert cast_rig.log[:3] == ["classic screen back", "dialogs kept", "session 1 runs"]
+    await stream.close()
+    again = await cast_rig.connect(protocols())
+    await greeted(again)
+    cast_rig.clear()
+    await cast_rig.gate.close("hold ended")
+    assert cast_rig.log == ["classic screen back", "dialogs released"]
 
 
 async def test_once_the_hold_ends_no_reconnect_keeps_dialogs_again(cast_rig: CastRig) -> None:

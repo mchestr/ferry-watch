@@ -95,6 +95,7 @@ ERROR_EVERY_SECONDS: Final = 1.0  # one `error` a second per code
 MAX_MERGED_DELTA: Final = 8000.0
 LOCALE: Final = "en-US"
 UNZOOM_SECONDS: Final = 2.0  # for every page to be pinched back before a classic viewer
+FIT_POLL_SECONDS: Final = 0.5  # how often a classic viewer's screen is looked at while a dialog is open on it
 
 # What the field map waits for (PROTOCOL §5.3.4), once carried out.
 _MAP_AFTER: Final = (Tap, Wheel, Key, Text, Compose, Choose, SetDate, Answer, PageOp, Pinch, Resize)
@@ -138,19 +139,28 @@ class StreamedScreen(Protocol):
         """A stream has changed the screen since it was last restored."""
 
     async def restore(self) -> None: ...
+    async def widen(self) -> None: ...
+    async def narrow(self) -> None: ...
 
 
 class OpenDialogs(Protocol):
     @property
     def open_dialogs(self) -> list[KeptDialog]: ...
 
+    def on_change(self, listener: Callable[[], None]) -> Callable[[], None]: ...
+
 
 class ClassicScreen:
-    """What the gate restores before it bridges a classic (KasmVNC) viewer, after a stream: the pod's own screen
-    (screen.py), and the checkout's pages at page scale 1. A stream's pinch zoom is the stream's: a classic viewer on
-    a phone has no way to pinch the pod's page back, and 0.6.4's never found it zoomed. When no stream has changed
-    the screen since the last classic viewer, nothing is done at all. A page with an open dialog is left as it is:
-    it answers no CDP until the classic viewer has answered the dialog. Bounded; never raises."""
+    """The pod's screen for a classic (KasmVNC) viewer.
+
+    Before the gate bridges one, after a stream, `restore()` puts back the pod's own screen (screen.py) and the
+    checkout's pages at page scale 1. A stream's pinch zoom is the stream's: a classic viewer on a phone has no way to
+    pinch the pod's page back, and 0.6.4's never found it zoomed. When no stream has changed the screen since the
+    last classic viewer, nothing is done at all. A page with an open dialog is left as it is: it answers no CDP until
+    the classic viewer has answered the dialog. Bounded; never raises.
+
+    While one is bridged, `fit_dialogs()` makes room on a phone-sized screen for each JavaScript dialog the keeper
+    leaves open there (DESIGN §13)."""
 
     def __init__(
         self,
@@ -173,6 +183,28 @@ class ClassicScreen:
             except Exception as e:  # noqa: BLE001 - a classic viewer is waiting: it gets the page as it is
                 log.warning("Couldn't zoom the checkout back out: %s", type(e).__name__)
         await self._screen.restore()
+
+    async def fit_dialogs(self) -> None:
+        """While a classic viewer is bridged (the gate runs this until the viewer goes, then cancels it): whenever a
+        JavaScript dialog is open, the screen at least as wide as Chromium's window, so the whole dialog is on it,
+        and the viewer's own screen again once none is. The classic viewer may resize the screen meanwhile (a phone
+        turned), so it's looked at again every FIT_POLL_SECONDS while a dialog is open. Never raises."""
+        changed = asyncio.Event()
+        stop = self._dialogs.on_change(changed.set)
+        try:
+            while True:
+                changed.clear()
+                if self._dialogs.open_dialogs:
+                    await self._screen.widen()
+                    with contextlib.suppress(TimeoutError):
+                        async with asyncio.timeout(FIT_POLL_SECONDS):
+                            await changed.wait()
+                else:
+                    await self._screen.narrow()
+                    await changed.wait()
+        finally:
+            stop()
+            await self._screen.narrow()  # bounded: the next viewer finds the classic viewer's own screen
 
 
 async def _unzoom(context: BrowserContext, page: Page) -> None:

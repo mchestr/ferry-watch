@@ -357,6 +357,87 @@ async def test_a_restore_that_cant_switch_still_removes_our_other_modes(
     assert tools.screen.changed  # to be tried again
 
 
+WIDEN = [
+    "xrandr --query",
+    "xrandr --newmode fw500x664 60 500 500 500 500 664 664 664 664",
+    "xrandr --addmode VNC-0 fw500x664",
+    "xrandr --output VNC-0 --mode fw500x664",
+]
+
+
+async def test_a_dialog_gets_room_on_a_phones_classic_screen_and_gives_it_back(tools: Tools) -> None:
+    tools.kasmvnc(390, 664)  # a classic viewer on a phone: narrower than Chromium's window
+    tools.forget()
+    await tools.screen.widen()
+    assert tools.calls() == WIDEN
+    tools.forget()
+    await tools.screen.widen()  # looked at again while the dialog is open: still widened
+    assert tools.calls() == ["xrandr --query"]
+    tools.forget()
+    await tools.screen.narrow()
+    assert tools.calls() == [
+        "xrandr --query",
+        "xrandr --output VNC-0 --mode 390x664",  # KasmVNC's own, 1:1 on the phone again
+        "xrandr --delmode VNC-0 fw500x664",
+        "xrandr --rmmode fw500x664",
+    ]
+    assert tools.x_server()["current"] == "390x664"
+    assert tools.ours() == []
+    assert not tools.screen.changed
+    tools.forget()
+    await tools.screen.narrow()  # nothing widened
+    await tools.screen.restore()  # and nothing for the next classic viewer to undo
+    assert tools.calls() == []
+
+
+async def test_a_computers_classic_screen_needs_no_room(tools: Tools) -> None:
+    tools.kasmvnc(1280, 800)
+    tools.forget()
+    await tools.screen.widen()
+    await tools.screen.narrow()
+    assert tools.calls() == ["xrandr --query"]
+
+
+async def test_a_phone_turned_while_widened_keeps_its_new_size(tools: Tools) -> None:
+    tools.kasmvnc(390, 664)
+    await tools.screen.widen()
+    tools.kasmvnc(664, 390)  # KasmVNC resized the screen: wide enough for the dialog now
+    tools.forget()
+    await tools.screen.widen()
+    assert tools.calls() == ["xrandr --query", "xrandr --delmode VNC-0 fw500x664", "xrandr --rmmode fw500x664"]
+    tools.kasmvnc(390, 664)  # and back
+    tools.forget()
+    await tools.screen.widen()
+    assert tools.calls() == WIDEN
+    tools.kasmvnc(414, 700)  # another turn of the phone, then the dialog goes
+    tools.forget()
+    await tools.screen.narrow()
+    assert tools.calls() == ["xrandr --query", "xrandr --delmode VNC-0 fw500x664", "xrandr --rmmode fw500x664"]
+    assert tools.x_server()["current"] == "414x700"
+
+
+async def test_room_not_given_back_is_left_for_the_restore(tools: Tools, caplog: pytest.LogCaptureFixture) -> None:
+    tools.kasmvnc(390, 664)
+    await tools.screen.widen()
+    (tools.root / "fail--output").touch()
+    await tools.screen.narrow()
+    assert "Couldn't put the classic viewer's screen back: ScreenError" in caplog.text
+    (tools.root / "fail--output").unlink()
+    tools.forget()
+    await tools.screen.restore()  # before the next classic viewer
+    assert tools.calls() == [
+        "xrandr --query",
+        "xrandr --newmode fw1280x1000 60 1280 1280 1280 1280 1000 1000 1000 1000",
+        "xrandr --addmode VNC-0 fw1280x1000",
+        "xrandr --output VNC-0 --mode fw1280x1000",
+        "xrandr --delmode VNC-0 fw500x664",
+        "xrandr --rmmode fw500x664",
+    ]
+    tools.forget()
+    await tools.screen.narrow()
+    assert tools.calls() == []
+
+
 async def test_a_failed_apply_raises_and_is_tried_again(tools: Tools) -> None:
     (tools.root / "fail").touch()
     with pytest.raises(ScreenError):

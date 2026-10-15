@@ -243,6 +243,21 @@ async def test_the_viewer_answers(context: FakeContext, keeper: DialogKeeper) ->
     assert not await keeper.answer(99, ok=True)
 
 
+async def test_listeners_hear_each_dialog_open_and_go(context: FakeContext, keeper: DialogKeeper) -> None:
+    """What makes room for a dialog on a classic viewer's phone-sized screen (stream.ClassicScreen) listens."""
+    heard: list[int] = []
+    stop = keeper.on_change(lambda: heard.append(len(keeper.open_dialogs)))
+    await context.dialog("alert", "Your session will expire soon")  # no viewer attached: a classic one, say
+    await context.dialog("confirm", "Leave checkout?")
+    context.closed()  # answered on the screen
+    await keeper.dismiss_all()
+    assert heard == [1, 2, 1, 0]
+    stop()
+    await context.dialog("alert", "Again")
+    assert heard == [1, 2, 1, 0]
+    stop()  # twice is fine
+
+
 async def test_our_own_answers_closing_never_takes_another_dialog(context: FakeContext, keeper: DialogKeeper) -> None:
     sink = Sink()
     keeper.attach(sink)

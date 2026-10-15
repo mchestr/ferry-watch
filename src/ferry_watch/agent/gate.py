@@ -21,8 +21,8 @@ stream, the streamed viewer's withdrawal.
 
 Before a classic viewer is bridged the pod's screen is restored, so KasmVNC finds it as 0.6.4 left it. From the
 first viewer of a hold on, JavaScript dialogs are kept for the viewer to answer (a stream in its own sheet, a
-classic viewer on the pod's screen) instead of being dismissed unseen; they're dismissed when the checkout is
-over, access is revoked or the pod drains.
+classic viewer on the pod's screen, made wide enough for the dialog while one is open) instead of being dismissed
+unseen; they're dismissed when the checkout is over, access is revoked or the pod drains.
 """
 
 from __future__ import annotations
@@ -115,6 +115,10 @@ Verdict = Callable[[str, ViewerKind], CloseCode | None]
 class ScreenControl(Protocol):
     async def restore(self) -> None:
         """The pod's own screen back (screen.py). Bounded; never raises."""
+
+    async def fit_dialogs(self) -> None:
+        """While a classic viewer is bridged: room on its screen for each open dialog (stream.ClassicScreen). Runs
+        until cancelled, then puts the viewer's own screen back, bounded. Never raises."""
 
 
 class DialogControl(Protocol):
@@ -294,6 +298,7 @@ class Gate:
         return viewer
 
     async def _serve(self, viewer: _Viewer, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        fitting = asyncio.ensure_future(self._screen.fit_dialogs()) if self._screen is not None else None
         try:
             async with asyncio.timeout(self._max_connection_seconds):
                 await _bridge(viewer.ws, reader, writer)
@@ -303,7 +308,13 @@ class Gate:
             writer.close()
             with contextlib.suppress(OSError):
                 await writer.wait_closed()
+            cancelled = False
+            if fitting is not None:
+                fitting.cancel()
+                cancelled = await _finish(fitting)  # the viewer's own screen back before the next viewer
             self._gone(viewer)
+            if cancelled:
+                raise asyncio.CancelledError
 
     async def _serve_cast(self, viewer: _Viewer, cart_id: str) -> None:
         cap = asyncio.timeout(self._max_connection_seconds)
@@ -435,6 +446,17 @@ class Gate:
             log.info("Checkout viewer disconnected")
             self._viewer_changed(False)
         viewer.done.set()
+
+
+async def _finish(task: asyncio.Future[None]) -> bool:
+    """Wait until `task` is done, however often this one is cancelled meanwhile. True if it was."""
+    cancelled = False
+    while not task.done():
+        try:
+            await asyncio.wait({task})
+        except asyncio.CancelledError:
+            cancelled = True
+    return cancelled
 
 
 def _one(offered: list[str], prefix: str) -> str | None:

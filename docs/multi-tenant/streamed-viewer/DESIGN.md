@@ -606,15 +606,15 @@ C12 (single viewer) holds across kinds: one slot, and the replaced viewer is clo
 |---|---|
 | `src/ferry_watch/agent/cast_protocol.py` (new) | msgspec inbound structs with types only; `check(msg) -> str | None` for the value rules; `typed_text_ok()`; the header `struct.Struct("<BBHIHHffffBBH")`; outbound builders with caps and cleaning (`clean()`, `origin_of()`, `strip_credential_tokens()`); `CloseCode` IntEnum; the rate table; the conformance-pack loader for tests |
 | `src/ferry_watch/agent/cast_scripts.py` (new) | The fixed isolated-world scripts (reference: `round2/cast_scripts.py`) and `call(script, *args) -> str`, which formats the expression from ints/finite floats only |
-| `src/ferry_watch/agent/screen.py` (new) | `Screen.apply(w, h, dsf) -> bool` (no-op when unchanged; DPI then mode), `Screen.restore()` (bounded 3 s, never raises), `Screen.current`, `Screen.changed` (reference: `round2/screen2.py`) |
-| `src/ferry_watch/agent/stream.py` (new) | `CastSession` (opening, inbound, the worker, the ticker, outbound with the verdict, teardown); `InboundQueue` (coalescing, bound 64); `RateLimiter`; `CastPod` and `factory()` for the gate; `ClassicScreen`, the gate's restore before a classic viewer (pages back to scale 1, then `Screen.restore()`) |
+| `src/ferry_watch/agent/screen.py` (new) | `Screen.apply(w, h, dsf) -> bool` (no-op when unchanged; DPI then mode), `Screen.restore()` (bounded 3 s, never raises), `Screen.current`, `Screen.changed` (reference: `round2/screen2.py`); `Screen.widen()`/`narrow()`, room for a dialog on a classic viewer's phone-sized screen (§13) |
+| `src/ferry_watch/agent/stream.py` (new) | `CastSession` (opening, inbound, the worker, the ticker, outbound with the verdict, teardown); `InboundQueue` (coalescing, bound 64); `RateLimiter`; `CastPod` and `factory()` for the gate; `ClassicScreen`, the gate's restore before a classic viewer (pages back to scale 1, then `Screen.restore()`), and `fit_dialogs()` while one is bridged (§13) |
 | `src/ferry_watch/agent/cast_cdp.py` (new) | `Cdp` (the allowlist wrapper, C34; every call bounded to 2 s); `Worlds` (per-frame worlds, out-of-process frames' own sessions, the owner chain, invalidation on `framenavigated`/`framedetached`); `open_session()`, the one way the agent opens a CDP session: Playwright makes a session even when nobody waits for it any more (a cancelled task, a bound run out), so such a late one is detached as soon as it's there (found in review: each stream session cancelled while opening left one attached for the page's life) |
 | `src/ferry_watch/agent/cast_frames.py` (new) | `FramePump` (live/still/paused, seeding, window, repeat cache) |
 | `src/ferry_watch/agent/cast_pages.py` (new) | `PageList` (ids, at most 8 listed, one CDP session each, titles from `Target.getTargetInfo`) |
 | `src/ferry_watch/agent/cast_fields.py` (new) | `frame_rect()` (PROTOCOL §5.3.3); `FieldMapper` (schedule, assembly, `fields`/`fields_ok`, the 2 revisions held); `FocusReporter` |
 | `src/ferry_watch/agent/cast_input.py` (new) | `InputMapper` (tap staleness, move, wheel, pinch, keys with held-key tracking, text, compose, `choose`/`date`); `ImageRing` (the metadata of the last 16 images) |
-| `src/ferry_watch/agent/dialogs.py` (new) | `DialogKeeper`: `keep()` registers Playwright's context dialog listener when the gate admits the first viewer of either kind, and opens a CDP session with `Page.enable` on each page of the context (in the background: `Page.enable` doesn't return while a dialog is open on that page, measured), which gives each dialog its frame's URL (`Page.javascriptDialogOpening`, matched to Playwright's dialog by page, type and message) and says when one closes without us (`Page.javascriptDialogClosed`: answered on the screen, or navigated away); keeps open dialogs across sessions and kinds; `attach(sink)` returns the open ones with the session's ids and reports later ones (`dialog_opened`, `dialog_closed`); `detach(sink)`; `answer(id, ok, text)`; `dismiss_all()`; `release()` (unregister, dismiss all, back to Playwright's auto-dismiss) |
-| `src/ferry_watch/agent/gate.py` | Subprotocol routing; `cast_allowed` admission; session pacing; `_Viewer.kind`/`close_code`; `close(reason, code)`; the `cast` factory; the connection cap; uncancellable teardown before `_gone`; `dialogs.keep()` at every admission; before a `binary` bridge, `screen.restore()` |
+| `src/ferry_watch/agent/dialogs.py` (new) | `DialogKeeper`: `keep()` registers Playwright's context dialog listener when the gate admits the first viewer of either kind, and opens a CDP session with `Page.enable` on each page of the context (in the background: `Page.enable` doesn't return while a dialog is open on that page, measured), which gives each dialog its frame's URL (`Page.javascriptDialogOpening`, matched to Playwright's dialog by page, type and message) and says when one closes without us (`Page.javascriptDialogClosed`: answered on the screen, or navigated away); keeps open dialogs across sessions and kinds; `attach(sink)` returns the open ones with the session's ids and reports later ones (`dialog_opened`, `dialog_closed`); `detach(sink)`; `answer(id, ok, text)`; `dismiss_all()`; `release()` (unregister, dismiss all, back to Playwright's auto-dismiss); `on_change(listener)` (a dialog opened or went) |
+| `src/ferry_watch/agent/gate.py` | Subprotocol routing; `cast_allowed` admission; session pacing; `_Viewer.kind`/`close_code`; `close(reason, code)`; the `cast` factory; the connection cap; uncancellable teardown before `_gone`; `dialogs.keep()` at every admission; before a `binary` bridge, `screen.restore()`; while it's bridged, `screen.fit_dialogs()`, stopped and finished before the viewer counts as gone |
 | `src/ferry_watch/agent/watch.py` | `checkout_target()`; `clock_info()`; `viewer_verdict(cart_id, kind) -> CloseCode | None` (§6.2); `close_viewer(reason, code)`; the hold-service step closes a cast viewer with 4005 when `cast_allowed` turns false |
 | `src/ferry_watch/protocol.py` | `Configure.cast_allowed: bool = False` (the operator sends it only to agents ≥ 0.7.0, §8.3) |
 | `src/ferry_watch/bcferries/site.py` | `SiteSession.context` and `.page` read-only properties (nothing else changes) |
@@ -655,7 +655,9 @@ class CloseCode(IntEnum):  # in cast_protocol.py
     `_serve_cast(viewer, cart_id)`.
 - **`_upgrade`, rfb branch.** Inside the swap, after `_disconnect(old)`: `await self._dialogs.keep()`, then
   `await self._screen.restore()` (both bounded; the restore is a no-op when no stream ever ran; as built it also
-  pinches zoomed pages back to scale 1, §4.1), then today's code.
+  pinches zoomed pages back to scale 1, §4.1), then today's code. While the bridge runs, `screen.fit_dialogs()`
+  makes room for dialogs on a phone-sized screen; when the bridge ends it is cancelled and waited for (it puts the
+  viewer's own screen back, bounded) before `_gone`, so the next viewer finds the screen as the classic one had it.
   The cast branch calls `keep()` too: dialogs are kept from the first viewer of either kind (§13).
 - **`_serve_cast`.**
   - `asyncio.wait_for(session.run(), MAX_CONNECTION_SECONDS)`. A timeout closes 4004; an exception closes 4500,
@@ -1073,7 +1075,7 @@ The vnc-edge **Dockerfile** is unchanged.
 | `tests/test_cast_cdp.py` (new) | `call()`/`script_of()` refuse anything but numbers; every method and parameter shape outside C34 refused before sending (`Runtime.evaluate` without a world it made, without `returnByValue` or the 100 ms timeout, or of any other expression; `callFunctionOn` but `STORE_OWNER` on a resolved owner; right/middle buttons, modifiers but Shift/Ctrl, touch); errors name the method only; worlds for in-process and out-of-process frames, owners kept once, dropped on navigation and after a failed call; depth and count limits |
 | `tests/test_screen.py` (new) | Fake `xrandr`/`xsettingsd` on `PATH`: mode names, DPI file and mode, SIGHUP on change; **apply twice with the same size runs nothing the second time**; DPI before mode; restore deletes the modes, kills a hung `xrandr` within 3 s, never raises; any number of sizes with ≤ 16 modes at once, the least recently used making room |
 | `tests/test_dialogs.py` (new) | Keeper: dialogs kept across `detach`/`attach`, ids per session, origin matched per page (either event first; "" after 0.5 s), a dialog answered on the screen or on a closed page goes (`dialog_closed`), our own answer's closing never takes another dialog, `keep()` doesn't wait for `Page.enable`, `dismiss_all`, `release` unregisters (a new dialog is auto-dismissed again), answers never logged |
-| `tests/browser/test_checkout_dialogs.py` (new) | The classic viewer on the real pod screen: without a viewer a dialog is dismissed as in 0.6.4; with one, a confirm shows on KasmVNC's canvas and OK clicked over VNC returns true; a prompt typed into returns the text; a dialog survives a reconnect and is dismissed by `gate.close`; an iframe's dialog; a phone taps OK |
+| `tests/browser/test_checkout_dialogs.py` (new) | The classic viewer on the real pod screen: without a viewer a dialog is dismissed as in 0.6.4; with one, a confirm shows on KasmVNC's canvas and OK clicked over VNC returns true; a prompt typed into returns the text; a dialog survives a reconnect and is dismissed by `gate.close`; an iframe's dialog; on a phone, the whole confirm, alert and prompt are on the canvas and a tap on OK answers each |
 | `tests/test_watch.py` (extend) | `viewer_verdict` order and codes; a cast viewer closed with 4005 when `cast_allowed` turns false |
 | `tests/test_protocol.py` (extend) | `Configure.cast_allowed` default false; a 0.6.4-shaped configure decodes |
 | `tests/test_hub.py` (C) | `cast_allowed` per `offered(owner)` and `user_active`; dropped for a peer with `agent_version` 0.6.4; included for 0.7.0; a `streamViewer` change pushes a new configure |
@@ -1344,9 +1346,19 @@ Any disagreement between A and B is fixed in PROTOCOL.md and the pack first, the
   into returns the text, a dialog survives a reconnect and is dismissed at hold end). Two things seen on the real
   screen: Chromium ignores a click that comes within about half a second of a dialog appearing (its guard against
   stray clicks), and on a phone-sized screen (390 CSS px) the dialog, 450 px wide and centred in Chromium's
-  500-DIP minimum window, runs off the right edge: Cancel is whole, OK shows only its left part (a tap there
-  works, and so do Enter and Escape on the keyboard). That is the classic viewer's existing 500-DIP overhang
-  (§4.2), not new.
+  500-DIP minimum window, runs off the right edge (the classic viewer's existing 500-DIP overhang, §4.2): Cancel
+  is whole, OK shows only its left part, an alert's only button a 20 px sliver, and a prompt's input is cut off.
+  Found in review to be more than a phone user can be expected to answer, so it is fixed: while a classic viewer
+  is bridged and a dialog is open, a screen narrower than 500 px is widened to 500 x its height with one RandR mode
+  (`Screen.widen()`, run by `stream.ClassicScreen.fit_dialogs()`, which the gate runs while it bridges a classic
+  viewer). KasmVNC scales the frame into the phone (letterboxed) and the whole dialog is on it; the viewer's own
+  mode comes back once no dialog is open (`Screen.narrow()`), unless the viewer has resized the screen since (a
+  phone turned; the screen is looked at twice a second while a dialog is open). The page can't run while its
+  dialog is open; once it's answered it sees one resize to 500 and back, about 40 ms apart (measured), so a page
+  that swaps its layout between 390 and 500 px would lay out twice. Desktops (500 px or wider) see nothing. The
+  gate waits for the viewer's own screen to be back before the next viewer. Tested on the real screen in
+  `test_checkout_dialogs.py` (confirm, alert and prompt: the whole dialog inside the canvas, OK answered by a tap,
+  and 390x664 at DPR 1 again).
 - **Unbounded `prompt()` defaults (0.6.4 and later).** The default text of a page's `prompt()` reaches Playwright's
   Node driver unbounded (20 M characters measured, `round2/s2_bounds.py`). With a stream connected it also reaches
   the Python agent. Neither can be bounded below Playwright. A fix needs Playwright upstream (a size cap on dialog
