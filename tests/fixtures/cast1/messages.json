@@ -540,7 +540,16 @@
     {"id": "offer-cast-twice", "sec": "2.2",
      "offered": ["fw.cast1", "fw.cast1", "fw.n1.Q2hlY2tvdXROb25jZUZvclRlc3Rz"], "cast_allowed": true, "result": 400},
     {"id": "offer-cast-any-order", "sec": "2.2", "offered": ["fw.n1.Q2hlY2tvdXROb25jZUZvclRlc3Rz", "fw.cast1"],
-     "cast_allowed": true, "result": "fw.cast1"}
+     "cast_allowed": true, "result": "fw.cast1"},
+    {"id": "offer-cast-another-nonce", "sec": "2.2", "offered": ["fw.cast1", "fw.n1.QW5vdGhlckRldmljZXNOb25jZQ"],
+     "cast_allowed": true, "result": 403, "note": "another device: a failed attempt, as for binary"},
+    {"id": "offer-cast-withdrawn-another-nonce", "sec": "2.2",
+     "offered": ["fw.cast1", "fw.n1.QW5vdGhlckRldmljZXNOb25jZQ"], "cast_allowed": false, "result": 403,
+     "note": "the kill switch is asked only after the nonce: nobody else can tell whether it is on"},
+    {"id": "offer-cast-withdrawn-no-nonce", "sec": "2.2", "offered": ["fw.cast1"], "cast_allowed": false,
+     "result": 403, "note": "the kill switch is asked only after the nonce"},
+    {"id": "offer-binary-another-nonce", "sec": "2.2", "offered": ["binary", "fw.n1.QW5vdGhlckRldmljZXNOb25jZQ"],
+     "cast_allowed": true, "result": 403}
   ],
   "viewer_offers": [
     {"id": "viewer-offer-first-open", "sec": "2.1", "record": {"n": "Q2hlY2tvdXROb25jZUZvclRlc3Rz", "opened": false},

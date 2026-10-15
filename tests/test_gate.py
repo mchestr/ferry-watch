@@ -466,6 +466,24 @@ async def test_a_withdrawn_stream_is_refused_but_never_counts_as_a_failure(cast_
     await ws.close()
 
 
+@pytest.mark.parametrize("allowed", [True, False], ids=["allowed", "withdrawn"])
+async def test_nobody_without_the_nonce_or_a_ticket_can_tell_whether_a_stream_is_allowed(
+    cast_rig: CastRig, allowed: bool
+) -> None:
+    """The kill switch is asked only after the device's nonce or a good ticket: anyone else who knows the path gets
+    the same refusal as a classic viewer would, so it says nothing about the switch, nor (under "admins") about
+    whether the owner is an admin."""
+    cast_rig.allowed[0] = allowed
+    assert await cast_rig.refused(["fw.cast1"]) == 403  # no nonce
+    assert await cast_rig.refused(cast_protocols(nonce="m" * 32)) == 403  # a nonce, no ticket, nothing locked yet
+    assert await cast_rig.refused(cast_protocols(nonce="m" * 32, tkt=ticket(sub="someone-else"))) == 403
+    first = await cast_rig.connect(protocols(tkt=ticket()))  # the owner's device takes the lock
+    assert await greeted(first) == GREETING
+    assert await cast_rig.refused(cast_protocols(nonce="m" * 32)) == 403  # another device
+    assert cast_rig.sessions == []
+    await first.close()
+
+
 async def test_without_a_stream_factory_fw_cast1_is_refused(rig: Rig) -> None:
     assert await rig.refused(cast_protocols(tkt=ticket())) == 400
     ws = await rig.connect(protocols(tkt=ticket()))  # and it wasn't counted

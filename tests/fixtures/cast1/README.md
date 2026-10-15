@@ -82,9 +82,9 @@ refuse any other. The viewer never needs `state` or `context`: cases whose outco
 
 | Field | Type | Meaning |
 |---|---|---|
-| `offered` | array of strings | the offered subprotocols, with an otherwise admissible upgrade (Origin, cart, nonce and lock as in 0.6.4) |
+| `offered` | array of strings | the offered subprotocols, with an otherwise admissible upgrade (Origin and cart as in 0.6.4). The cart's lock is already held by the nonce `Q2hlY2tvdXROb25jZUZvclRlc3Rz`: an offer with it is that device's reconnect, and one with another nonce, or none, is a failed attempt |
 | `cast_allowed` | boolean | the latest `configure`'s kill switch |
-| `result` | string or integer | the selected subprotocol, or the refusal's HTTP status |
+| `result` | string or integer | the selected subprotocol, or the refusal's HTTP status (400, 403) |
 
 ### `viewer_offers` (viewer)
 

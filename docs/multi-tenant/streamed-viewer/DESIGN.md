@@ -646,7 +646,11 @@ class CloseCode(IntEnum):  # in cast_protocol.py
   - After the Origin and cart checks: `kinds = [p for p in offered if p in ("binary", "fw.cast1")]`;
     `len(kinds) != 1` → `Refused(400)`.
   - For `fw.cast1` with `verdict(cart_id, "cast") == WITHDRAWN` → `Refused(400)`, not counted in
-    `self._failures`.
+    `self._failures`. Asked only after the nonce and ticket checks have let the caller in (a reconnect's nonce
+    matches the lock; a first connect's ticket verified and names this pod, trip, owner and cart, with an unused
+    `jti`), and before the `jti` is recorded or the lock taken. Found in review: asked first, its 400 against
+    everyone else's 403 told anyone who knew a checkout's path, with no ticket or nonce and unmetered, whether the
+    switch was on, and under `admins` whether the trip's owner is an admin.
   - Build the `WebSocketResponse` with `protocols=(kind,)` and `max_msg_size` 4096 for cast, else 256 KiB.
   - Return `kind` too. Everything else is as built (prototype `proto/gate_cast.py`).
 - **`_upgrade`, cast branch.**
@@ -1459,7 +1463,7 @@ Verdicts:
 | S3 | Proxy mirrors password fields and credential tokens; prompt sheet looks like Ferry Watch (major) | **Holds** (not device-verified; the browser behaviour cited is documented) | KasmVNC's own hidden input is a plain `textarea`, so `type=text` is parity; iframe dialog origin available only with `Page.enable` (`round2/out/s2b-cost-dialog.json`) | Proxy never `type=password`; credential tokens stripped by agent and viewer; password fields get KasmVNC's attributes; `dialog.origin` from the opening frame, the Chrome-style heading, a sheet styled as page content; a device check in §11 (final integration item 4). PROTOCOL §5.3.1, §5.5, §8.5, §8.8; C41 |
 | S4 | Every reconnect: 5 resizes, 4 layouts, restore on the hold-end path (major) | **Holds** | Reproduced; fixed: same-device reconnect 0 resizes; 96/96 transitions monotone; restore 44 ms, only before binary (`round2/out/s4*.json`) | No-op apply, DPI then mode, lazy restore only before a `binary` bridge (bounded 3 s, killing hung `xrandr`), never at hold end or drain, cast sessions paced at 1/s, dialogs kept across reconnects. Fingerprint table corrected. PROTOCOL §2.2 step 7, §2.3, §3.2, §3.5; DESIGN §4.1, §4.2 |
 | S5 | Desktop: no pointer movement or hover, 4 ms dwell (minor) | **Holds** | Fixed and measured: 15 moves + mouseenter, 99 ms press, real key dwells with Shift and rollover (`round2/out/s8-desktop.json`) | `move`, `tap.ms`, `key.ph` with `Shift`; phones unchanged. PROTOCOL §6.4, §6.5, §6.9, §8.4; DESIGN §4.2 desktop column |
-| S6 | Kill switch and rollback leave `fw.cast1` open on running pods for 26 h (minor) | **Holds, partly** | `Configure` is `forbid_unknown_fields` on 0.6.x agents, so the field must be sent only to ≥ 0.7.0 peers | `cast_allowed` in `configure` (default false, so a rollback also closes streams), gate refusal and 4005. The proposed `cast` ticket claim is not adopted: the opt-in is a preference, not an authorization boundary (DESIGN §8.3). PROTOCOL §2.2 step 4, §3.6; C42 |
+| S6 | Kill switch and rollback leave `fw.cast1` open on running pods for 26 h (minor) | **Holds, partly** | `Configure` is `forbid_unknown_fields` on 0.6.x agents, so the field must be sent only to ≥ 0.7.0 peers | `cast_allowed` in `configure` (default false, so a rollback also closes streams), gate refusal and 4005. The proposed `cast` ticket claim is not adopted: the opt-in is a preference, not an authorization boundary (DESIGN §8.3). PROTOCOL §2.2 step 5, §3.6; C42 |
 | S7 | Only input is re-checked; images keep flowing to an ack-only viewer (minor) | **Holds** | Design inspection (`checkout_cart()` turns None on the clock independently of the loop) | `verdict()` before every input and output and every second, reading `release_due` on the clock; test with a frozen watch loop. PROTOCOL §7.2; C35; DESIGN §6.2 |
 
 ### Feasibility review

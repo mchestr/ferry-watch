@@ -77,12 +77,17 @@ The gate runs its 0.6.4 admission unchanged, with the rules marked **new**:
 2. A READY cart with every hold clock running, lockdown passed, not draining, `vnc_allowed`; else **409**.
 3. **new:** the offered list MUST contain exactly one of `binary` and `fw.cast1`; else **400**. (Offering both, or
    neither, or an unknown `fw.cast2`, is refused.) It MUST be a WebSocket upgrade; else **400**.
-4. **new:** for `fw.cast1`, the operator's latest `configure` MUST have `cast_allowed: true` (the streamed viewer's
-   kill switch, DESIGN §8.3); else **400**. This refusal is not counted as a failed attempt.
-5. Nonce, then first connect (ticket, `jti`, lock = `sha256(N)`) or reconnect (`sha256(N)` equals the lock):
+4. Nonce, then first connect (ticket, `jti`, lock = `sha256(N)`) or reconnect (`sha256(N)` equals the lock):
    unchanged, including the 5-failures-a-minute limit (**403**/**429**). Tickets are never accepted once the lock is
    set, whichever subprotocol set it: a `fw.cast1` first connect and a `binary` reconnect (or the reverse) share
    one lock.
+5. **new:** for `fw.cast1`, the operator's latest `configure` MUST have `cast_allowed: true` (the streamed viewer's
+   kill switch, DESIGN §8.3); else **400**. The gate asks only once step 4 has let the caller in (the device's
+   nonce matches the lock, or a first connect's ticket verified and names this pod, trip, owner and cart, with an
+   unused `jti`): an upgrade that fails step 4 gets its **403** whatever the switch says, so nobody without the
+   nonce or a ticket can tell whether it is on (nor, under `admins`, whether the owner is an admin). This refusal
+   is not counted as a failed attempt, and a first connect refused here neither spends its ticket nor takes the
+   lock: the classic viewer can still open with them.
 6. The response selects the offered one of `binary`/`fw.cast1` as `Sec-WebSocket-Protocol`.
 7. **new:** a `fw.cast1` connection whose admission completes less than **1 s** after the previous `fw.cast1`
    session started waits, inside the gate, until 1 s has passed, then proceeds. Nothing is refused or counted.
@@ -207,7 +212,7 @@ The agent closes with these codes. The viewer's required behaviour is in the las
 | 4002 | Revoked: checkout access withdrawn (`vnc_revoke`, suspension, `vnc_allowed` false, lockdown failed) | stop; show that checkout access was withdrawn; no reconnect |
 | 4003 | Draining: the pod is shutting down | stop; show "This checkout has ended"; no reconnect |
 | 4004 | Connection time cap (6000 s) reached | stop; no reconnect |
-| 4005 | The streamed viewer was withdrawn (the kill switch, §2.2 step 4) | switch to the classic viewer at once, as "Use the classic viewer" does (§8.10) |
+| 4005 | The streamed viewer was withdrawn (the kill switch, §2.2 step 5) | switch to the classic viewer at once, as "Use the classic viewer" does (§8.10) |
 | 4400 | Protocol violation: a structurally malformed or unexpected message (§6) | reconnect once after 1 s; on a second 4400 in this page's life, stop and offer the classic viewer |
 | 4408 | No `hello` within 5 s | reconnect with backoff |
 | 4429 | The queue limit (§3.4), the drop limit or the overall rate (§7.1) was exceeded | reconnect after 2 s |

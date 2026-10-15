@@ -14,7 +14,8 @@ Xvnc's unix socket (Xvnc has no network listener at all). Every upgrade must pas
 
 The upgrade offers exactly one of two kinds of viewer, and the response selects it: ``binary``, KasmVNC's RFB
 bridged to Xvnc (the classic viewer), or ``fw.cast1``, the streamed viewer (docs/multi-tenant/streamed-viewer/
-PROTOCOL.md), which runs a stream session instead and is admitted only while the operator allows it. Both share
+PROTOCOL.md), which runs a stream session instead and is admitted only while the operator allows it (asked only
+after step 3, so nobody without the nonce or a ticket can learn the answer). Both share
 the admission above, the lock, the one viewer slot (a reconnect of either kind replaces the other), the viewer
 seconds and a 6000 s connection cap. The agent closes the gate on release, expiry, revocation, drain and, for a
 stream, the streamed viewer's withdrawal.
@@ -360,7 +361,7 @@ class Gate:
         if cart_id is None:
             raise Refused(409, "no checkout open")
         offered = [p.strip() for p in request.headers.get("Sec-WebSocket-Protocol", "").split(",")]
-        ws, kind = self._socket(request, offered, cart_id)
+        ws, kind = self._socket(request, offered)
 
         nonce = _one(offered, NONCE_PREFIX)
         if nonce is None or not _NONCE.fullmatch(nonce):
@@ -371,6 +372,7 @@ class Gate:
         if lock is not None:
             if not hmac.compare_digest(lock.digest, digest):
                 raise self._failed("wrong nonce for a claimed checkout")
+            self._check_allowed(kind, cart_id)
             return ws, cart_id, True, kind
 
         self._check_rate()
@@ -390,14 +392,13 @@ class Gate:
             raise self._failed("ticket is for another user, pod or cart")
         if claims.jti in self._used:
             raise self._failed("ticket already used")
+        self._check_allowed(kind, cart_id)  # a refused stream spends no ticket: the classic viewer can still use it
         self._used.add(claims.jti)
         self._lock = _Lock(cart_id, digest)
         return ws, cart_id, False, kind
 
-    def _socket(
-        self, request: web.Request, offered: list[str], cart_id: str
-    ) -> tuple[web.WebSocketResponse, ViewerKind]:
-        """The one kind of viewer offered, and the socket for it. A stream needs the operator's leave."""
+    def _socket(self, request: web.Request, offered: list[str]) -> tuple[web.WebSocketResponse, ViewerKind]:
+        """The one kind of viewer offered, and the socket for it."""
         kinds = [p for p in offered if p in _KINDS]
         if len(kinds) != 1:
             raise Refused(400, "offer exactly one of binary and fw.cast1")
@@ -413,9 +414,14 @@ class Gate:
         ready = ws.can_prepare(request)
         if not ready.ok or ready.protocol != protocol:
             raise Refused(400, "not a WebSocket upgrade")
-        if kind == "cast" and (self._cast is None or self._cast_verdict(cart_id) is CloseCode.WITHDRAWN):
-            raise Refused(400, "the streamed viewer isn't allowed")  # the kill switch: not a failed attempt
         return ws, kind
+
+    def _check_allowed(self, kind: ViewerKind, cart_id: str) -> None:
+        """A stream needs the operator's leave (the kill switch). Asked only once the caller has shown the device's
+        nonce or a good ticket: anyone else gets the same refusal whatever the switch says, so it can't be read from
+        outside, nor whether the owner is offered the beta. Not a failed attempt."""
+        if kind == "cast" and (self._cast is None or self._cast_verdict(cart_id) is CloseCode.WITHDRAWN):
+            raise Refused(400, "the streamed viewer isn't allowed")
 
     def _check_rate(self) -> None:
         now = self._monotonic()

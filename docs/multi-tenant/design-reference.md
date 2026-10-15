@@ -942,7 +942,10 @@ hh:mm (paused while you're on the payment page)" and the hard deadline.
      Xvnc's WebSocket on `127.0.0.1:6081` behind a per-boot BasicAuth credential that only the gate knows, with
      self-tests 2-3 (§5.6) as blocking checks.
    - **`fw.cast1`** (the streamed viewer, 0.7.0 beta, for users who opted in): only while the operator's
-     `configure` says `cast_allowed` (C42; otherwise 400, not counted as a failed attempt). Nothing is bridged:
+     `configure` says `cast_allowed` (C42; otherwise 400, not counted as a failed attempt, and neither spending the
+     ticket nor taking the lock). The gate refuses an offer of neither or both kinds (400) before step 3, but asks
+     the kill switch only after step 3 has let the caller in: anyone else gets step 3's 403 whatever the switch
+     says, so it can't be read from outside, nor (under `admins`) whether the owner is an admin. Nothing is bridged:
      the agent runs a stream session on the socket itself, sending JPEG images of the checkout page and taking a
      narrow, validated input protocol (4 KiB frames, C33; `streamed-viewer/PROTOCOL.md`), which it carries out
      through an allowlisted CDP wrapper (C34) and authorizes again before every input and every output (C35).

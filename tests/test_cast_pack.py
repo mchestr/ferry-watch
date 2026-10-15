@@ -126,7 +126,7 @@ SCHEMAS: dict[str, dict[str, dict[str, Check]]] = {
             "outcome": one_of("ok", "invalid", "close"),
             "code?": one_of(4400, 1009),
         },
-        "offers": {"offered": list_of(text), "cast_allowed": boolean, "result": one_of("binary", "fw.cast1", 400)},
+        "offers": {"offered": list_of(text), "cast_allowed": boolean, "result": one_of("binary", "fw.cast1", 400, 403)},
         "viewer_offers": {
             "record": nullable(obj),
             "ticket": nullable(obj),
