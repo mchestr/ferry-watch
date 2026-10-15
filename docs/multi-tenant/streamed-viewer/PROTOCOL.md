@@ -279,12 +279,15 @@ normative for the agent because the CPU budget and the first-image rule depend o
 
 | Mode | Source | Rate | Enters when |
 |---|---|---|---|
-| **live** | `Page.startScreencast` (JPEG q50, `everyNthFrame` 2), every Chromium frame acked at once | at most **15** binary messages a second | the session starts; any viewer message other than `ack` while **still**; `visible: true`; **still** saw 4 unchanged captures in a row |
+| **live** | `Page.startScreencast` (JPEG q50, `everyNthFrame` 1), every Chromium frame acked at once | at most **15** binary messages a second | the session starts; any viewer message other than `ack` while **still**; `visible: true`; **still** saw 4 unchanged captures in a row |
 | **still** | every 500 ms: `Page.getLayoutMetrics`, then `Page.captureScreenshot` (JPEG q50, at most 1 s, else skipped); sent only when its bytes or its metadata differ from the last image sent | at most **2** a second | **live**, no viewer message other than `ack` for 1 s, and Chromium delivered at least 8 frames in that second (an animated page) |
 | **paused** | none | 0 | `visible: false` |
 
 - On entering **live** from **still** because of a viewer message, the agent restarts the screencast before it
   carries out that message.
+- `everyNthFrame` is 1. With 2, Chromium can skip the last frame of a change and then, the page being still, send
+  nothing more: on the pod screen a single wheel step left the viewer showing the page as it was before the step
+  (DESIGN §13). An unchanged frame costs 32 bytes on the wire (kind 2).
 - A screenshot-based image's metadata: `w`, `h` as the page's latest screencast frame (or `innerWidth`/
   `innerHeight` if it has none), `scale`, `sx`, `sy` from `Page.getLayoutMetrics` `cssVisualViewport` (`scale`,
   `pageX`, `pageY`), `top` 0.
@@ -467,15 +470,21 @@ number field advancing to the expiry.
 
 - `seq`, `n`: as in §5.3.1, for the evaluation behind this report.
 - `f` is a field object as in §5.3.1 without `id` (with `nopt`/`opts`/`sel`/`trunc` for a select, `v` for a
-  date/time), or `null` when nothing editable has focus. The innermost focused frame's element is reported (a
-  frame's focused element being an `IFRAME` means "look inside").
+  date/time), or `null` when nothing editable has focus, or when nothing of the focused element can be clicked
+  (its `m` would be 0: scrolled out of view or covered; as in the map, no field is sent with `m` = 0). The innermost
+  focused frame's element is reported (a frame's focused element being an `IFRAME` means "look inside").
 - `popup` is true when the message just carried out was a `tap` whose point lies inside the now-focused element and
   that element is a `<select>`: the agent's own click opened its list in the pod, which is never in the images. The
   viewer MUST then show its own option picker built from `opts` (§8.6).
 
 ### 5.5 `dialog`
 
-A JavaScript dialog on any page of the checkout. The page is blocked until it is answered.
+A JavaScript dialog on any page of the checkout. The page is blocked until it is answered: it can't be captured
+and answers almost no CDP (DESIGN §13). While a dialog is open on the front page, the agent sends that page
+nothing: a `tap`, `pinch`, `key`, `text`, `compose`, `choose` or `date` is answered `error stale` (§5.7), a `move`
+or `wheel` is ignored, and no image, `fields`, `fields_ok` or `focus` comes from it until the last of its dialogs
+is answered or closed. Then a screenshot-based image follows at once (with flag bit 0 set if it is the session's
+first, §3.2), and images, the map and input resume.
 
 ```json
 {"t": "dialog", "id": 3, "page": 1, "kind": "confirm", "origin": "https://pay.example", "msg": "Leave checkout?", "def": ""}
@@ -514,7 +523,7 @@ fatal.
 | `code` | Meaning |
 |---|---|
 | `invalid` | A value broke a rule of §6 (out of range, too long, not typed text, a bad key combination). The message was dropped |
-| `stale` | It named a page that isn't the front page; an image the agent no longer remembers, or one that no longer matches the page (§6.4); a field-map `rev` the agent no longer holds (it keeps the latest 2); or a field that is gone, changed, or covered at the moment of acting (§6.11). **Nothing was sent to the page** |
+| `stale` | It named a page that isn't the front page; it was input while a dialog blocks the front page (§5.5); an image the agent no longer remembers, or one that no longer matches the page (§6.4); a field-map `rev` the agent no longer holds (it keeps the latest 2); or a field that is gone, changed, or covered at the moment of acting (§6.11). **Nothing was sent to the page** |
 | `failed` | The agent acted and the page didn't take it (e.g. the select didn't change, or the field didn't get focus) |
 | `rate` | Dropped by a rate limit (§7.1) |
 | `unsupported` | e.g. `date` on a pod whose browser locale isn't en-US |

@@ -88,7 +88,7 @@ before anything reaches the agent.
 | Input to image inside the pod, isolated wheels, p50 | 47 ms |
 | Input to image inside the pod, continuous 60-120 Hz gesture (coalesced), p50 (p90) | 114-137 ms (173-217) |
 | Chromium memory while streaming at 2x | +54 MB (423 vs 369 MB PSS) |
-| Chromium CPU while scrolling continuously (`everyNthFrame` 2) | about 1 core (100-106%) |
+| Chromium CPU while scrolling continuously (`everyNthFrame` 1; 2 measured 100-106% but loses a change's last frame, §13) | about 1.25 cores (125-128%) |
 | Chromium CPU on an animated page, no input | 19% in still mode (143% with the screencast running) |
 | Field map per evaluation (main page + card iframe), at most 4 a second | 14.7 ms p50 agent wall time; ≤ 48 KiB per frame |
 | The agent's own CPU while streaming | 9% |
@@ -423,7 +423,7 @@ the pod "is this a field?" during `touchend`, so it must already know.
 ### 4.5 Frame pipeline
 
 **Live mode parameters.**
-- `Page.startScreencast {format: jpeg, quality: 50, everyNthFrame: 2}`, every Chromium frame acked at once.
+- `Page.startScreencast {format: jpeg, quality: 50, everyNthFrame: 1}`, every Chromium frame acked at once.
 - At most 15 images a second forwarded, at most 2 un-acked by the viewer (newest wins), and a 2-slot repeat cache
   keyed by SHA-256.
 - The screencast needs no `Page.enable` (`round2/s2_bounds.py`). Page is enabled only by the dialog keeper, on its
@@ -439,8 +439,9 @@ the pod "is this a field?" during `touchend`, so it must already know.
 | LTE | 15 | 3 | 13.0 | 8.9 | 84 | 142 ms (177) |
 | 3 Mbit/s, 120 ms RTT | 15 | 2 | 4.3 | 2.9 | 82 | 329 ms |
 
-`everyNthFrame` 2 saves about a quarter of a core against 1 (100-106% vs 125-128% while scrolling), at no typical
-latency cost.
+`everyNthFrame` 2 would save about a quarter of a core against 1 (100-106% vs 125-128% while scrolling), at no
+typical latency cost, but it can drop the last frame of a change, which a still page then never replaces (§13). The
+agent uses 1.
 
 **Round 2 correction** (feasibility review 4).
 - Round 1's 47 ms came from awaited, isolated wheels.
@@ -514,13 +515,13 @@ The rest is also unchanged:
 | # | Control | Stops | Where |
 |---|---|---|---|
 | C33 | Exactly one of `binary`/`fw.cast1` per upgrade; 4 KiB inbound limit; two-step decoding: structural errors close 4400, value errors are dropped with `error invalid` and count toward the drop limit; typed-text rules; enumerated keys with no Ctrl/Alt/Meta | Parser abuse; smuggled shortcuts; control characters into fields; a viewer bug turning into reconnect loops | gate, `cast_protocol.py` |
-| C34 | **CDP allowlist** (below); no viewer string is ever part of a CDP method name, a script or a script argument | Raw CDP reaching the viewer; script injection | `stream.py` |
+| C34 | **CDP allowlist** (below); no viewer string is ever part of a CDP method name, a script or a script argument | Raw CDP reaching the viewer; script injection | `cast_cdp.py` |
 | C35 | **Every input and every output authorized**: `verdict()` before carrying out any message but `ack`/`visible`, before sending any image or JSON, and every second; it evaluates `release_due` on the clock, `vnc_allowed`, `cast_allowed`, lockdown and drain directly, not through the watch loop | Input or images after a release, an expiry, a revocation or the kill switch, even if the watch loop is stuck (C17's "buggy or lying agent" case) | `stream.py`, `watch.py` |
 | C36 | **Connection cap** 6000 s (4004) for both kinds (Xvnc's `-MaxConnectionTime 6000` stays for classic); **session pacing**: at most one cast session start per second | A stream outliving any hold; reconnect loops driving screen and CDP work | gate |
 | C37 | **Typed text is never logged or stored**: decode errors log only the message type and length; structs holding text have no `__repr__` in any log path; nothing typed goes into `state`, events, alerts or the termination log; the viewer never stores the proxy's value | Card data in logs (C26's intent) | agent, viewer; caplog test |
 | C38 | **Viewer page hardening**: CSP `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src wss://<checkout host>; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; require-trusted-types-for 'script'; trusted-types 'none'`; page-derived strings via `textContent` only; `Referrer-Policy: no-referrer`, `nosniff`, `no-store` | XSS from page-derived strings; exfiltration | vnc-edge |
-| C39 | **Page data bounded in the page**: every isolated-world script caps counts, string lengths, time (30 ms) and serialized size before returning; `Runtime.evaluate` with `timeout: 100`; at most 8 frames per map; worlds and sessions of detached frames dropped; titles from `Target.getTargetInfo` | A page (or any third party in it) pushing hundreds of MB into the agent and OOM-killing the pod mid-hold (R8: an OOM skips the drain) | `cast_scripts.py`, `stream.py` |
-| C40 | **Click safety for `choose`/`date`**: click only a point hit-tested to the element through every ancestor frame; no key until the element has focus | Clicks and Enter reaching a covering "Pay" button the user never touched | `stream.py` (PROTOCOL §6.11-6.12) |
+| C39 | **Page data bounded in the page**: every isolated-world script caps counts, string lengths, time (30 ms) and serialized size before returning; `Runtime.evaluate` with `timeout: 100`; at most 8 frames per map; worlds and sessions of detached frames dropped; titles from `Target.getTargetInfo` | A page (or any third party in it) pushing hundreds of MB into the agent and OOM-killing the pod mid-hold (R8: an OOM skips the drain) | `cast_scripts.py`, `cast_cdp.py`, `cast_fields.py`, `cast_pages.py` |
+| C40 | **Click safety for `choose`/`date`**: click only a point hit-tested to the element through every ancestor frame; no key until the element has focus | Clicks and Enter reaching a covering "Pay" button the user never touched | `cast_input.py` (PROTOCOL §6.11-6.12) |
 | C41 | **Credential isolation**: the proxy and the prompt input are never `type=password` and never carry credential `autocomplete` tokens; dialogs carry and show their frame's origin; the escape hatch can't be hidden by page content | The user's saved chestr.dev (Authelia) login offered into a pod page; a page impersonating Ferry Watch's UI | agent (token stripping), viewer |
 | C42 | **Pod-side kill switch**: `cast_allowed` in the operator's `configure` (default false); the gate refuses `fw.cast1` without it and closes a live stream with 4005 when it turns false | A bug in the stream surface staying reachable on running pods for up to 26 h after the switch is flipped or the release rolled back | gate, `watch.py`, ferry-control |
 
@@ -594,7 +595,12 @@ C12 (single viewer) holds across kinds: one slot, and the replaced viewer is clo
 | `src/ferry_watch/agent/cast_protocol.py` (new) | msgspec inbound structs with types only; `check(msg) -> str | None` for the value rules; `typed_text_ok()`; the header `struct.Struct("<BBHIHHffffBBH")`; outbound builders with caps and cleaning (`clean()`, `origin_of()`, `strip_credential_tokens()`); `CloseCode` IntEnum; the rate table; the conformance-pack loader for tests |
 | `src/ferry_watch/agent/cast_scripts.py` (new) | The fixed isolated-world scripts (reference: `round2/cast_scripts.py`) and `call(script, *args) -> str`, which formats the expression from ints/finite floats only |
 | `src/ferry_watch/agent/screen.py` (new) | `Screen.apply(w, h, dsf) -> bool` (no-op when unchanged; DPI then mode), `Screen.restore()` (bounded 3 s, never raises), `Screen.current` (reference: `round2/screen2.py`) |
-| `src/ferry_watch/agent/stream.py` (new) | `CastSession`; `Cdp` (the allowlist wrapper); `FramePump` (live/still/paused, seeding, window, repeat cache, metadata ring of 16); `Worlds` (per-frame worlds, owner chain, invalidation on `framenavigated`/`framedetached`); `FieldMapper` (schedule, assembly, `fields`/`fields_ok`); `FocusReporter`; `InputMapper` (tap staleness, move, wheel, pinch, keys with held-key tracking, text, compose, `choose`/`date`); `InboundQueue` (coalescing, bound 64); `RateLimiter`; `Pages` |
+| `src/ferry_watch/agent/stream.py` (new) | `CastSession` (opening, inbound, the worker, the ticker, outbound with the verdict, teardown); `InboundQueue` (coalescing, bound 64); `RateLimiter`; `CastPod` and `factory()` for the gate |
+| `src/ferry_watch/agent/cast_cdp.py` (new) | `Cdp` (the allowlist wrapper, C34; every call bounded to 2 s); `Worlds` (per-frame worlds, out-of-process frames' own sessions, the owner chain, invalidation on `framenavigated`/`framedetached`) |
+| `src/ferry_watch/agent/cast_frames.py` (new) | `FramePump` (live/still/paused, seeding, window, repeat cache) |
+| `src/ferry_watch/agent/cast_pages.py` (new) | `PageList` (ids, at most 8 listed, one CDP session each, titles from `Target.getTargetInfo`) |
+| `src/ferry_watch/agent/cast_fields.py` (new) | `frame_rect()` (PROTOCOL §5.3.3); `FieldMapper` (schedule, assembly, `fields`/`fields_ok`, the 2 revisions held); `FocusReporter` |
+| `src/ferry_watch/agent/cast_input.py` (new) | `InputMapper` (tap staleness, move, wheel, pinch, keys with held-key tracking, text, compose, `choose`/`date`); `ImageRing` (the metadata of the last 16 images) |
 | `src/ferry_watch/agent/dialogs.py` (new) | `DialogKeeper`: `keep()` registers Playwright's context dialog listener when the gate admits the first viewer of either kind, and opens a CDP session with `Page.enable` on each page of the context (in the background: `Page.enable` doesn't return while a dialog is open on that page, measured), which gives each dialog its frame's URL (`Page.javascriptDialogOpening`, matched to Playwright's dialog by page, type and message) and says when one closes without us (`Page.javascriptDialogClosed`: answered on the screen, or navigated away); keeps open dialogs across sessions and kinds; `attach(sink)` returns the open ones with the session's ids and reports later ones (`dialog_opened`, `dialog_closed`); `detach(sink)`; `answer(id, ok, text)`; `dismiss_all()`; `release()` (unregister, dismiss all, back to Playwright's auto-dismiss) |
 | `src/ferry_watch/agent/gate.py` | Subprotocol routing; `cast_allowed` admission; session pacing; `_Viewer.kind`/`close_code`; `close(reason, code)`; the `cast` factory; the connection cap; uncancellable teardown before `_gone`; `dialogs.keep()` at every admission; before a `binary` bridge, `screen.restore()` |
 | `src/ferry_watch/agent/watch.py` | `checkout_target()`; `clock_info()`; `viewer_verdict(cart_id, kind) -> CloseCode | None` (§6.2); `close_viewer(reason, code)`; the hold-service step closes a cast viewer with 4005 when `cast_allowed` turns false |
@@ -714,13 +720,16 @@ The production module keeps the same names, bounds and return shapes. Two differ
 
 | Script | Runs in | Arguments | Returns |
 |---|---|---|---|
-| `FIELDS(rev)` | each evaluated frame's world | `rev` | `{f: [...], trunc, W, H, vv: [pageLeft, pageTop, offsetLeft, offsetTop, scale], cw, ch}`, each field with `i, tag, type, im, ac, ekh, cap, max, ro, r, c, m` (+ `n, opts, sel, trunc` / `v`); bounds per PROTOCOL §5.3.2; keeps the last 2 revisions' elements in the world's global |
-| `STORE_OWNER(k)` | `callFunctionOn` on the owner iframe resolved into the parent's world | `k` | stores `this` as owner `k` |
-| `OWNER_HIT(k, points)` | the parent's world | `k`, ≤ 2048 numbers | `{o: [x, y], h: [0/1 …], focused, vis}`: the content-box origin, per-point delivery to the iframe (inside the visual viewport for the main frame), whether the iframe is focused, and whether its box intersects the clip |
-| `CLICK_POINTS(rev, i, mode)` | the field's frame world | ints | `{pts: [...], sel, v}` or `{why: "gone" | "changed"}` |
-| `IS_FOCUSED(rev, i)` | the field's frame world | ints | bool |
-| `FOCUS(rev)` | each frame's world | `rev` | the focused element as a field object, `{frame: true}` for an iframe, or null |
-| `VIEWPORT()` | the main frame's world | — | `[innerWidth, innerHeight, devicePixelRatio, pageLeft, pageTop, offsetLeft, offsetTop, scale]` |
+| `FIELDS(ev, keep1, keep2)` | each evaluated frame's world | the evaluation's number and the two the agent still holds for map revisions | `{f: [...], trunc, slow, clip, vv: [pageLeft, pageTop, offsetLeft, offsetTop, scale] (null but in the main frame), cw, ch, own: [[k, visible] …]}`, each field with `i, tag, type, im, ac, ekh, cap, max, ro, r, m` (+ `n, opts, ot, sel` / `v`); bounds per PROTOCOL §5.3.2; keeps the elements of `ev`, `keep1` and `keep2` in the world's global and drops the rest; `own` says which kept owner iframes intersect the clip |
+| `STORE_OWNER(k)` | `callFunctionOn` on the owner iframe resolved into the parent's world | `k` | stores `this` as owner `k` (at most 64 a world) |
+| `OWNER_HIT(k, points)` | the parent's world | `k`, ≤ 2048 numbers | `{o: [x, y], h: [0/1 …], focused, vis, slow}`: the content-box origin, per-point delivery to the iframe (inside the visual viewport for the main frame), whether the iframe is focused, and whether its box intersects the clip |
+| `CLICK_POINTS(ev, i, mode)` | the field's frame world | ints | `{pts: [...], sel, v}` or `{why: "gone" | "changed"}` |
+| `IS_FOCUSED(ev, i)` | the field's frame world | ints | bool |
+| `FOCUS()` | the main frame's world, then each focused owner's child | — | `{f, clip, vv}` (the focused element as a field), `{frame: k, vv}` when it is owner iframe `k`, or null |
+| `VIEWPORT()` | the main frame's world | — | `[innerWidth, innerHeight, devicePixelRatio, pageLeft, pageTop, offsetLeft, offsetTop, scale, navigator.language]` |
+
+Evaluations are numbered by the agent (`ev`), apart from map revisions: an evaluation that finds the same map
+gives `fields_ok`, and `choose`/`date` reach the elements through the `ev` behind the revision they name.
 
 ### 6.5 Input mapping tables (normative for the agent)
 
@@ -1032,6 +1041,7 @@ The vnc-edge **Dockerfile** is unchanged.
 | `tests/test_cast_protocol.py` (new) | 50k-mutation fuzz with no unexpected exception; typed-text rules; outbound cleaning (`origin_of`, credential-token stripping, caps) |
 | `tests/test_gate.py` (extend) | Both, neither or an unknown kind → 400; cast refused when `cast_allowed` false (not a failure); cast first connect, reconnect by nonce, classic after cast and the reverse with no ticket; a ticket refused once locked whichever kind locked it; 4097-byte message → 1009; `close(reason, code)` codes; 4001 only after a slow teardown, including when cancelled mid-teardown; cap → 4004 with a short cap; session pacing (two cast upgrades 0.2 s apart: the second starts ≥ 1 s after the first, no refusal); **restore happens before a binary bridge and never at a cast teardown, a reconnect or `close()`; dialogs are kept at every admission and released only by `close()` with 4000/4002/4003**; `viewer_changed` sequence across a kind switch |
 | `tests/test_stream.py` (new; fake CDP session, fake `Screen`, fake clock) | The allowlist (methods, `Runtime.evaluate` without a world or timeout refused, viewer strings can't reach expressions); hello timeout 4408; message before `ready` 4400; value errors → `error invalid` and the drop limit → 4429; queue bound and **wheel/move coalescing** (100 wheels in one tick → one dispatch with the exact sum; order kept around a `tap`); ack window, newest-wins, repeat cache; **live/still/paused transitions** with synthetic frame rates; **seeded image** on start, `page show`, `visible: true`; **`verdict()` before every input and output and on the 1 s tick**: freeze the watch loop, advance the clock past `release_due` while the client sends only acks → close 4000 within 1 s and no image after the verdict changed; **tap staleness** (moved scroll → `error stale` and no Input call); pinch → pinch + pan calls; key `ph` tracking, ≤ 6 held, released at teardown; `choose`/`date` sequences: stale → no Input call at all, focus check failing → `Escape` only; teardown order and bounding; **caplog contains no typed text** after a card number, an IME string, a prompt answer and a bad-value `text` |
+| `tests/test_cast_cdp.py` (new) | `call()`/`script_of()` refuse anything but numbers; every method and parameter shape outside C34 refused before sending (`Runtime.evaluate` without a world it made, without `returnByValue` or the 100 ms timeout, or of any other expression; `callFunctionOn` but `STORE_OWNER` on a resolved owner; right/middle buttons, modifiers but Shift/Ctrl, touch); errors name the method only; worlds for in-process and out-of-process frames, owners kept once, dropped on navigation and after a failed call; depth and count limits |
 | `tests/test_screen.py` (new) | Fake `xrandr`/`xsettingsd` on `PATH`: mode names, DPI file and mode, SIGHUP on change; **apply twice with the same size runs nothing the second time**; DPI before mode; restore deletes the modes, kills a hung `xrandr` within 3 s, never raises; ≤ 16 modes |
 | `tests/test_dialogs.py` (new) | Keeper: dialogs kept across `detach`/`attach`, ids per session, origin matched per page (either event first; "" after 0.5 s), a dialog answered on the screen or on a closed page goes (`dialog_closed`), our own answer's closing never takes another dialog, `keep()` doesn't wait for `Page.enable`, `dismiss_all`, `release` unregisters (a new dialog is auto-dismissed again), answers never logged |
 | `tests/browser/test_checkout_dialogs.py` (new) | The classic viewer on the real pod screen: without a viewer a dialog is dismissed as in 0.6.4; with one, a confirm shows on KasmVNC's canvas and OK clicked over VNC returns true; a prompt typed into returns the text; a dialog survives a reconnect and is dismissed by `gate.close`; an iframe's dialog; a phone taps OK |
@@ -1313,9 +1323,16 @@ Any disagreement between A and B is fixed in PROTOCOL.md and the pack first, the
   sent no frame; `Target.getTargetInfo` (3 ms) and `Input.dispatchMouseEvent` (acknowledged, 3 ms) answered. So a
   stream session that starts, or switches pages, while a dialog is open there must send `ready`, `pages`, `clock`
   and the `dialog`s without waiting on the page, bound every page call (2 s), and seed the image, start the
-  screencast, map fields and carry out input for that page only once the dialog is answered (the keeper's
-  `answer()` returning, or its `dialog_closed`). The dialog keeper's own `Page.enable` therefore runs in the
+  screencast and map fields for that page only once the dialog is answered (the keeper's `answer()` returning, or
+  its `dialog_closed`). Input for it meanwhile is answered `error stale`, or ignored for `move` and `wheel`
+  (PROTOCOL §5.5): queueing it would replay taps aimed at an image from before the dialog. The dialog keeper's own `Page.enable` therefore runs in the
   background, and the stream's per-page sessions don't call it (§6.3).
+- **`everyNthFrame` 2 loses the last frame of a change** (found building the browser tier,
+  `tests/browser/test_checkout_stream.py`). With 2, the screencast can skip the final frame of a short change (one
+  wheel step) and then, the page being still, sends nothing more: the viewer kept showing the page one step behind
+  (the image's `sy` and pixels were from before the step) until something else changed. The live mode uses 1. The
+  extra frames are mostly repeats while nothing moves and are capped at 15 a second while it does; the cost is
+  Chromium CPU while scrolling continuously (125-128% of a core instead of 100-106%, round 1's measurement).
 
 ## 14. Evidence index
 
