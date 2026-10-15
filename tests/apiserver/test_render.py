@@ -32,6 +32,15 @@ def with_stream_viewer(value: Any) -> dict[str, Any]:
     return TEST_VALUES | {"ferry": TEST_VALUES["ferry"] | {"checkout": {"streamViewer": value}}}
 
 
+def with_copy(top: str, service: str, value: Any) -> dict[str, Any]:
+    """checkout.streamViewer `top`, and a copy of it in one service's own config values."""
+    ferry = with_stream_viewer(top)["ferry"]
+    copy = {"checkout": {"streamViewer": value}}
+    if service == "control":
+        return TEST_VALUES | {"ferry": ferry | {"control": ferry["control"] | copy}}
+    return TEST_VALUES | {"ferry": ferry | {"web": copy}}
+
+
 def with_tag(controller: str, tag: str) -> dict[str, Any]:
     controllers = TEST_VALUES["controllers"]
     return TEST_VALUES | {"controllers": controllers | {controller: {"containers": {"app": {"image": {"tag": tag}}}}}}
@@ -49,6 +58,11 @@ def with_tag(controller: str, tag: str) -> dict[str, Any]:
         (with_stream_viewer(False), "streamViewer"),  # a bare `off` in YAML
         (with_stream_viewer("on"), "streamViewer"),
         (with_stream_viewer(None), "streamViewer"),
+        # One source (found in review: with "off" rendering no key, a copy under control filled the gap, so pods
+        # kept cast_allowed while ferry-web showed the beta as off). Any copy is refused, matching or not.
+        (with_copy("off", "control", "everyone"), "ferry.checkout.streamViewer only"),
+        (with_copy("off", "web", "everyone"), "ferry.checkout.streamViewer only"),
+        (with_copy("admins", "control", "admins"), "ferry.checkout.streamViewer only"),
     ],
 )
 def test_a_release_must_fill_in_what_the_cluster_checks(helm: Path, overrides: dict[str, Any], message: str) -> None:

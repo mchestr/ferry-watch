@@ -51,7 +51,8 @@ spec:
         streamViewer: "off"
 
       # ferry-control's config.json (src/ferry_watch/control/config.py). pod.image, pod.vncOrigin and (unless
-      # "off") checkout.streamViewer are added from browserImage, hosts.checkout and checkout.streamViewer.
+      # "off") checkout.streamViewer are added from browserImage, hosts.checkout and checkout.streamViewer, which is
+      # the only place to set it: a checkout.streamViewer here (or under web) is refused.
       control:
         pod:
           hubUrl: ws://ferry-control.ferry-watch.svc.cluster.local.:8766/agent/v1
@@ -91,8 +92,9 @@ spec:
         probePort: 9090
 
       # ferry-web's config.json (src/ferry_watch/web/config.py). baseUrl, oidc.redirectUri and checkout.origin
-      # are added from hosts, and (unless "off") checkout.streamViewer from checkout. The OIDC client id and every
-      # secret come from the ferry-watch Secret as files; the checkout key carries its own id (k1:<key>).
+      # are added from hosts, and (unless "off") checkout.streamViewer from checkout (a copy here is refused). The
+      # OIDC client id and every secret come from the ferry-watch Secret as files; the checkout key carries its own
+      # id (k1:<key>).
       web:
         oidc:
           issuer: &issuer https://auth.chestr.dev
@@ -390,6 +392,10 @@ spec:
             {{- end -}}
             {{- if not (has .Values.ferry.checkout.streamViewer (list "off" "admins" "everyone")) -}}
             {{- fail "ferry.checkout.streamViewer must be \"off\", \"admins\" or \"everyone\" (quoted: YAML reads a bare off as false)" -}}
+            {{- end -}}
+            {{- /* One source: "off" renders no key, so a copy under control or web would fill the gap and win. */ -}}
+            {{- if or (hasKey (.Values.ferry.control.checkout | default dict) "streamViewer") (hasKey ((.Values.ferry.web | default dict).checkout | default dict) "streamViewer") -}}
+            {{- fail "Set ferry.checkout.streamViewer only: a copy under ferry.control.checkout or ferry.web.checkout would override the kill switch" -}}
             {{- end -}}
             {{- $added := dict "pod" (dict
               "image" (printf "%s:%s" .Values.ferry.browserImage.repository .Values.ferry.browserImage.tag)

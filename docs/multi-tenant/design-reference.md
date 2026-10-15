@@ -2356,7 +2356,9 @@ kubernetes/apps/ferry-watch/                   namespace ferry-watch, components
   with these values. This repo's copy says `"off"`; it is the one line a deployment's copy may change
   (`tests/test_deploy.py`).
 - **The render refuses** any of the three images without a digest, an empty `vncPubkeys`, a `podMemory` not in Mi,
-  a `cpuRequest` not in millicores and a `streamViewer` other than the three (a bare YAML `off` is false).
+  a `cpuRequest` not in millicores, a `streamViewer` other than the three (a bare YAML `off` is false), and a copy
+  of it under `ferry.control.checkout` or `ferry.web.checkout`: since `"off"` renders no key, such a copy filled the
+  gap (found in review), and pods kept `cast_allowed` while ferry-web showed the beta as off.
   home-cluster's flux-local therefore fails until a release fills them in.
 - **One HelmRelease, two namespaces.** `rawResources` keep `metadata.namespace`, so the browser namespace's
   objects come from the release in `ferry-watch`. Flux's `targetNamespace` rewrites only the HelmRelease

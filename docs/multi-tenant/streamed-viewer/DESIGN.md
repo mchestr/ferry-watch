@@ -965,7 +965,10 @@ It is rendered into both configs, unless it is `off`, which both default to:
 
 Both configs are `forbid_unknown_fields`, so the key ships with the code that reads it. With `off` the rendered
 configs are 0.6.4's, so 0.6.4's images start with the 0.7.0 values (found in review: rendering `off` too made
-ferry-web, ferry-control and the db hook refuse their configs after an image-only rollback). **`offered(user)`** =
+ferry-web, ferry-control and the db hook refuse their configs after an image-only rollback). It is the only place
+the value is set: the render refuses a copy under `ferry.control.checkout` or `ferry.web.checkout` (found in review:
+since `off` renders no key, a leftover `ferry.control.checkout.streamViewer: everyone` filled the gap, so every pod
+kept `cast_allowed` while ferry-web showed the beta as off and the kill switch did nothing). **`offered(user)`** =
 `everyone`, or `admins` and `users.is_admin`.
 
 **ferry-web** sets `viewer = "stream"` only when all three hold:
