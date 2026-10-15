@@ -813,7 +813,12 @@ read once per session in the main world must start with `en-US`, else `date` ans
   - `deleteWordBackward`/`Forward` → the same with `word`;
   - `insertLineBreak`/`insertParagraph` → `key Enter`.
 
-  Each is `preventDefault()`ed, so the proxy stays empty.
+  Each is `preventDefault()`ed, so the proxy stays empty. As built, with one exception: where the proxy's
+  `autocapitalize` is `words` or `sentences` (names, addresses, free text), it keeps the last 64 code points typed
+  since the field was tapped, because a phone's keyboard decides capitals from the text before the caret (an
+  always-empty field would capitalise every letter). It is emptied whenever the pod's caret may have moved (a
+  tap, a focus change, a navigation key), and an `insertReplacementText` on that text is left to the browser and
+  sent as the difference (`Backspace`s, then the new text).
 - Compositions: `compositionupdate` → `compose`; `compositionend` → `text` (or `compose ""`), then the proxy is
   cleared. An `input` with no preceding `beforeinput` (some autofill paths) sends the proxy's value as `text` and
   clears it.

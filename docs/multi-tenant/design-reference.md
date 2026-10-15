@@ -2087,6 +2087,12 @@ server {
   add_header Cache-Control no-store always;
   location ~ "^/t/[a-f0-9]{16}/g/[0-9]{1,6}/$" { root /usr/share/fw-vnc; try_files /fw/landing.html =404; }
   location = /vnc.html { root /usr/share/fw-vnc; }
+  location = /fw/viewer.html {   # the streamed viewer (0.7.0), under its own policy: below
+    root /usr/share/fw-vnc;
+    add_header Content-Security-Policy "<C38, below>" always;
+    add_header Referrer-Policy no-referrer always; add_header X-Content-Type-Options nosniff always;
+    add_header Cache-Control no-store always;
+  }
   location ~ "^/(assets|app|core|fw)/" { root /usr/share/fw-vnc; }
   location ~ "^/t/(?<trip>[a-f0-9]{16})/g/(?<gen>[0-9]{1,6})/ws$" {
     if ($http_upgrade != "websocket") { return 400; }
@@ -2181,6 +2187,57 @@ Still janky on a phone:
   need the pod's Chromium to render at the phone's DPR, a much larger screen to send.
 - Every scroll is a round trip: the page moves when the pod's next frame arrives, so it trails the finger by the
   network's latency, and there's no rubber-banding at the ends of the page.
+
+*As built, the streamed viewer* (0.7.0 beta; `docs/multi-tenant/streamed-viewer/DESIGN.md` §7-§9, wire protocol
+`PROTOCOL.md`; tested by `tests/browser/test_stream_viewer.py`, `vnc-edge/tests/*.test.mjs`,
+`tests/test_vnc_edge_build.py` and the image's smoke test). For users who opted in, the checkout opens in a viewer
+of our own instead of KasmVNC's client. It is a static page with ES modules, as logic-free on the server as the rest
+of vnc-edge: the pod's agent streams JPEG images over the same gate socket (subprotocol `fw.cast1`) and takes a
+narrow, validated input protocol.
+- **Files.** `fw/viewer.html` (markup only), `fw/viewer.css`, and modules under `fw/viewer/`: `core/*.js`
+  (protocol, text, layout, fields, gestures, prediction, reconnect: DOM-free, checked by `node --test` against the
+  shared conformance pack `tests/fixtures/cast1/`) and the DOM glue (`main`, `socket`, `frames`, `input`,
+  `keyboard`, `overlays`, `sheets`). `fw/session.js` is a classic script shared with the classic viewer: the
+  device record, the nonce, the subprotocol offer, both viewers' URLs and the escape hatch. `build.py` serves it
+  on its own and as the first part of the served `fw/shim.js`, so vnc.html still has its one inserted line, and its
+  page, patch and policy are byte-identical to 0.6.4's (a test pins the policy string).
+- **Landing routing.** The landing page takes the 0.6.4 fragment (`#fw1.…`, the ticket alone: classic) and
+  `#v=s1&t=<ticket>` (stream). A fresh ticket stores `record.viewer` in the device record; the page opens
+  `/fw/viewer.html#t=<trip>&g=<gen>` when it says stream and `record.viewer_fallback` is unset, else 0.6.4's
+  `vnc.html` URL. The fallback, set by "Use the classic viewer", is sticky for that checkout on that device.
+- **Its own policy (C38).** `location = /fw/viewer.html` takes the page out of the `/fw/` location, and sets every
+  header again (an `add_header` in a location replaces the server's): `default-src 'none'; script-src 'self';
+  style-src 'self'; img-src 'self'; connect-src wss://ferry-checkout.chestr.dev; base-uri 'none'; form-action
+  'none'; frame-ancestors 'none'; require-trusted-types-for 'script'; trusted-types 'none'`, `Referrer-Policy:
+  no-referrer`, `nosniff`, `no-store`. No inline script or style at all, no `data:` or `blob:`, a socket only to
+  the checkout host, and Trusted Types with no policy, so no string can reach an HTML sink. The modules and the
+  stylesheet are ordinary `/fw/` files under the server's `no-store`, so a deploy can't mix old modules with a new
+  page. `build.py` fails if `viewer.html` has an inline `<script>` or `<style>`, a `style=` or `on…=` attribute, a
+  `javascript:` URL, or lacks the escape bar or `fw/session.js` as a classic script.
+- **Page-derived text** (titles, origins, option labels, dialog messages, prompt defaults) is set with
+  `textContent` or as the value of the viewer's own controls, never as markup; the policy would refuse the rest.
+  The checkout itself is only ever pixels on a canvas, so nothing a checkout page does can cover the viewer's
+  controls.
+- **Credentials (C41).** The keyboard proxy, the hidden input the phone's keyboard types into, is never
+  `type=password` and never carries a credential `autocomplete` token (the agent strips them, and the viewer strips
+  them again): a password field gets exactly what KasmVNC's own hidden input has. A password-typed input on
+  `ferry-checkout.chestr.dev` would invite the browser to offer the user's saved `auth.chestr.dev` login. The
+  checkout's JavaScript dialogs are headed with the origin of the frame that opened them, as Chrome words it, and
+  drawn like the browser's own dialogs, never like Ferry Watch's controls, so a page can't pass a prompt off as
+  ours; the prompt's input follows the password rules.
+- **Nothing typed is kept** (C37): no storage, URL or log ever holds what is typed. In a name, an address or a
+  sentence the proxy holds the last 64 characters typed since the field was tapped, because the phone's keyboard
+  decides capitals from the text before the caret; it is emptied whenever the pod's caret may have moved.
+- **The escape hatch** (`PROTOCOL.md` §8.10). `viewer.html`'s static markup holds a hidden "Use the classic
+  viewer" bar; `fw/session.js` shows it 3 s after load unless the viewer reached its first `ready`, and at once on
+  an uncaught error, an unhandled rejection or a script that failed to load, and wires its button itself. So it
+  works however broken the modules are. The button sets the sticky fallback, and replaces the page with 0.6.4's
+  `vnc.html` URL; leaving closes the stream's socket, and the shim connects KasmVNC by the device's nonce, no
+  ticket needed. The viewer's menu and its status screens offer the same, and the agent's close code 4005 (the
+  streamed viewer withdrawn: the kill switch) takes it automatically.
+- **What it adds to the attack surface:** a page and modules served as static files, under a stricter policy than
+  vnc.html's. vnc-edge still parses nothing on the socket and holds no secrets. A compromised vnc-edge could serve
+  a different viewer, as it could serve a different KasmVNC client today (R4).
 
 ### 7.10 Deployment layout and the home-cluster split
 
