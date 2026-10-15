@@ -2335,8 +2335,10 @@ kubernetes/apps/ferry-watch/                   namespace ferry-watch, components
   memory maximum are computed from `podMemory`, `cpuRequest` and `maxBrowsersTotal`, so there is no separate
   budget to keep in step. `tests/apiserver/test_render.py` checks the parameters against the config.
   `ferry.checkout.streamViewer` (0.7.0: `"off"`, `"admins"` or `"everyone"`, who is offered the streamed checkout
-  viewer beta; streamed-viewer/DESIGN.md §8.3) goes into both configs as `checkout.streamViewer`. This repo's copy
-  says `"off"`; it is the one line a deployment's copy may change (`tests/test_deploy.py`).
+  viewer beta; streamed-viewer/DESIGN.md §8.3) goes into both configs as `checkout.streamViewer`, unless it is
+  `"off"`, which both default to: with `"off"` the configs are 0.6.4's, so the images can be rolled back to 0.6.4
+  with these values. This repo's copy says `"off"`; it is the one line a deployment's copy may change
+  (`tests/test_deploy.py`).
 - **The render refuses** any of the three images without a digest, an empty `vncPubkeys`, a `podMemory` not in Mi,
   a `cpuRequest` not in millicores and a `streamViewer` other than the three (a bare YAML `off` is false).
   home-cluster's flux-local therefore fails until a release fills them in.

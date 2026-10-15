@@ -934,11 +934,13 @@ ALTER TABLE user_settings ADD COLUMN checkout_viewer text NOT NULL DEFAULT 'clas
 ### 8.3 Choosing the viewer, and the kill switch
 
 **The values key** `checkout.streamViewer`: `off` | `admins` | `everyone` (the launch value is §16 decision 1).
-It is rendered into both configs:
+It is rendered into both configs, unless it is `off`, which both default to:
 - ferry-web: `WebConfig.checkout.stream_viewer`;
 - ferry-control: `ControlConfig.checkout.stream_viewer` → `HubSettings.stream_viewer`.
 
-Both configs are `forbid_unknown_fields`, so the key ships with the code that reads it. **`offered(user)`** =
+Both configs are `forbid_unknown_fields`, so the key ships with the code that reads it. With `off` the rendered
+configs are 0.6.4's, so 0.6.4's images start with the 0.7.0 values (found in review: rendering `off` too made
+ferry-web, ferry-control and the db hook refuse their configs after an image-only rollback). **`offered(user)`** =
 `everyone`, or `admins` and `users.is_admin`.
 
 **ferry-web** sets `viewer = "stream"` only when all three hold:
@@ -1016,6 +1018,7 @@ script line and its CSP hash is unchanged.
 | 0.7.0 ferry-web, 0.6.4 vnc-edge still serving (rollout seconds) | a stream URL lands on the old landing page ("No checkout here"); opening again after vnc-edge rolls works. Order vnc-edge first, or keep `streamViewer: off` until it has |
 | 0.6.4 ferry-web, 0.7.0 vnc-edge/pods | classic URLs only; the new landing page handles the 0.6.4 fragment |
 | Rollback to 0.6.4 (all services) | the column is ignored; classic URLs; running 0.7.0 pods get `cast_allowed` absent = false: new streams refused, live ones closed with 4005 → classic |
+| Rollback of the images only, keeping the 0.7.0 values | set `checkout.streamViewer: "off"` first, or in the same change: with any other value the configs carry the key, which 0.6.4's ferry-web, ferry-control and db hook refuse, and the upgrade fails |
 | Kill switch `streamViewer: off` | no stream URLs, no Settings switch; every pod's `cast_allowed` false within one configure push: live streams move to classic |
 
 ## 9. vnc-edge build, nginx, CSP, smoke test (workstream B)
@@ -1238,7 +1241,7 @@ tests pass in CI.
 | C1 | `control/migrations/0006_checkout_viewer.sql` | `tests/test_db.py` | applies on 0005 data; 0.6.4 inserts work |
 | C2 | `web/repo.py` (`set_settings`, snapshot, `held_cart.agent_version`), `web/api.py` (`update_me`, `open_checkout`, `checkout_url()`, `offered()`), `web/config.py` (`CheckoutConfig.stream_viewer`), `ferry_watch/versions.py` (`at_least`) | `tests/test_web_api.py`, `tests/test_web_config.py` | all §10.4 cases pass; `docs/api.md` updated |
 | C3 | `control/config.py` (`checkout.stream_viewer` → `HubSettings.stream_viewer`), `control/configure.py` (`build_configure(…, cast_allowed)`), `control/store.py` (`TripRow.owner_is_admin`), `control/hub.py` (`Peer.agent_version`, `_send` dropping `cast_allowed` below 0.7.0) | `tests/test_hub.py`, `tests/test_control_config.py` | a 0.6.4 agent's configure decodes with the 0.6.4 schema; a 0.7.0 agent gets the field |
-| C4 | `deploy/helmrelease.yaml` (`checkout.streamViewer` into both configs), `web/src/mt/{schema.ts,api.ts}`, `AccountCard.tsx`, `CheckoutPage.tsx` | vitest; `tests/test_deploy.py` | rendered configs contain the key; frontend tests green |
+| C4 | `deploy/helmrelease.yaml` (`checkout.streamViewer` into both configs), `web/src/mt/{schema.ts,api.ts}`, `AccountCard.tsx`, `CheckoutPage.tsx` | vitest; `tests/test_deploy.py`; `tests/apiserver/test_render.py` | rendered configs contain the key unless `off`, and with `off` are 0.6.4's; frontend tests green |
 | C5 | `pyproject.toml`/`web/package.json` version 0.7.0; release notes | — | — |
 
 ### The midpoint integration checkpoint (1 day, after A4 and B4)

@@ -45,12 +45,13 @@ spec:
       # The streamed checkout viewer (beta, 0.7.0): off, admins or everyone. ferry-web shows its Settings switch
       # and opens checkouts in it only for those it is offered to; ferry-control lets only their pods serve it.
       # "off" is the kill switch: no stream links, and live streams fall back to the classic viewer within one
-      # configure push. Keep it quoted: YAML reads a bare off as false. Rendered into both configs.
+      # configure push. Keep it quoted: YAML reads a bare off as false. Rendered into both configs unless "off",
+      # which both default to: with "off" the configs are 0.6.4's, so its images can be rolled back to as they are.
       checkout:
         streamViewer: "off"
 
-      # ferry-control's config.json (src/ferry_watch/control/config.py). pod.image, pod.vncOrigin and
-      # checkout.streamViewer are added from browserImage, hosts.checkout and checkout.streamViewer.
+      # ferry-control's config.json (src/ferry_watch/control/config.py). pod.image, pod.vncOrigin and (unless
+      # "off") checkout.streamViewer are added from browserImage, hosts.checkout and checkout.streamViewer.
       control:
         pod:
           hubUrl: ws://ferry-control.ferry-watch.svc.cluster.local.:8766/agent/v1
@@ -90,8 +91,8 @@ spec:
         probePort: 9090
 
       # ferry-web's config.json (src/ferry_watch/web/config.py). baseUrl, oidc.redirectUri and checkout.origin
-      # are added from hosts, and checkout.streamViewer from checkout. The OIDC client id and every secret come
-      # from the ferry-watch Secret as files; the checkout key carries its own id (k1:<key>).
+      # are added from hosts, and (unless "off") checkout.streamViewer from checkout. The OIDC client id and every
+      # secret come from the ferry-watch Secret as files; the checkout key carries its own id (k1:<key>).
       web:
         oidc:
           issuer: &issuer https://auth.chestr.dev
@@ -390,11 +391,13 @@ spec:
             {{- if not (has .Values.ferry.checkout.streamViewer (list "off" "admins" "everyone")) -}}
             {{- fail "ferry.checkout.streamViewer must be \"off\", \"admins\" or \"everyone\" (quoted: YAML reads a bare off as false)" -}}
             {{- end -}}
-            {{- toPrettyJson (merge (dict "pod" (dict
+            {{- $added := dict "pod" (dict
               "image" (printf "%s:%s" .Values.ferry.browserImage.repository .Values.ferry.browserImage.tag)
-              "vncOrigin" (printf "https://%s" .Values.ferry.hosts.checkout))
-              "checkout" (dict "streamViewer" .Values.ferry.checkout.streamViewer))
-              .Values.ferry.control) -}}
+              "vncOrigin" (printf "https://%s" .Values.ferry.hosts.checkout)) -}}
+            {{- if ne .Values.ferry.checkout.streamViewer "off" -}}
+            {{- $_ := set $added "checkout" (dict "streamViewer" .Values.ferry.checkout.streamViewer) -}}
+            {{- end -}}
+            {{- toPrettyJson (merge $added .Values.ferry.control) -}}
       # The same file for the db hook, which runs before the release's own ConfigMaps exist.
       migrate-config:
         forceRename: ferry-migrate-config
@@ -410,12 +413,14 @@ spec:
         includeChecksumInControllers: [ferry-web]
         data:
           config.json: >-
+            {{- $checkout := dict "origin" (printf "https://%s" .Values.ferry.hosts.checkout) -}}
+            {{- if ne .Values.ferry.checkout.streamViewer "off" -}}
+            {{- $_ := set $checkout "streamViewer" .Values.ferry.checkout.streamViewer -}}
+            {{- end -}}
             {{- toPrettyJson (merge (dict
               "baseUrl" (printf "https://%s" .Values.ferry.hosts.dashboard)
               "oidc" (dict "redirectUri" (printf "https://%s/auth/callback" .Values.ferry.hosts.dashboard))
-              "checkout" (dict
-                "origin" (printf "https://%s" .Values.ferry.hosts.checkout)
-                "streamViewer" .Values.ferry.checkout.streamViewer))
+              "checkout" $checkout)
               .Values.ferry.web) -}}
 
     persistence:

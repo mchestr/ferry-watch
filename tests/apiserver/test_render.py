@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -81,3 +82,23 @@ def test_one_source_for_who_may_stream(helm: Path, tmp_path: Path, value: str | 
     web.write_text(objects[("ConfigMap", "ferry-web-config")]["data"]["config.json"])
     assert control_config.load(control).hub_settings().stream_viewer == (value or "off")
     assert web_config.load(web, client_id="ferry-watch").checkout.stream_viewer == (value or "off")
+    migrate = objects[("ConfigMap", "ferry-migrate-config")]["data"]["config.json"]
+    assert migrate == control.read_text()  # what the db hook reads
+
+
+@pytest.mark.parametrize("value", [None, "off"])
+def test_off_renders_the_configs_as_0_6_4_did(helm: Path, value: str | None) -> None:
+    """0.6.4's configs refuse unknown keys: with the kill switch off, the 0.7.0 values render none, so rolling the
+    images back to 0.6.4 (without the values) leaves ferry-web, ferry-control and the db hook starting."""
+    objects = {
+        (o["kind"], o["metadata"]["name"]): o
+        for o in render(helm, None if value is None else with_stream_viewer(value))
+    }
+    configs = [
+        json.loads(objects[("ConfigMap", name)]["data"]["config.json"])
+        for name in ("ferry-control-config", "ferry-migrate-config", "ferry-web-config")
+    ]
+    control, migrate, web = configs
+    assert "checkout" not in control
+    assert "checkout" not in migrate
+    assert set(web["checkout"]) == {"origin"}
