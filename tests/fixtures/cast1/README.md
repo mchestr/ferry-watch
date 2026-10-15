@@ -291,7 +291,7 @@ connections:
 Rules that only one side implements are tested on that side (DESIGN §10). The agent's tests cover the `hello`
 timeout, session pacing, the ack window, repeats and image modes (§4.3), `verdict()` (§7.2), the field-map scripts
 and schedule (§5.3.2, §5.3.4), `resize` debouncing and its 16 sizes (§6.2), one `error` a second (§5.7), the page
-checks of `choose` and `date` (§6.11-6.12), teardown (§3.5) and dialogs (§5.5). The viewer's tests cover drawing
-and acks (§4.2, §8.1), the proxy's other attributes (§8.5), the sheets and dialog headings (§8.6, §8.8), storage
-(§8.9) and the escape hatch (§8.10). No case exercises the overall rate bucket (§7.1) alone: the type buckets'
+checks of `choose` and `date` (§6.11-6.12), teardown (§3.5), dialogs (§5.5) and input that opens one (§3.4). The
+viewer's tests cover drawing and acks (§4.2, §8.1), the proxy's other attributes (§8.5), the sheets and dialog
+headings (§8.6, §8.8), storage (§8.9) and the escape hatch (§8.10). No case exercises the overall rate bucket (§7.1) alone: the type buckets'
 bursts add up to 203 and their rates to 298 a second, so it can't be reached while every type stays within its own.

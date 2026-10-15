@@ -325,6 +325,8 @@ class CastSession:
         self._context: BrowserContext | None = None
         self._pages: PageList | None = None
         self._dialogs: dict[int, Page] = {}  # dialog number -> its page
+        self._dialog_opened = asyncio.Event()  # since the worker started carrying out its latest message
+        self._held: asyncio.Task[Any] | None = None  # the rest of a message whose input opened a dialog
         self._early: list[Outbound] = []  # dialogs that opened before `ready` went out
         self._attached = False
         self._errors: dict[str, float] = {}
@@ -383,6 +385,7 @@ class CastSession:
             return  # not a page the viewer knows: it stays for the classic viewer
         self._dialogs[number] = dialog.page
         entry.dialogs += 1
+        self._dialog_opened.set()
         # The page sends no frames now and answers almost nothing: images, the map and input wait (entry.blocked).
         message = dialog_message(number, entry.id, dialog.kind, dialog.url or "", dialog.message, dialog.default)
         if self._ready:
@@ -664,10 +667,12 @@ class CastSession:
                 self._end(code)
                 return
             message = waiting.message
+            if not isinstance(message, Answer):
+                await self._settled()
             list_open, self._focus.popup = self._focus.popup and isinstance(message, Choose), False
             try:
                 await self._pump.input()
-                await self._carry_out(message, waiting.arrived, list_open)
+                await self._until_a_dialog(self._carry_out(message, waiting.arrived, list_open))
             except CdpError as e:
                 log.debug("A %s wasn't carried out: %s", message_type(message), e)
                 self._error("failed", message_type(message))
@@ -675,6 +680,34 @@ class CastSession:
                 self._numbers.done(*waiting.numbers)
             if isinstance(message, _MAP_AFTER):
                 self._mapper.due()
+
+    async def _until_a_dialog(self, work: Coroutine[Any, Any, None]) -> None:
+        """Carries a message out, or as much of it as comes before a JavaScript dialog it opens. Chromium doesn't
+        acknowledge a click or key in a cross-site frame until the dialog that the frame opened for it is answered,
+        and the answer is the viewer's next message: the rest of this one waits in the background, and later input
+        waits for it (§3.4)."""
+        self._dialog_opened.clear()
+        task = asyncio.ensure_future(work)
+        opened = asyncio.ensure_future(self._dialog_opened.wait())
+        try:
+            await asyncio.wait({task, opened}, return_when=asyncio.FIRST_COMPLETED)
+        except asyncio.CancelledError:
+            task.cancel()  # the session is ending: nothing more is carried out
+            raise
+        finally:
+            opened.cancel()
+        if task.done():
+            task.result()  # its CdpError is this message's `error failed`
+            return
+        self._held = task
+        self._tasks.add(task)
+        task.add_done_callback(self._finished)
+
+    async def _settled(self) -> None:
+        """Waits until the rest of a message that opened a dialog is done (bounded: every call in it is)."""
+        held, self._held = self._held, None
+        if held is not None:
+            await asyncio.wait({held})
 
     async def _carry_out(self, message: Inbound, arrived: float, list_open: bool) -> None:
         front = self._pages.front if self._pages is not None else None

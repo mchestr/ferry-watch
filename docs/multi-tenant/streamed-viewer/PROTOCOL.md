@@ -165,6 +165,11 @@ The agent MUST carry out the viewer's messages one at a time, in arrival order, 
 one message before starting the next (so a `text` sent after a `tap` lands in the field the tap focused), with
 these exceptions:
 - `ack` and `visible` are applied on arrival.
+- **Input that opens a dialog.** A message whose input opens a JavaScript dialog (§5.5) counts as carried out once
+  the dialog opens: Chromium doesn't acknowledge a click or key in a cross-site frame until the dialog that frame
+  opened for it is answered, and the answer is the viewer's next message. The rest of the message's browser
+  commands complete after the answer, before the agent starts any later message other than a `dialog` answer.
+  The message isn't answered `error failed` for the wait.
 - **Coalescing.** When a `wheel` arrives while the last message waiting in the queue is a `wheel` for the same page,
   the waiting one absorbs it: its `dx`, `dy` become the sums (as long as each stays within ±8000; otherwise the new
   one is queued separately) and its `x`, `y` become the new one's. A `move` arriving while the last waiting

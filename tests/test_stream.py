@@ -494,6 +494,34 @@ async def test_dialogs_that_open_and_close_while_streaming_are_reported(rig: Rig
     assert rig.dialogs.answers == []
 
 
+async def test_a_click_that_opens_a_dialog_is_done_when_the_dialog_opens(rig: Rig) -> None:
+    """Chromium doesn't acknowledge a click in a cross-site frame until the dialog it opened there is answered. The
+    answer, the viewer's next message, doesn't wait behind the click, and later input waits for the click's end."""
+    viewer = await rig.opened()
+    header = viewer.latest
+    rig.page.input_hold = asyncio.Event()  # the click goes into a frame whose dialog holds it up
+    await viewer.send({"t": "tap", "page": 1, "seq": header.seq, "x": 100, "y": 200, "ms": 0})
+    await eventually(lambda: rig.page.sent("Input.dispatchMouseEvent"))
+    rig.dialogs.sink.dialog_opened(1, dialog(rig.page, "alert", "Card declined"))
+    assert (await viewer.message("dialog"))["id"] == 1
+    await viewer.send({"t": "dialog", "id": 1, "ok": True})
+    await eventually(lambda: rig.dialogs.answers == [(1, True, None)], seconds=1)
+    await viewer.send({"t": "key", "c": "4"})
+    await asyncio.sleep(0.1)
+    assert [p["type"] for _, p in input_calls(rig.page)] == ["mouseMoved"], "the key didn't wait for the click"
+
+    rig.page.input_hold.set()  # answered: the frame takes the rest of the click, then the key
+    await eventually(lambda: len(input_calls(rig.page)) == 5)
+    assert [p["type"] for _, p in input_calls(rig.page)] == [
+        "mouseMoved",
+        "mousePressed",
+        "mouseReleased",
+        "keyDown",
+        "keyUp",
+    ]
+    assert not [m for m in viewer.messages if m["t"] == "error"]
+
+
 # ---- pickers (§6.11-6.12, C40)
 
 
