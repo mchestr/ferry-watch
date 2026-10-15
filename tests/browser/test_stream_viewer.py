@@ -406,9 +406,12 @@ async def test_refused_the_viewer_backs_off_then_offers_the_classic_viewer(phone
     for count in (2, 3):
         await checkout.agent.refused(count)
         refused.append(time.monotonic())
-        shown = await until_status(phone, "Reconnecting…")
+        # The viewer hears of the refusal a moment after the agent made it.
+        prominent = count == 3
+        shown = await until(lambda: status(phone), lambda s: s["shown"] and s["prominent"] == prominent)
+        assert shown["title"] == "Reconnecting…"
         assert shown["classic"]
-        assert shown["prominent"] == (count == 3)
+        assert shown["prominent"] == prominent
     gaps = [b - a for a, b in itertools.pairwise(refused)]
     assert 0.4 <= gaps[0] <= 0.95, gaps
     assert 0.9 <= gaps[1] <= 1.6, gaps
@@ -435,7 +438,8 @@ async def test_a_broken_image_is_dropped_and_the_viewer_reconnects(phone: Viewer
         await session.closed.wait()
         assert session.close_code == 1000
         assert session.acks == []
-        shown = await until_status(phone, "Reconnecting…")
+        shown = await until(lambda: status(phone), lambda s: s["shown"] and s["prominent"] == prominent)
+        assert shown["title"] == "Reconnecting…"
         assert shown["prominent"] == prominent
     await checkout.agent.session(2)
 
