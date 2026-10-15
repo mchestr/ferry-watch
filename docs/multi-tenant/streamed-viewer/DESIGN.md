@@ -526,7 +526,8 @@ The rest is also unchanged:
 
 **C34's allowlist.** The session's CDP wrapper refuses any other method or parameter shape:
 - `Page.{startScreencast, stopScreencast, screencastFrameAck, captureScreenshot, getLayoutMetrics, getFrameTree,
-  createIsolatedWorld, enable}`. `enable` is called once per tracked page, for `javascriptDialogOpening`.
+  createIsolatedWorld}`. No `Page.enable`: dialog origins come from the dialog keeper's own sessions (§6.1),
+  which no viewer message reaches.
 - `Input.{dispatchMouseEvent, dispatchKeyEvent, insertText, imeSetComposition, synthesizePinchGesture}`.
 - `Runtime.evaluate`, only with:
   - `contextId` of a world the session created;
