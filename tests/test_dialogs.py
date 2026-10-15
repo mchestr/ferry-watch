@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, cast
@@ -53,18 +54,23 @@ class FakeDialog:
     default_value: str = ""
     answers: list[tuple[str, str | None]] = field(default_factory=list)
     gone: bool = False
+    hung: bool = False  # its page hangs its renderer: no answer ever comes
 
     async def accept(self, prompt_text: str | None = None) -> None:
-        if self.gone:
-            raise Gone
+        await self._answer()
         self.answers.append(("accept", prompt_text))
         self.gone = True
 
     async def dismiss(self) -> None:
-        if self.gone:
-            raise Gone
+        await self._answer()
         self.answers.append(("dismiss", None))
         self.gone = True
+
+    async def _answer(self) -> None:
+        if self.hung:
+            await asyncio.Event().wait()
+        if self.gone:
+            raise Gone
 
 
 class FakeSession(Emitter):
@@ -74,6 +80,7 @@ class FakeSession(Emitter):
         self.enable = enable
         self.sent: list[str] = []
         self.detached = False
+        self.hung = False
 
     async def send(self, method: str, _params: dict[str, Any] | None = None) -> dict[str, Any]:
         self.sent.append(method)
@@ -82,6 +89,8 @@ class FakeSession(Emitter):
         return {}
 
     async def detach(self) -> None:
+        if self.hung:
+            await asyncio.Event().wait()
         self.detached = True
 
 
@@ -315,6 +324,28 @@ async def test_release_dismisses_and_lets_playwright_dismiss_again(context: Fake
     later = await context.dialog("confirm", "Again?")
     assert later.answers == [("dismiss", None)]  # Playwright's own, at once
     await keeper.release()  # twice is fine
+
+
+async def test_a_release_takes_one_calls_bound_however_many_pages_hang(context: FakeContext) -> None:
+    """Found in review: a checkout page that opens pop-ups and hangs their renderers made the release take a
+    browser call's bound for each page and each dialog in turn, holding up the end of the hold and the pod's exit."""
+    keeper = DialogKeeper(lambda: cast(Any, context), call_seconds=0.2)
+    await keeper.keep()
+    for n in range(6):
+        context.open_page(f"https://popup{n}.example/")
+    await opened()
+    dialogs = [await context.dialog("alert", "Hung", page=page) for page in context.pages]
+    for dialog in dialogs:
+        dialog.hung = True
+    for session in context.sessions:
+        session.hung = True
+    started = time.monotonic()
+    await keeper.release()
+    assert time.monotonic() - started < 0.35  # one call's bound, not 14 of them
+    assert keeper.open_dialogs == []
+    assert not keeper.keeping
+    later = await context.dialog("confirm", "Again?")
+    assert later.answers == [("dismiss", None)]  # Playwright's own, at once
 
 
 async def test_a_dialog_that_went_meanwhile_doesnt_stop_a_release(context: FakeContext, keeper: DialogKeeper) -> None:

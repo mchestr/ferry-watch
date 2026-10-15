@@ -88,7 +88,8 @@ class DialogKeeper:
         self._answered: dict[Page, int] = {}  # closings of our own answers, still to come
         self._watched: set[Page] = set()
         self._sessions: dict[Page, CDPSession] = {}
-        self._tasks: set[asyncio.Task[None]] = set()
+        self._watching: set[asyncio.Task[None]] = set()  # opening a page's session
+        self._tasks: set[asyncio.Task[None]] = set()  # anything else, each bounded
         self._sink: DialogSink | None = None
         self._numbers: dict[KeptDialog, int] = {}  # in the attached session
         self._next_number = 1
@@ -131,31 +132,36 @@ class DialogKeeper:
         log.info("Keeping the checkout's dialogs for its viewer")
 
     async def release(self) -> None:
-        """Dismiss every open dialog, and let Playwright dismiss new ones unseen again. Bounded; never raises."""
+        """Dismiss every open dialog, and let Playwright dismiss new ones unseen again. Never raises.
+
+        Bounded by one browser call's bound, however many pages and dialogs there are: the dismissals and the
+        detaches all go at once. The gate waits for this before the hold ends, and a page that hangs its renderer
+        answers nothing until each call runs out (found in review: one after another, 2 s a page, and a page can open
+        as many pop-ups as it likes)."""
         context, self._context = self._context, None
         if context is None:
             return
         with contextlib.suppress(Exception):
             context.remove_listener("dialog", self._on_dialog)  # first: a dialog opening now is Playwright's
             context.remove_listener("page", self._on_page)
-        await self.dismiss_all()
-        for task in self._tasks:
-            task.cancel()
+        for task in self._watching:
+            task.cancel()  # a session still opening is detached when it comes (cast_cdp.open_session)
         sessions, self._sessions = list(self._sessions.values()), {}
         self._watched.clear()
-        for session in sessions:
-            await self._call(session.detach())
+        await asyncio.gather(self.dismiss_all(), *(self._call(session.detach()) for session in sessions))
         self._openings.clear()
         self._answered.clear()
         log.info("Dialogs are dismissed again")
 
     async def dismiss_all(self) -> None:
-        """Dismiss every open dialog (accept a beforeunload, letting the navigation go on). Never raises."""
-        while self._open:
-            dialog = self._open[0]
+        """Dismiss every open dialog (accept a beforeunload, letting the navigation go on), all at once: bounded by
+        one browser call's bound. Never raises."""
+        dialogs = list(self._open)
+        for dialog in dialogs:
             self._drop(dialog, ours=True, tell=True)
-            handle = dialog.handle
-            await self._call(handle.accept() if dialog.kind == "beforeunload" else handle.dismiss())
+        await asyncio.gather(
+            *(self._call(d.handle.accept() if d.kind == "beforeunload" else d.handle.dismiss()) for d in dialogs)
+        )
 
     # ---- a stream session
 
@@ -256,7 +262,7 @@ class DialogKeeper:
             return
         self._watched.add(page)
         page.on("close", self._on_page_closed)
-        self._spawn(self._watch(self._context, page))
+        self._spawn(self._watch(self._context, page), self._watching)
 
     def _on_page_closed(self, page: Page) -> None:
         for dialog in [d for d in self._open if d.page is page]:
@@ -319,10 +325,11 @@ class DialogKeeper:
         except Exception:
             log.exception("A stream session failed to take a dialog")
 
-    def _spawn(self, work: Any) -> None:
+    def _spawn(self, work: Any, tasks: set[asyncio.Task[None]] | None = None) -> None:
+        kept = self._tasks if tasks is None else tasks
         task = asyncio.ensure_future(work)
-        self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
+        kept.add(task)
+        task.add_done_callback(kept.discard)
 
     async def _call(self, work: Any) -> bool:
         """One browser call, bounded. False when it failed (the dialog had gone, the page or browser too)."""
