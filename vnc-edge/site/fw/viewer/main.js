@@ -28,7 +28,7 @@ function start(checkout) {
   const $ = (id) => document.getElementById(id);
   let showing = false; // this connection has drawn an image
   let drawing = 0; // a redraw is waiting for the next animation frame
-  let checkoutState = fresh();
+  let live = fresh();
 
   /** What the agent has said in this connection. */
   function fresh() {
@@ -60,7 +60,7 @@ function start(checkout) {
     screen,
     send: gestured,
     changed: redraw,
-    contentHeight: () => (checkoutState.map?.page === frames.current?.page ? checkoutState.map.ch : null),
+    contentHeight: () => (live.map?.page === frames.current?.page ? live.map.ch : null),
   });
   const keyboard = new Keyboard(document, { send, screen, computer });
   const overlays = new Overlays(document, { send });
@@ -83,20 +83,20 @@ function start(checkout) {
   // Each of the agent's JSON messages after `ready`, by type. A type without a handler is ignored.
   const on = {
     pages(msg) {
-      checkoutState.pages = msg;
-      menu.update(checkoutState);
+      live.pages = msg;
+      menu.update(live);
       dialogs.setPages(msg);
     },
     clock(msg) {
-      checkoutState.clock = msg;
-      menu.update(checkoutState);
+      live.clock = msg;
+      menu.update(live);
     },
     fields(msg) {
-      checkoutState.map = msg;
+      live.map = msg;
       refresh();
     },
     fields_ok(msg) {
-      checkoutState.map = withOk(checkoutState.map, msg);
+      live.map = withOk(live.map, msg);
       refresh();
     },
     focus: focused,
@@ -113,8 +113,8 @@ function start(checkout) {
       dialogs.reset();
       options.hide();
       overlays.clear();
-      checkoutState = fresh();
-      menu.update(checkoutState);
+      live = fresh();
+      menu.update(live);
       showing = false;
       if (status.showing !== "reconnecting") status.show("opening");
     },
@@ -141,7 +141,7 @@ function start(checkout) {
     const number = connection.send(msg);
     const moves = ["tap", "choose", "date", "dialog", "page"].includes(msg.t);
     if (number !== null && (moves || (msg.t === "key" && FOCUS_KEYS.has(msg.k) && msg.ph !== "up"))) {
-      checkoutState.focusMoved = number;
+      live.focusMoved = number;
     }
     if (number !== null && msg.t !== "ack" && msg.t !== "visible" && msg.t !== "move") refresh();
     return number;
@@ -160,7 +160,7 @@ function start(checkout) {
   /** The field map, if it describes exactly what is drawn (PROTOCOL.md §8.3). */
   function usableMap() {
     const { shift, zoom } = input.gestures.view();
-    const { map } = checkoutState;
+    const { map } = live;
     return mapUsable(map, frames.current, connection.lastInput, shift !== 0 || zoom !== null) ? map : null;
   }
 
@@ -180,8 +180,8 @@ function start(checkout) {
 
   /** The agent's report of the pod's focused field (§5.4), if it is about what the user last did. */
   function focused(msg) {
-    if (msg.page !== frames.current?.page || msg.n < checkoutState.focusMoved) return;
-    checkoutState.focus = msg;
+    if (msg.page !== frames.current?.page || msg.n < live.focusMoved) return;
+    live.focus = msg;
     keyboard.report(msg.f);
     if (msg.popup && msg.f?.k === "select") options.show(msg.f);
     else if (options.isOpen) options.hide();
@@ -189,7 +189,7 @@ function start(checkout) {
 
   /** An option of the option sheet: for the select of the map that the pod opened. */
   function chose(index) {
-    const { map, focus } = checkoutState;
+    const { map, focus } = live;
     const field = findSelect(map, focus?.f);
     if (field) send({ t: "choose", page: map.page, rev: map.rev, f: field.id, i: index });
     else send({ t: "key", k: "Escape" }); // the map hasn't caught up: close the pod's list, and the user taps again

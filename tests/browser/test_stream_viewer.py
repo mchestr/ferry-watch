@@ -1222,3 +1222,27 @@ async def test_what_the_checkouts_pages_say_is_shown_as_text(phone: Viewer, chec
     assert title == MARKUP
     assert await phone.evaluate("document.querySelectorAll('img').length") == 0
     assert await phone.evaluate("document.title") == "Ferry Watch checkout"
+
+
+async def test_the_proxy_follows_the_pods_focus(viewer: Viewer, checkout: Edge) -> None:
+    """PROTOCOL.md §5.4: when the page moves the focus itself (a card number on to its expiry), the proxy takes the
+    new field's keyboard; when nothing editable has focus, the keyboard goes. A computer's proxy takes focus from
+    the reports alone, with no tap."""
+    session, seq = await started(viewer, checkout)
+    card, expiry = ({k: v for k, v in FIELDS[3].items() if k != "id"}, {**FIELDS[1], "ac": "cc-exp", "im": "numeric"})
+    expiry.pop("id")
+    if viewer.device == "phone":
+        await send_map(session, FIELDS, seq=seq)
+        await tap(viewer, 195, 240)
+        await session.wait_for("tap")
+    focus = {"t": "focus", "page": 1, "seq": seq, "popup": False}
+    await session.send({**focus, "n": session.number, "f": card})
+    assert await until(lambda: viewer.evaluate("document.activeElement.id"), lambda a: a == "proxy") == "proxy"
+    assert await viewer.page.get_attribute("#proxy", "autocomplete") == "cc-number"
+    await session.send({**focus, "n": session.number, "f": expiry})
+    autocomplete = await until(lambda: viewer.page.get_attribute("#proxy", "autocomplete"), lambda a: a == "cc-exp")
+    assert autocomplete == "cc-exp"
+    assert await viewer.evaluate("document.activeElement.id") == "proxy"
+    await session.send({**focus, "n": session.number, "f": None})
+    assert await until(lambda: viewer.evaluate("document.activeElement.id"), lambda a: a != "proxy") != "proxy"
+    assert not await viewer.page.is_visible("#type-chip")
