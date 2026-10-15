@@ -18,6 +18,7 @@ import { NAMED_KEYS } from "./core/protocol.js";
 import { codePoints, composeMessages, edit, isClean, normalise, tail, textMessages } from "./core/text.js";
 
 const KEPT = 64; // code points of context kept for the phone's keyboard
+const REPEAT_MS = 25; // a held key's repeats are sent at most this often (PROTOCOL.md §8.4)
 const REVEAL_MARGIN = 16; // CSS px between a field and the phone's keyboard
 const MAX_DELTA = 4000;
 const DELETES = {
@@ -51,6 +52,7 @@ export class Keyboard {
     this.revealed = false;
     this.composition = null; // the composition last sent
     this.held = new Map(); // a physical key's `code` → the key message its `down` sent
+    this.repeated = new Map(); // a held key's `code` → when its latest repeat was sent
 
     const proxy = this.proxy;
     proxy.addEventListener("beforeinput", (event) => this.beforeinput(event));
@@ -258,16 +260,34 @@ export class Keyboard {
     const altGraph = event.getModifierState?.("AltGraph") ?? false; // a character, not a shortcut
     if (!msg || ((event.ctrlKey || event.altKey || event.metaKey) && !(altGraph && msg.c))) return;
     event.preventDefault();
-    if (event.repeat || this.held.has(event.code)) return; // the pod's Chromium never repeats a key itself
+    const held = this.held.get(event.code);
+    if (held) {
+      this.repeat(event.code, held);
+      return;
+    }
+    if (event.repeat) return; // it went down before the viewer had the keyboard
     this.held.set(event.code, msg);
     this.send({ t: "key", ...msg, ph: "down" });
     if (msg.k && msg.k !== "Shift" && msg.k !== "Backspace") this.forget();
+  }
+
+  /**
+   * The computer's keyboard repeats a key held down (Backspace to clear a field, an arrow to move the caret): the
+   * pod's Chromium never repeats one itself, so each repeat goes as another `down` of the same key (§6.9), at most
+   * one every REPEAT_MS. Shift doesn't repeat.
+   */
+  repeat(code, msg) {
+    const now = performance.now();
+    if (msg.k === "Shift" || now - (this.repeated.get(code) ?? -Infinity) < REPEAT_MS) return;
+    this.repeated.set(code, now);
+    this.send({ t: "key", ...msg, ph: "down" });
   }
 
   keyup(event) {
     const msg = this.held.get(event.code);
     if (!msg) return;
     this.held.delete(event.code);
+    this.repeated.delete(event.code);
     event.preventDefault();
     this.send({ t: "key", ...msg, ph: "up" });
   }
@@ -276,6 +296,7 @@ export class Keyboard {
   releaseAll() {
     for (const msg of this.held.values()) this.send({ t: "key", ...msg, ph: "up" });
     this.held.clear();
+    this.repeated.clear();
   }
 }
 

@@ -116,6 +116,14 @@ REFUSED: list[tuple[str, dict[str, Any]]] = [
         "Input.dispatchKeyEvent",
         {"type": "keyDown", "key": "a", "code": "KeyA", "windowsVirtualKeyCode": 65, "text": "ab"},
     ),
+    (
+        "Input.dispatchKeyEvent",
+        {"type": "keyUp", "key": "a", "code": "KeyA", "windowsVirtualKeyCode": 65, "autoRepeat": True},
+    ),
+    (
+        "Input.dispatchKeyEvent",
+        {"type": "keyDown", "key": "a", "code": "KeyA", "windowsVirtualKeyCode": 65, "autoRepeat": 1},
+    ),
     ("Input.insertText", {"text": "a\u0000b"}),
     ("Input.insertText", {"text": "x" * 257}),
     ("Input.imeSetComposition", {"text": "a\nb", "selectionStart": 3, "selectionEnd": 3}),

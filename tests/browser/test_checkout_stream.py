@@ -600,6 +600,12 @@ async def test_text_keys_and_composition_reach_the_page_and_the_card_frame(rig: 
     assert focus["f"]["im"] == "numeric"
 
 
+# Whether each Backspace keydown the page gets is a repeat.
+BACKSPACES = (
+    "window.__repeats = []; addEventListener('keydown', (e) => e.key === 'Backspace' && __repeats.push(e.repeat))"
+)
+
+
 async def test_a_desktops_keys_are_real_presses_with_shift(rig: Rig) -> None:
     await rig.pod.at(f"{rig.sites.shop}/index.html")
     viewer = await rig.connect(DESKTOP)
@@ -607,6 +613,7 @@ async def test_a_desktops_keys_are_real_presses_with_shift(rig: Rig) -> None:
     await tap(viewer, rig.pod, middle(await frame_rect(rig.pod, "#name")))
     assert await _until(lambda: focused(rig.pod), lambda f: f == "name") == "name"
     await rig.tab("window.__log = []")
+    await rig.tab(BACKSPACES)
     for message in (
         {"t": "key", "k": "Shift", "ph": "down"},
         {"t": "key", "c": "M", "ph": "down"},
@@ -627,6 +634,19 @@ async def test_a_desktops_keys_are_real_presses_with_shift(rig: Rig) -> None:
         ["keyup", "name", 0, 0, "Shift"],
     ]
     assert [k[0] + k[4] for k in keys[4:]] == ["keydowni", "keydownk", "keyupi", "keyupk"]
+
+    # A held key's repeats (PROTOCOL §6.9) act as a held key does on the computer's own pages: Backspace held for
+    # two repeats deletes three characters.
+    for message in (
+        {"t": "key", "k": "Backspace", "ph": "down"},
+        {"t": "key", "k": "Backspace", "ph": "down"},
+        {"t": "key", "k": "Backspace", "ph": "down"},
+        {"t": "key", "k": "Backspace", "ph": "up"},
+    ):
+        await viewer.send(message)
+    assert await _until(lambda: rig.pod.tab.input_value("#name"), lambda v: v == "") == ""
+    repeats = await rig.tab("window.__repeats")
+    assert repeats == [False, True, True], repeats
 
 
 # ---- 8. pickers that never click what the user didn't pick

@@ -930,10 +930,41 @@ async def computer_keys(viewer: Viewer, checkout: Edge) -> None:
         {"t": "key", "c": "4", "ph": "down"},
         {"t": "key", "c": "4", "ph": "up"},
     ]
+    # A key held down repeats as the computer's keyboard repeats it: another `down` each time (Playwright sends a
+    # held key's later downs as repeats, as a keyboard does). Shift doesn't repeat.
+    await keyboard.down("Shift")
+    await keyboard.down("Shift")
+    await keyboard.up("Shift")
+    await keyboard.down("Backspace")
+    for _ in range(2):
+        await asyncio.sleep(0.05)
+        await keyboard.down("Backspace")
+    await keyboard.up("Backspace")
+    keys = await session.wait_for("key", count=14)
+    backspace = {"t": "key", "k": "Backspace"}
+    assert keys[8:] == [
+        {"t": "key", "k": "Shift", "ph": "down"},
+        {"t": "key", "k": "Shift", "ph": "up"},
+        *[backspace | {"ph": "down"}] * 3,
+        backspace | {"ph": "up"},
+    ]
+    # Repeats closer together than 25 ms: the first goes, the rest wait for the next.
+    await viewer.evaluate(
+        """() => {
+          const key = (type, repeat) => document.body.dispatchEvent(
+            new KeyboardEvent(type, { key: "ArrowLeft", code: "ArrowLeft", repeat, bubbles: true }));
+          key("keydown", false);
+          for (let i = 0; i < 5; i++) key("keydown", true);
+          key("keyup", false);
+        }"""
+    )
+    keys = await session.wait_for("key", count=17)
+    left = {"t": "key", "k": "ArrowLeft"}
+    assert keys[14:] == [left | {"ph": "down"}, left | {"ph": "down"}, left | {"ph": "up"}]
     # A key held when the window loses focus is let go.
     await keyboard.down("x")
     await viewer.evaluate("() => dispatchEvent(new Event('blur'))")
-    keys = await session.wait_for("key", count=10)
+    keys = await session.wait_for("key", count=19)
     assert keys[-2:] == [{"t": "key", "c": "x", "ph": "down"}, {"t": "key", "c": "x", "ph": "up"}]
     await keyboard.up("x")
 

@@ -2,9 +2,9 @@
 
 Everything is mouse, wheel or keyboard, as from a Mac with a trackpad: no touch, no emulation. A tap or a pinch
 names the image it was aimed at, and is refused (`error stale`, nothing sent) when the page has moved since.
-Keys come from a fixed table with no modifier but Shift (and Ctrl for word-wise editing); held keys are tracked
-and released at teardown. `choose` and `date` never click a point where anything but the field would get the
-click, and press no key until the field has focus (C40).
+Keys come from a fixed table with no modifier but Shift (and Ctrl for word-wise editing); held keys are tracked,
+repeated as the viewer's keyboard repeats them, and released at teardown. `choose` and `date` never click a point
+where anything but the field would get the click, and press no key until the field has focus (C40).
 
 Coordinates: the viewer sends frame px of the image; CDP Input takes CSS px of the visual viewport, so a point
 (x, y) is dispatched at (x/s, y/s) with s the page scale (PROTOCOL §1).
@@ -254,8 +254,10 @@ class InputMapper:
             await self._down(key, modifiers)
             await self._up(key, modifiers)
         elif message.ph == "down":
-            if held in self._held:
-                return  # CDP never repeats a key
+            if held in self._held:  # the viewer's keyboard repeating a key held down (CDP never repeats one itself)
+                if held != ("k", "Shift"):
+                    await self._down(key, self._modifiers(), repeat=True)
+                return
             if len(self._held) >= MAX_HELD:
                 await self._release(next(iter(self._held)))
             self._held[held] = key
@@ -305,7 +307,7 @@ class InputMapper:
         key = self._held.pop(held)
         await self._up(key, self._modifiers())
 
-    async def _down(self, key: _Key, modifiers: int) -> None:
+    async def _down(self, key: _Key, modifiers: int, *, repeat: bool = False) -> None:
         event: dict[str, Any] = {"key": key.key, "code": key.code, "windowsVirtualKeyCode": key.vk}
         if key.text is None:
             event["type"] = "rawKeyDown"
@@ -313,6 +315,8 @@ class InputMapper:
             event |= {"type": "keyDown", "text": key.text}
             if key.unmodified is not None:
                 event["unmodifiedText"] = key.unmodified
+        if repeat:
+            event["autoRepeat"] = True
         await self._session().send("Input.dispatchKeyEvent", {**event, "modifiers": modifiers})
 
     async def _up(self, key: _Key, modifiers: int) -> None:

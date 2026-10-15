@@ -91,7 +91,7 @@ def _one_key(value: object) -> bool:
 
 
 def _key(params: Mapping[str, Any], _cdp: Cdp) -> bool:
-    optional = frozenset({"text", "unmodifiedText", "modifiers"})
+    optional = frozenset({"text", "unmodifiedText", "modifiers", "autoRepeat"})
     if not _shape(params, {"type", "key", "code", "windowsVirtualKeyCode"}, optional):
         return False
     code = params["code"]
@@ -109,6 +109,8 @@ def _key(params: Mapping[str, Any], _cdp: Cdp) -> bool:
         and _integer(params["windowsVirtualKeyCode"], 0, 255)
         and texts_ok
         and params.get("modifiers", 0) in _MODIFIERS
+        and params.get("autoRepeat", True) is True  # only ever set, and only on a down
+        and ("autoRepeat" not in params or params["type"] != "keyUp")
     )
 
 

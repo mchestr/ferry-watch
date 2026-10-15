@@ -232,12 +232,15 @@ def mapper(case: dict[str, Any]) -> tuple[InputMapper, InputSession, list[float]
 
 
 def made(calls: list[tuple[str, dict[str, Any]]], expected: list[dict[str, Any]]) -> bool:
-    """The calls are the expected ones: every listed param there with its value (a missing `modifiers` is 0)."""
+    """The calls are the expected ones: every listed param there with its value (a missing `modifiers` is 0, a
+    missing `autoRepeat` false)."""
     if len(calls) != len(expected):
         return False
     for (method, params), want in zip(calls, expected, strict=True):
         wanted = want.get("params", want)
         if want.get("method", method) != method or params.get("modifiers", 0) != wanted.get("modifiers", 0):
+            return False
+        if params.get("autoRepeat", False) != wanted.get("autoRepeat", False):
             return False
         if not all(near(params.get(k), v) for k, v in wanted.items()):
             return False

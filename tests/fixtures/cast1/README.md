@@ -257,7 +257,7 @@ within 3.5 s.
 | `error` | string | the `error` code answered instead (`"stale"`); `calls` is then empty |
 
 Every listed param must be there with this value; an implementation may add others, except that a missing
-`modifiers` counts as 0 and a present one must match.
+`modifiers` counts as 0 and a missing `autoRepeat` as false, and a present one must match.
 
 `keys`: `msgs`, key messages carried out in order from a fresh session; `teardown` (optional), the session then
 tears down (§3.5); `events`, the params of each `Input.dispatchKeyEvent` in order, matched as `calls` params are.

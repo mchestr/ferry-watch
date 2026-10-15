@@ -686,9 +686,11 @@ Agent:
   `keyUp`, with the key's `key`, `code` and Windows virtual key code (DESIGN §6.5 has the table), modifiers 8 for
   `shift` (or while a `Shift` is held down), 2 for `word`.
 - `ph: down`: the down half only; the agent records the key as held. At most **6** keys are held; a seventh `down`
-  first releases the oldest. A `down` for a key already held is ignored (CDP never auto-repeats). While `Shift` is
-  held, every key event carries modifiers 8 (the `Shift`'s own `rawKeyDown` included, its `keyUp` not, as a real
-  keyboard reports them).
+  first releases the oldest. A `down` for a key already held is a **repeat** (the viewer's keyboard auto-repeating
+  it; CDP never repeats a key itself): the agent dispatches the down half again with `autoRepeat: true` (`keyDown`
+  with `text` for a character or Enter, `rawKeyDown` otherwise), as a real keyboard's held key does; a repeat of a
+  held `Shift` is ignored. While `Shift` is held, every key event carries modifiers 8 (the `Shift`'s own
+  `rawKeyDown` included, its `keyUp` not, as a real keyboard reports them).
 - `ph: up`: the up half, if that key (`k` or `c`, compared exactly) is held; otherwise ignored.
 - Teardown releases every held key (§3.5).
 - `focus` (§5.4) follows `Tab`, `Enter` and `Escape`.
@@ -772,7 +774,7 @@ nothing from any bucket. The 10 s of the drop limit is a sliding window.
 | `move` | 40 | 40 | one per 33 ms |
 | `wheel` | 40 | 20 | one per 33 ms (§6.6) |
 | `pinch` | 4 | 2 | |
-| `key` | 60 | 40 | (down and up halves are separate messages) |
+| `key` | 60 | 40 | (down and up halves are separate messages; a held key's repeats one per 25 ms, §8.4) |
 | `text` | 20 messages and 512 code points | 10 messages, 1024 code points | |
 | `compose` | 60 | 30 | |
 | `choose`, `date` | 4 | 2 | |
@@ -857,9 +859,10 @@ viewer's own controls.
 - **Physical keyboard** (a `keydown`/`keyup` with `isComposing` false and no Ctrl, Alt or Meta, except AltGr-made
   characters): `key` with `ph: down` on `keydown` and `ph: up` on `keyup`, for the named keys of §6.9, `Shift`, and
   keys whose `key` is one code point of clean text (sent as `c`; the `up` carries the same `c` its `down` did,
-  matched by `KeyboardEvent.code`); `preventDefault` on those `keydown`s. Dead keys, IME (`key` "Process") and
-  everything else are left to the composition and `beforeinput` paths. On `blur` of the viewer window, every key
-  sent down is sent up.
+  matched by `KeyboardEvent.code`); `preventDefault` on those `keydown`s. A `keydown` for a key already sent down
+  (the keyboard's auto-repeat) is sent as another `ph: down` of that key, with the same `k` or `c`, at most one every
+  **25 ms**, and not for `Shift`. Dead keys, IME (`key` "Process") and everything else are left to the composition
+  and `beforeinput` paths. On `blur` of the viewer window, every key sent down is sent up.
 - **On-screen keyboards** (no physical `keydown` for the character, `beforeinput` on the proxy): whole presses
   (`key` without `ph`), `text`, `compose`.
 - Cmd/Ctrl/Alt combinations are never sent; paste arrives as `beforeinput insertFromPaste` (§8.7).

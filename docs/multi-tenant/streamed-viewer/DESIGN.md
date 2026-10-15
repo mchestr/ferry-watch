@@ -862,7 +862,8 @@ read once per session in the main world must start with `en-US`, else `date` ans
 
 **Physical keyboards (computers).**
 - `keydown`/`keyup` → `key` with `ph` per PROTOCOL §8.4, whether or not the proxy is focused (type-ahead and
-  keyboard navigation work).
+  keyboard navigation work). A held key's auto-repeats are further `down`s (at most one per 25 ms), which the agent
+  dispatches with `autoRepeat` (found in review: holding Backspace or an arrow acted once, as CDP never repeats).
 - Dead keys and IME fall through to the composition path.
 - On window `blur`, every key sent down is sent up.
 - Cmd/Ctrl combinations are never sent; paste works through `beforeinput insertFromPaste`.

@@ -458,7 +458,7 @@
       ]
     },
     {
-      "id": "down-twice", "sec": "6.9",
+      "id": "down-twice-repeats", "sec": "6.9",
       "msgs": [
         {"t": "key", "c": "a", "ph": "down"}, {"t": "key", "c": "a", "ph": "down"},
         {"t": "key", "c": "a", "ph": "up"}
@@ -466,9 +466,40 @@
       "events": [
         {"type": "keyDown", "key": "a", "code": "KeyA", "windowsVirtualKeyCode": 65, "text": "a",
          "unmodifiedText": "a", "modifiers": 0},
+        {"type": "keyDown", "key": "a", "code": "KeyA", "windowsVirtualKeyCode": 65, "text": "a",
+         "unmodifiedText": "a", "modifiers": 0, "autoRepeat": true},
         {"type": "keyUp", "key": "a", "code": "KeyA", "windowsVirtualKeyCode": 65, "modifiers": 0}
       ],
-      "note": "no auto-repeat: a down for a held key is ignored"
+      "note": "a down for a held key is the keyboard's auto-repeat: the down half again, marked as a repeat"
+    },
+    {
+      "id": "held-named-key-repeats", "sec": "6.9",
+      "msgs": [
+        {"t": "key", "k": "Backspace", "ph": "down"}, {"t": "key", "k": "Backspace", "ph": "down"},
+        {"t": "key", "k": "Backspace", "ph": "down"}, {"t": "key", "k": "Backspace", "ph": "up"}
+      ],
+      "events": [
+        {"type": "rawKeyDown", "key": "Backspace", "code": "Backspace", "windowsVirtualKeyCode": 8, "modifiers": 0},
+        {"type": "rawKeyDown", "key": "Backspace", "code": "Backspace", "windowsVirtualKeyCode": 8, "modifiers": 0,
+         "autoRepeat": true},
+        {"type": "rawKeyDown", "key": "Backspace", "code": "Backspace", "windowsVirtualKeyCode": 8, "modifiers": 0,
+         "autoRepeat": true},
+        {"type": "keyUp", "key": "Backspace", "code": "Backspace", "windowsVirtualKeyCode": 8, "modifiers": 0}
+      ]
+    },
+    {
+      "id": "held-shift-doesnt-repeat", "sec": "6.9",
+      "msgs": [
+        {"t": "key", "k": "Shift", "ph": "down"}, {"t": "key", "k": "Shift", "ph": "down"},
+        {"t": "key", "c": "M", "ph": "down"}, {"t": "key", "c": "M", "ph": "up"}, {"t": "key", "k": "Shift", "ph": "up"}
+      ],
+      "events": [
+        {"type": "rawKeyDown", "key": "Shift", "code": "ShiftLeft", "windowsVirtualKeyCode": 16, "modifiers": 8},
+        {"type": "keyDown", "key": "M", "code": "KeyM", "windowsVirtualKeyCode": 77, "text": "M",
+         "unmodifiedText": "m", "modifiers": 8},
+        {"type": "keyUp", "key": "M", "code": "KeyM", "windowsVirtualKeyCode": 77, "modifiers": 8},
+        {"type": "keyUp", "key": "Shift", "code": "ShiftLeft", "windowsVirtualKeyCode": 16, "modifiers": 0}
+      ]
     },
     {
       "id": "up-not-held", "sec": "6.9",
