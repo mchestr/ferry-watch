@@ -70,13 +70,15 @@ running until cutover.
 |---|---|
 | `Dockerfile`, `build.py` | Stock nginx-unprivileged plus KasmVNC 1.5.0's web client from the sha256-checked package, with one line inserted in `vnc.html`. `build.py` computes the CSP from the shipped page and fails the build if the page no longer has exactly one inline script and one module script. |
 | `default.conf.in` | §7.9's nginx config: the landing page, the client's files, and one WebSocket proxy per pod, nothing else. |
-| `site/fw/shim.js` | Offers the device's nonce, and the ticket until the first connect succeeds, on this checkout's socket only; reloads with back-off if the client gives up; stops at the hard deadline. |
-| `site/fw/landing.html`, `landing.js`, `site/gone.html` | The ticket in, the nonce made and kept, the sailing and deadlines shown as text; an expired ticket goes back to Ferry Watch to open it again. |
+| `site/fw/shim.js` | Offers the device's nonce, and the ticket until the first connect succeeds, on this checkout's socket only; reloads with back-off if the client gives up; stops at the hard deadline. Separately: closes the client's side panel as it connects, hides its stream-mode notice, and on a touch screen turns a one-finger drag into scrolling (§7.9, *As built, on a phone*). |
+| `site/fw/landing.html`, `landing.js`, `site/gone.html` | The ticket in, the nonce made and kept, the sailing and deadlines shown as text; an expired ticket goes back to Ferry Watch to open it again. Opens the viewer at the device's own size, with a keyboard button on a touch screen. |
 | `smoke-test.sh` | Run by CI against the image, read-only and unprivileged. |
 
 `tests/browser/test_checkout_edge.py` drives KasmVNC's stock client in Chromium through the shim into the
 real gate (with a minimal RFB server for Xvnc): first connect with ticket and nonce, a reload by nonce alone,
-an expired ticket, no key at all, and the end of the hold.
+an expired ticket, no key at all, the end of the hold, and the viewer's settings with and without touch.
+`tests/browser/test_checkout_screen.py` runs the client against the pod's real Xvnc and Chromium, from a computer
+and from a phone-sized touch viewer.
 
 ### Images
 

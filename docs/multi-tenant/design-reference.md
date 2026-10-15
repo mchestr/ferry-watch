@@ -2041,7 +2041,8 @@ would fail every upgrade.
 The image `ferry-watch-vnc-edge` is `nginxinc/nginx-unprivileged` by digest. It adds:
 - the KasmVNC `www` files extracted unmodified from the same sha256-checked deb (`Dockerfile:20-32`);
 - one inserted line in `vnc.html`: `<script src="/fw/shim.js"></script>` before the client's module script;
-- `/fw/shim.js` (about 60 lines) and the landing page `/fw/landing.html` (about 60 lines);
+- `/fw/shim.js` (the socket wrapper below, and the touch handling in *As built, on a phone*) and the landing
+  page `/fw/landing.html`;
 - a CSP computed at image build from the shipped `vnc.html` (the hash of its one inline `<script>`).
 
 The client's minified bundle is **not** patched. KasmVNC 1.5.0's client reads its settings from the URL hash
@@ -2052,7 +2053,8 @@ matching `^wss://ferry-checkout\.chestr\.dev/t/[a-f0-9]{16}/g/[0-9]{1,6}/ws$` on
 first successful open. If the client gives up reconnecting before the hold deadline it knows from `disp`, the
 shim reloads `vnc.html` with back-off (1, 2, 5, 10 s), so retries are effectively uncapped until the deadline.
 The landing page sets
-`#path=t/<trip>/g/<gen>/ws&autoconnect=1&reconnect=1&reconnect_delay=1000&idle_disconnect=120` and shows the
+`#path=t/<trip>/g/<gen>/ws&autoconnect=1&reconnect=1&reconnect_delay=1000&idle_disconnect=120&anti_aliasing=1`,
+plus `&virtual_keyboard_visible=1` on a touch screen (*As built, on a phone*), and shows the
 sailing and deadlines with `textContent`, plus a static note: "Check out as a guest. Don't sign in to BC Ferries
 here: it doesn't accept a sign-in while a cart is held" (§5.7). If the fragment's ticket has already expired (a
 slow load) and this device holds no lock yet, it sends the user back to `https://ferry.chestr.dev/c/<trip>` to
@@ -2107,6 +2109,56 @@ from a wrapper function rather than a subclass. `connect-src` also lists `data:`
 probe the browser's video decoders (a `data:` URL never leaves the page). The landing page keeps the pending
 ticket in the tab's sessionStorage, strips it from the address bar, and opens the viewer after two seconds or
 on "Open checkout". The client's request for `/package.json` gets the 404 every unlisted path gets.
+
+*As built, on a phone* (owner feedback: the checkout "works", but scrolls "like a monitor" and is "a bit jank on
+mobile"). The client stays stock; what changes is the fragment the landing page writes, and two more IIFEs in the
+shim, separate from its socket wrapper. Each relies on undocumented client internals and does nothing if they
+change: `tests/browser/test_checkout_screen.py` runs them with a phone-sized viewer (390x664 CSS px at 3x, touch)
+against the pod's real screen, and `test_checkout_edge.py` pins the fragment, so a KasmVNC bump that breaks them
+fails CI.
+- **The checkout at the phone's own size.** With `anti_aliasing` at its default 0, KasmVNC 1.5.0's client
+  auto-scales on a small high-DPI screen (DPR above 1, viewport under 1000 CSS px): it asks for a screen
+  DPR/1.5 times the viewport (DPR/2 above 2x), so an iPhone's 390 px became a 585 px screen and the checkout
+  showed at two thirds of its size. `anti_aliasing=1` skips that: the screen is the phone's CSS viewport
+  (390x664 on an iPhone 13), so bcferries.com lays out for a phone, at its own text size. The client draws the 1x
+  screen smoothed (bilinear) on the phone's 3x display; nearest-neighbour looked blockier. A computer's screen
+  size is unchanged (the auto-scaling never applied at 1000 px and wider); a high-DPI computer's now smoothed
+  too instead of nearest-neighbour.
+- **A keyboard button**, on touch screens only (`navigator.maxTouchPoints > 0`): `virtual_keyboard_visible=1`
+  shows the client's floating keyboard button (draggable; holding it shows Ctrl, Alt, Tab, Esc and other keys,
+  which the side panel's Keys already offered). A phone opens its keyboard only for a field on the viewer's own page, and a
+  tap on a checkout field focuses only the pod's field, so the button is how the keyboard opens.
+- **The side panel out of the way.** The client opens its side panel on load and closes it 2 s after connecting,
+  but on a phone the panel covers most of the screen, and a tap on it in those 2 s keeps it open. The shim
+  closes it as `<html>` gets `noVNC_connected`; its handle still opens it. The shim also hides
+  `#noVNC_notification_overlay`, which names the stream mode ("JPEG/WEBP (Images)") in 30 px type across the
+  top of the screen for 3.5 s.
+- **One finger scrolls.** The client turns touches into `gesturestart`/`gesturemove`/`gestureend` events on its
+  canvas, and sends a one-finger `drag` as a left-button mouse drag, which selects text on the checkout. A
+  capturing listener on `window` sees these first and takes only `detail.type === "drag"`: it gives the client
+  wheel events at the canvas instead, half a delta unit per CSS px of finger travel (Xvnc scrolls the pod's
+  Chromium 2-2.4 px per unit, linearly from 1 to 64; a slow 300 px drag scrolls the page about 310 px),
+  along the axis the drag starts on. After a flick it coasts, decaying with a 200 ms time constant; a new touch
+  stops the coast, and, as in a browser, a tap that stops one doesn't click. Before taking a drag it sends a
+  zero-delta wheel event, and if the client doesn't cancel it (the client cancels every wheel event it
+  forwards), the drag stays the client's. Taps, long press (a right click), two-finger scrolling, pinch
+  (Ctrl+wheel) and the mouse are untouched. The cost: a one-finger mouse drag (a slider, drag-to-select) is no
+  longer possible on a touch screen; nothing in a guest checkout needs one.
+- **What the pod's automation sees.** The screen keeps a viewer's size after it leaves (Xvnc doesn't restore
+  it), so after a phone viewer the pod's Chromium is phone-sized; before this change it stayed 585 px wide. It
+  doesn't matter: a pod that had a checkout viewer only empties the cart (a navigation to a fixed URL) and exits
+  (C22), and a pod nobody viewed keeps its 1280x1000.
+- None of this touches the security design: no new listener, the same tickets, nonce and gate admission, and the
+  same CSP (the shim is `'self'`; vnc.html's inline-script hash still comes from KasmVNC's file).
+
+Still janky on a phone:
+- The keyboard doesn't open when a checkout field is tapped (above): the user taps the keyboard button.
+- The client's IME handling loses letters from a composition (what predictive and autocorrecting keyboards
+  send): in emulation, typing "Mike" and then composing "Chester" reached the pod as "MikeCester".
+- Text is drawn at 1x and smoothed onto a 2x or 3x display, so it's softer than a native page. Sharper text would
+  need the pod's Chromium to render at the phone's DPR, a much larger screen to send.
+- Every scroll is a round trip: the page moves when the pod's next frame arrives, so it trails the finger by the
+  network's latency, and there's no rubber-banding at the ends of the page.
 
 ### 7.10 Deployment layout and the home-cluster split
 
