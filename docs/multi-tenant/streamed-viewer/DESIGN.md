@@ -27,7 +27,8 @@ Round-2 scripts live in `round2/`.
   `fw.cast1`) and accepts a narrow, validated input protocol.
 - The viewer always offers "Use the classic viewer", which opens KasmVNC for the same checkout on the same
   device by the same nonce.
-- Everyone else gets KasmVNC exactly as in 0.6.4.
+- Everyone else gets KasmVNC exactly as in 0.6.4, but for JavaScript dialogs: 0.7.0 leaves them on the pod's screen
+  for the classic viewer to answer instead of dismissing them unseen (§16 decision 2, decided: fix it now).
 
 **A sharp, phone-shaped page without touching the pod at launch.** For a streamed session only, the agent:
 - sets Xvnc's X screen to the viewer's CSS size times a scale factor, with one RandR mode (`xrandr`);
@@ -123,7 +124,7 @@ before anything reaches the agent.
 
 | Owner decision | How it is met |
 |---|---|
-| Per-user beta switch, default off; KasmVNC for everyone else, unchanged | `checkout_viewer` defaults to `classic`. ferry-web emits the 0.6.4 URL byte-for-byte for classic users. vnc.html, its CSP and the shim's behaviour are unchanged (§9). Who can see the switch at launch is §16 decision 1 |
+| Per-user beta switch, default off; KasmVNC for everyone else, unchanged but for dialogs | `checkout_viewer` defaults to `classic`. ferry-web emits the 0.6.4 URL byte-for-byte for classic users. vnc.html, its CSP and the shim's behaviour are unchanged (§9). Who can see the switch at launch is §16 decision 1. The one deliberate change to the classic path is dialogs (§13, §16 decision 2) |
 | Streamed viewer on any device, with a classic escape hatch on the same device that a broken beta can't strand | The escape hatch is in viewer.html's static markup and is shown by `fw/session.js` (a classic script) 3 s after load unless the viewer module reports ready, and on any uncaught error (PROTOCOL §8.10). The menu, status screens and close code 4005 also lead there. It reconnects by the device's nonce (verified round 1: no ticket needed) |
 | Nothing the KasmVNC path depends on changes at launch; per-session changes undone or irrelevant afterwards | No change to `processes.py`, Xvnc flags, matchbox, Chromium's launch arguments or scale factor. A stream's screen is left in place while it can only matter to another stream from the same device. It is undone before any `binary` viewer is bridged: DPR 1, 1280x1000, modes removed, xsettingsd stopped (§4.1; measured 44 ms) |
 | Same security model; an equivalent connection cap; the admin never views | §5 |
@@ -425,7 +426,8 @@ the pod "is this a field?" during `touchend`, so it must already know.
 - `Page.startScreencast {format: jpeg, quality: 50, everyNthFrame: 2}`, every Chromium frame acked at once.
 - At most 15 images a second forwarded, at most 2 un-acked by the viewer (newest wins), and a 2-slot repeat cache
   keyed by SHA-256.
-- The screencast needs no `Page.enable` (`round2/s2_bounds.py`). Page is enabled only for dialog origins.
+- The screencast needs no `Page.enable` (`round2/s2_bounds.py`). Page is enabled only by the dialog keeper, on its
+  own sessions, for dialog origins and closings (§6.1).
 
 **Measured on the pod screen** (390x844 at 2x; links simulated in-process; round 1):
 
@@ -577,8 +579,8 @@ C12 (single viewer) holds across kinds: one slot, and the replaced viewer is clo
   characters measured.
   - In 0.6.4 it reaches Playwright's Node driver (whose CDP session receives every dialog event) but not the Python
     agent, because no listener is registered.
-  - From a pod's first stream session on, the stream's dialog listener means the Python agent receives it too, then
-    cuts it to 256.
+  - From a pod's first viewer on (of either kind), the dialog keeper's listener means the Python agent receives it
+    too, then cuts it to 256.
   - Neither process can bound it before receipt; a page could push one huge string per dialog, as it already can
     into the driver. Recorded in §13 with the classic dialog finding.
 
@@ -592,8 +594,8 @@ C12 (single viewer) holds across kinds: one slot, and the replaced viewer is clo
 | `src/ferry_watch/agent/cast_scripts.py` (new) | The fixed isolated-world scripts (reference: `round2/cast_scripts.py`) and `call(script, *args) -> str`, which formats the expression from ints/finite floats only |
 | `src/ferry_watch/agent/screen.py` (new) | `Screen.apply(w, h, dsf) -> bool` (no-op when unchanged; DPI then mode), `Screen.restore()` (bounded 3 s, never raises), `Screen.current` (reference: `round2/screen2.py`) |
 | `src/ferry_watch/agent/stream.py` (new) | `CastSession`; `Cdp` (the allowlist wrapper); `FramePump` (live/still/paused, seeding, window, repeat cache, metadata ring of 16); `Worlds` (per-frame worlds, owner chain, invalidation on `framenavigated`/`framedetached`); `FieldMapper` (schedule, assembly, `fields`/`fields_ok`); `FocusReporter`; `InputMapper` (tap staleness, move, wheel, pinch, keys with held-key tracking, text, compose, `choose`/`date`); `InboundQueue` (coalescing, bound 64); `RateLimiter`; `Pages` |
-| `src/ferry_watch/agent/dialogs.py` (new) | `DialogKeeper`: registers Playwright's context dialog listener when the first cast session starts; keeps open dialogs (with their origin from each page's `Page.javascriptDialogOpening`) across sessions; `dismiss_all()`; `release()` (dismiss all and unregister, back to Playwright's auto-dismiss) |
-| `src/ferry_watch/agent/gate.py` | Subprotocol routing; `cast_allowed` admission; session pacing; `_Viewer.kind`/`close_code`; `close(reason, code)`; the `cast` factory; the connection cap; uncancellable teardown before `_gone`; before a `binary` bridge: `dialogs.release()` then `screen.restore()` |
+| `src/ferry_watch/agent/dialogs.py` (new) | `DialogKeeper`: `keep()` registers Playwright's context dialog listener when the gate admits the first viewer of either kind, and opens a CDP session with `Page.enable` on each page of the context (in the background: `Page.enable` doesn't return while a dialog is open on that page, measured), which gives each dialog its frame's URL (`Page.javascriptDialogOpening`, matched to Playwright's dialog by page, type and message) and says when one closes without us (`Page.javascriptDialogClosed`: answered on the screen, or navigated away); keeps open dialogs across sessions and kinds; `attach(sink)` returns the open ones with the session's ids and reports later ones (`dialog_opened`, `dialog_closed`); `detach(sink)`; `answer(id, ok, text)`; `dismiss_all()`; `release()` (unregister, dismiss all, back to Playwright's auto-dismiss) |
+| `src/ferry_watch/agent/gate.py` | Subprotocol routing; `cast_allowed` admission; session pacing; `_Viewer.kind`/`close_code`; `close(reason, code)`; the `cast` factory; the connection cap; uncancellable teardown before `_gone`; `dialogs.keep()` at every admission; before a `binary` bridge, `screen.restore()` |
 | `src/ferry_watch/agent/watch.py` | `checkout_target()`; `clock_info()`; `viewer_verdict(cart_id, kind) -> CloseCode | None` (§6.2); `close_viewer(reason, code)`; the hold-service step closes a cast viewer with 4005 when `cast_allowed` turns false |
 | `src/ferry_watch/protocol.py` | `Configure.cast_allowed: bool = False` (the operator sends it only to agents ≥ 0.7.0, §8.3) |
 | `src/ferry_watch/bcferries/site.py` | `SiteSession.context` and `.page` read-only properties (nothing else changes) |
@@ -632,17 +634,21 @@ class CloseCode(IntEnum):  # in cast_protocol.py
   - `await asyncio.sleep(max(0, self._last_cast_start + 1.0 - monotonic()))` before the swap.
   - Inside the swap: `_disconnect(old)`, `prepare`, `self._last_cast_start = monotonic()`,
     `_serve_cast(viewer, cart_id)`.
-- **`_upgrade`, rfb branch.** Inside the swap, after `_disconnect(old)`: `await self._dialogs.release()`, then
-  `await self._screen.restore()` (both bounded, both no-ops when no stream ever ran), then today's code.
+- **`_upgrade`, rfb branch.** Inside the swap, after `_disconnect(old)`: `await self._dialogs.keep()`, then
+  `await self._screen.restore()` (both bounded; the restore is a no-op when no stream ever ran), then today's code.
+  The cast branch calls `keep()` too: dialogs are kept from the first viewer of either kind (§13).
 - **`_serve_cast`.**
   - `asyncio.wait_for(session.run(), MAX_CONNECTION_SECONDS)`. A timeout closes 4004; an exception closes 4500,
     logged with the exception type only.
   - In `finally`: start `session.close()` as a task, and await it under `shield` in a loop until it is done, even
     across cancellations. Only then call `_gone(viewer)`. This ordering was a real bug in the first prototype.
-- **`close(reason, code=CloseCode.ENDED)`.** Sets `viewer.close_code`, then disconnects. For codes 4000, 4002,
-  4003 and 4005 it then calls `dialogs.dismiss_all()`; for 4005, `dialogs.release()`. The replacing path sets
-  `REPLACED`. `_upgrade`'s `finally` closes the socket with `viewer.close_code or 1000`; RFB viewers ignore close
-  codes, as now.
+- **`close(reason, code=CloseCode.ENDED)`.** Sets `viewer.close_code`, then disconnects; 4005 disconnects only a
+  stream viewer (the kill switch doesn't concern a classic one). For codes 4000, 4002 and 4003 it then calls
+  `dialogs.release()`, whether or not a viewer was connected: nobody will answer a dialog now, and the agent's own
+  navigation afterwards (emptying the cart) mustn't wait on a kept `beforeunload`. 4005 leaves dialogs open for
+  the classic viewer the stream moves to. The replacing path sets `REPLACED`. `_upgrade`'s `finally` closes a
+  stream's socket with `viewer.close_code or 1000`, and a classic viewer's with 1000 whatever the reason, as in
+  0.6.4 (KasmVNC's client does look at how a socket closed).
 - **`watch.py` `viewer_verdict(cart_id, kind)`**, in this order:
 
   ```python
@@ -666,10 +672,12 @@ class CloseCode(IntEnum):  # in cast_protocol.py
    - `changed = await screen.apply(w, h, dsf)`. If changed, poll `VIEWPORT` in the main world until
      `[innerWidth, innerHeight, devicePixelRatio]` match, up to 1 s.
 4. **Pages.** Track `context.pages` and `context.on("page")`, ids from 1, at most 8 listed. For each tracked page,
-   a CDP session with `Page.enable` (for dialog origins), titles via `Target.getTargetInfo`. The front page is the
+   a CDP session (no `Page.enable`: the dialog keeper has its own; `Page.enable` doesn't return while a dialog is
+   open on the page, which a reconnect often finds), titles via `Target.getTargetInfo`. The front page is the
    newest.
-5. **Dialogs.** `dialogs.attach(session)`: the keeper is listening from now on, and its open dialogs are announced
-   after `clock`.
+5. **Dialogs.** `opened = dialogs.attach(session)`: the gate's admission already started keeping; `opened` (with this
+   session's ids, oldest first) is announced after `clock`, and later ones arrive as `dialog_opened`/`dialog_closed`
+   callbacks. Each `dialog` message is `cast_protocol.dialog_message(id, page id, kind, url, message, default)`.
 6. **Front page.**
    - `bring_to_front()`.
    - `DOM.enable` on its session.
@@ -686,7 +694,7 @@ class CloseCode(IntEnum):  # in cast_protocol.py
    - cancel the pump, the worker, the ticker and timers;
    - release held keys and a mid-press mouse button;
    - `stopScreencast`;
-   - `dialogs.detach()` (dialogs stay open);
+   - `dialogs.detach(session)` (dialogs stay open);
    - remove listeners;
    - detach every CDP session it opened.
 
@@ -855,8 +863,8 @@ sends it as `text` (normalised) to the focused field.
 3. `location.replace(FwSession.classicUrl(trip, gen))`: exactly the 0.6.4 vnc.html fragment, built by the same
    function the landing page uses.
 
-The shim then offers `binary` with the nonce. The gate replaces the stream viewer after its teardown, releases
-dialogs and restores the screen, then bridges KasmVNC. Verified in round 1: the KasmVNC client connected 4 s after
+The shim then offers `binary` with the nonce. The gate replaces the stream viewer after its teardown and restores
+the screen, then bridges KasmVNC; a dialog left open is on the screen for the classic viewer to answer. Verified in round 1: the KasmVNC client connected 4 s after
 the click, with no ticket and the same lock.
 
 **The watchdog in `session.js`.** On `viewer.html` it un-hides `#fw-escape` 3 s after load unless
@@ -1020,10 +1028,11 @@ The vnc-edge **Dockerfile** is unchanged.
 |---|---|
 | `tests/test_cast_conformance.py` (new) | Loads `tests/fixtures/cast1/`: every `messages.json` case gives its outcome (carried out / `error invalid` / 4400); `headers.json`; `rects.json` through `frame_rect()`; `mapping.json` through `InputMapper` with a fake CDP; `text.json` outputs all pass the value rules |
 | `tests/test_cast_protocol.py` (new) | 50k-mutation fuzz with no unexpected exception; typed-text rules; outbound cleaning (`origin_of`, credential-token stripping, caps) |
-| `tests/test_gate.py` (extend) | Both, neither or an unknown kind → 400; cast refused when `cast_allowed` false (not a failure); cast first connect, reconnect by nonce, classic after cast and the reverse with no ticket; a ticket refused once locked whichever kind locked it; 4097-byte message → 1009; `close(reason, code)` codes; 4001 only after a slow teardown, including when cancelled mid-teardown; cap → 4004 with a fake clock; session pacing (two cast upgrades 0.2 s apart: the second starts ≥ 1 s after the first, no refusal); **restore and dialog release happen before a binary bridge and never at a cast teardown or `close()`**; `viewer_changed` sequence across a kind switch |
+| `tests/test_gate.py` (extend) | Both, neither or an unknown kind → 400; cast refused when `cast_allowed` false (not a failure); cast first connect, reconnect by nonce, classic after cast and the reverse with no ticket; a ticket refused once locked whichever kind locked it; 4097-byte message → 1009; `close(reason, code)` codes; 4001 only after a slow teardown, including when cancelled mid-teardown; cap → 4004 with a short cap; session pacing (two cast upgrades 0.2 s apart: the second starts ≥ 1 s after the first, no refusal); **restore happens before a binary bridge and never at a cast teardown, a reconnect or `close()`; dialogs are kept at every admission and released only by `close()` with 4000/4002/4003**; `viewer_changed` sequence across a kind switch |
 | `tests/test_stream.py` (new; fake CDP session, fake `Screen`, fake clock) | The allowlist (methods, `Runtime.evaluate` without a world or timeout refused, viewer strings can't reach expressions); hello timeout 4408; message before `ready` 4400; value errors → `error invalid` and the drop limit → 4429; queue bound and **wheel/move coalescing** (100 wheels in one tick → one dispatch with the exact sum; order kept around a `tap`); ack window, newest-wins, repeat cache; **live/still/paused transitions** with synthetic frame rates; **seeded image** on start, `page show`, `visible: true`; **`verdict()` before every input and output and on the 1 s tick**: freeze the watch loop, advance the clock past `release_due` while the client sends only acks → close 4000 within 1 s and no image after the verdict changed; **tap staleness** (moved scroll → `error stale` and no Input call); pinch → pinch + pan calls; key `ph` tracking, ≤ 6 held, released at teardown; `choose`/`date` sequences: stale → no Input call at all, focus check failing → `Escape` only; teardown order and bounding; **caplog contains no typed text** after a card number, an IME string, a prompt answer and a bad-value `text` |
 | `tests/test_screen.py` (new) | Fake `xrandr`/`xsettingsd` on `PATH`: mode names, DPI file and mode, SIGHUP on change; **apply twice with the same size runs nothing the second time**; DPI before mode; restore deletes the modes, kills a hung `xrandr` within 3 s, never raises; ≤ 16 modes |
-| `tests/test_dialogs.py` (new) | Keeper: dialogs kept across `detach`/`attach`, ids per session, origin matched per page FIFO, `dismiss_all`, `release` unregisters (a new dialog is auto-dismissed again) |
+| `tests/test_dialogs.py` (new) | Keeper: dialogs kept across `detach`/`attach`, ids per session, origin matched per page (either event first; "" after 0.5 s), a dialog answered on the screen or on a closed page goes (`dialog_closed`), our own answer's closing never takes another dialog, `keep()` doesn't wait for `Page.enable`, `dismiss_all`, `release` unregisters (a new dialog is auto-dismissed again), answers never logged |
+| `tests/browser/test_checkout_dialogs.py` (new) | The classic viewer on the real pod screen: without a viewer a dialog is dismissed as in 0.6.4; with one, a confirm shows on KasmVNC's canvas and OK clicked over VNC returns true; a prompt typed into returns the text; a dialog survives a reconnect and is dismissed by `gate.close`; an iframe's dialog; a phone taps OK |
 | `tests/test_watch.py` (extend) | `viewer_verdict` order and codes; a cast viewer closed with 4005 when `cast_allowed` turns false |
 | `tests/test_protocol.py` (extend) | `Configure.cast_allowed` default false; a 0.6.4-shaped configure decodes |
 | `tests/test_hub.py` (C) | `cast_allowed` per `offered(owner)` and `user_active`; dropped for a peer with `agent_version` 0.6.4; included for 0.7.0; a `streamViewer` change pushes a new configure |
@@ -1162,9 +1171,9 @@ tests pass in CI.
 |---|---|---|---|
 | A1 | `agent/cast_protocol.py`: inbound structs, `check()`, `typed_text_ok()`, header pack/unpack, outbound builders, `CloseCode`, rate table | `tests/test_cast_conformance.py` (messages, headers, text), `tests/test_cast_protocol.py` | every `messages.json`/`headers.json`/`text.json` case passes; the fuzz finds no unexpected exception |
 | A2 | `agent/screen.py` (`Screen.apply/restore/current`), `agent/settings.py` (`xsettings_dir`); `Dockerfile` display stage; `.github/workflows/ci.yml` apt line | `tests/test_screen.py` | no-op apply, DPI-before-mode, bounded restore all pass; the image builds with both tools on `PATH` |
-| A3 | `agent/gate.py`: routing, `cast_allowed` admission, pacing, `close(reason, code)`, cap, uncancellable teardown, restore and dialog release before a binary bridge; `agent/dialogs.py` (`DialogKeeper`); `protocol.py` `Configure.cast_allowed`; `agent/watch.py` `viewer_verdict`, 4005 on withdrawal | `tests/test_gate.py`, `tests/test_dialogs.py`, `tests/test_watch.py`, `tests/test_protocol.py` | all listed gate cases pass, including restore-only-before-binary and pacing; existing gate tests unchanged and green |
+| A3 | `agent/gate.py`: routing, `cast_allowed` admission, pacing, `close(reason, code)`, cap, uncancellable teardown, restore before a binary bridge, dialogs kept from every admission; `agent/dialogs.py` (`DialogKeeper`), wired into `agent/main.py` for the classic viewer's dialogs; `protocol.py` `Configure.cast_allowed`; `agent/watch.py` `viewer_verdict`, 4005 on withdrawal | `tests/test_gate.py`, `tests/test_dialogs.py`, `tests/test_watch.py`, `tests/test_protocol.py`, `tests/browser/test_checkout_dialogs.py` | all listed gate cases pass, including restore-only-before-binary and pacing; existing gate tests unchanged and green |
 | A4 | `agent/cast_scripts.py` (the seven scripts, `call()`), `agent/stream.py`: `Cdp`, `InboundQueue`, `RateLimiter`, `FramePump` (live/still/paused, seeding), `Worlds`, `FieldMapper`, `FocusReporter`, `InputMapper`, `Pages`, `CastSession` | `tests/test_stream.py`; `test_cast_conformance.py` (rects through `frame_rect()`, mapping) | all listed cases pass, including verdict-on-output and caplog; **midpoint checkpoint (below) passed** |
-| A5 | `bcferries/site.py` (`context`/`page` properties), `agent/main.py` wiring (`Screen`, `DialogKeeper`, `cast=`, `verdict=`) | `tests/test_agent.py`/`test_watch.py` updates for `close_viewer(reason, code)` | the agent starts with the stream wired; 0.6.4 agent tests green |
+| A5 | `bcferries/site.py` (`context`/`page` properties), `agent/main.py` wiring (`Screen`, `DialogKeeper`, `cast=`, `verdict=`; A3 already wired the properties, `DialogKeeper`, `dialogs=` and `verdict=` for the classic viewer's dialogs) | `tests/test_agent.py`/`test_watch.py` updates for `close_viewer(reason, code)` | the agent starts with the stream wired; 0.6.4 agent tests green |
 | A6 | `tests/fixtures/checkout-site/` (all pages of §10.2), `tests/browser/test_checkout_stream.py`; `docker/browser/selftest.py` screen check | §10.2 tests 1-15 | all pass in the `browser` CI job; `test_checkout_screen.py` unchanged and green |
 | A7 | Docs: design-reference §5.5 (subprotocols, close codes, cap, pacing, kill switch), §5.6 (the stream's processes, no new listener), C17, C33-C42, R4 wording, §13's pre-existing findings | review | merged with A6 |
 
@@ -1277,10 +1286,17 @@ Any disagreement between A and B is fixed in PROTOCOL.md and the pack first, the
 - removing KasmVNC (only after the beta has proved itself on devices).
 
 **Found in passing.**
-- **Classic dialogs (0.6.4).** The pod's Chromium has no dialog listener until a stream connects, so Playwright
-  auto-dismisses every JavaScript dialog for classic viewers: a `confirm()` returns false unseen, and an `alert()`
-  vanishes (round 1 `out/s2f-pickers.json`). The classic path is unchanged here by design; fixing it is §16
-  decision 2.
+- **Classic dialogs (0.6.4; fixed in 0.7.0, §16 decision 2).** The pod's Chromium had no dialog listener, so
+  Playwright auto-dismissed every JavaScript dialog for classic viewers: a `confirm()` returned false unseen, and
+  an `alert()` vanished (round 1 `out/s2f-pickers.json`). From the first viewer of a pod's life the dialog keeper
+  listens, so Chromium draws each dialog on the pod's screen and the classic viewer answers it with its mouse or
+  keyboard (`tests/browser/test_checkout_dialogs.py`: a confirm clicked OK over VNC returns true, a prompt typed
+  into returns the text, a dialog survives a reconnect and is dismissed at hold end). Two things seen on the real
+  screen: Chromium ignores a click that comes within about half a second of a dialog appearing (its guard against
+  stray clicks), and on a phone-sized screen (390 CSS px) the dialog, 450 px wide and centred in Chromium's
+  500-DIP minimum window, runs off the right edge: Cancel is whole, OK shows only its left part (a tap there
+  works, and so do Enter and Escape on the keyboard). That is the classic viewer's existing 500-DIP overhang
+  (§4.2), not new.
 - **Unbounded `prompt()` defaults (0.6.4 and later).** The default text of a page's `prompt()` reaches Playwright's
   Node driver unbounded (20 M characters measured, `round2/s2_bounds.py`). With a stream connected it also reaches
   the Python agent. Neither can be bounded below Playwright. A fix needs Playwright upstream (a size cap on dialog
@@ -1374,11 +1390,12 @@ These are the only choices this design can't make for you. Everything else in it
 
    The mechanism supports both, and switching between them is one values change. The keyboard, AutoFill and
    password-manager behaviour on real iPhones and Android phones can't be tested here, so **(b) is recommended**.
-2. **Whether to fix the classic viewer's auto-dismissed dialogs** (§13), now or later.
+2. **Whether to fix the classic viewer's auto-dismissed dialogs** (§13), now or later. **Decided: in 0.7.0**, as
+   the one deliberate change to the classic path.
    - The fix: a dialog listener that leaves dialogs to the viewer while a classic viewer is connected.
    - Today a `confirm()` in BC Ferries' checkout silently returns false for every classic user.
-   - Fixing it changes the classic path, which you asked to keep exactly as 0.6.4. It is a separate change for you to
-     schedule: in 0.7.0 alongside the beta, or in 0.7.1.
+   - Built as: dialogs are kept from the gate's first admission of a viewer (either kind) until the checkout is
+     over, access is revoked or the pod drains, so a dialog also survives a reconnect and a switch between kinds.
 3. **Whether you want per-checkout telemetry of which viewer was used** (and whether the user switched to classic)
    to judge the beta. It needs one new event parameter between agent and operator. That protocol is
    `forbid_unknown_fields`, so it is sent only to a ferry-control that understands it, about 1 day in A and C.

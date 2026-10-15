@@ -23,8 +23,9 @@ from typing import Any
 
 import aiohttp
 from aiohttp import web
+from playwright.async_api import BrowserContext
 
-from ferry_watch.bcferries.site import PodBrowser
+from ferry_watch.bcferries.site import PodBrowser, SiteSession
 from ferry_watch.bcferries.terminals import TerminalDirectory
 from ferry_watch.bcferries.urls import USER_AGENT
 from ferry_watch.protocol import (
@@ -39,6 +40,7 @@ from ferry_watch.protocol import (
 )
 
 from .cast_protocol import CloseCode
+from .dialogs import DialogKeeper
 from .gate import Gate, GateSettings
 from .hub import RECONNECT_BACKOFF_SECONDS, HubClient, Identity
 from .lockdown import Lockdown, self_test
@@ -93,6 +95,7 @@ class Agent:
             lockdown_ok=lockdown.passed,
             close_viewer=self._close_viewer,
         )
+        self.dialogs = DialogKeeper(self._checkout_context)
         self.gate = Gate(
             GateSettings(
                 origin=settings.vnc_origin,
@@ -105,6 +108,7 @@ class Agent:
             checkout_cart=self.watcher.checkout_cart,
             viewer_changed=self.watcher.viewer_changed,
             verdict=self.watcher.viewer_verdict,
+            dialogs=self.dialogs,
         )
         self.gate_port: int | None = None
         self.probe_port: int | None = None
@@ -173,6 +177,11 @@ class Agent:
 
     async def _close_viewer(self, reason: str, code: CloseCode) -> None:
         await self.gate.close(reason, code)
+
+    def _checkout_context(self) -> BrowserContext | None:
+        """The held cart's browser context, whose dialogs a viewer answers."""
+        target = self.watcher.checkout_target()
+        return target.context if isinstance(target, SiteSession) else None
 
     async def _publish(self) -> None:
         """Send the trip's state when it changes (coalesced) and at least every 15 s."""

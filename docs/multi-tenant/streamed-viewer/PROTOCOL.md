@@ -99,11 +99,12 @@ either kind): the gate ends the old one (close code **4001** for a `fw.cast1` vi
 viewer, waits until its session has finished its teardown (§3.5) before the new connection proceeds. Both kinds
 count as "a viewer" for viewer seconds and the hold clocks exactly as in 0.6.4.
 
-**Before it bridges a `binary` viewer, the gate MUST**, after the previous viewer's teardown: dismiss every
-JavaScript dialog a stream session left open (§5.5), and restore the pod's own screen (the X screen back to its
-launch size, Xft/DPI back to the default by stopping xsettingsd, the added RandR modes removed; DESIGN §4.1),
-bounded to 3 s in total. A `binary` viewer therefore always finds the pod as a 0.6.4 classic viewer would. The
-screen is restored at no other time (§3.5).
+**Before it bridges a `binary` viewer, the gate MUST**, after the previous viewer's teardown, restore the pod's
+own screen (the X screen back to its launch size, Xft/DPI back to the default by stopping xsettingsd, the added
+RandR modes removed; DESIGN §4.1), bounded to 3 s in total. A `binary` viewer therefore always finds the pod's
+screen as a 0.6.4 classic viewer would. The screen is restored at no other time (§3.5). A JavaScript dialog a
+stream session left open stays open: Chromium draws it on the pod's screen, where the classic viewer answers it
+(§5.5).
 
 ### 2.4 The device's nonce and ticket
 
@@ -177,9 +178,8 @@ task is cancelled meanwhile, and MUST be bounded (2 s per CDP call).
 
 Teardown MUST NOT restore the pod's screen and MUST NOT dismiss an open JavaScript dialog: a viewer that reconnects
 (the bank app, a screen lock, a network change) finds the page exactly as it left it. The screen is restored only
-before a `binary` viewer is bridged (§2.3). Open dialogs are dismissed only then, and when the gate closes the
-viewer because the checkout is over, access was withdrawn, the pod is draining or the streamed viewer was
-withdrawn (codes 4000, 4002, 4003, 4005).
+before a `binary` viewer is bridged (§2.3). Open dialogs are dismissed only when the gate closes the viewer
+because the checkout is over, access was revoked or the pod is draining (codes 4000, 4002, 4003; §5.5).
 
 ### 3.6 Close codes
 
@@ -488,11 +488,16 @@ A JavaScript dialog on any page of the checkout. The page is blocked until it is
 | `msg` | string | ≤ 500 code points, clean text except U+000A (line feed) is kept |
 | `def` | string | ≤ 256 code points, clean text: the prompt's default ("" otherwise) |
 
-Dialogs stay open across a reconnect (§3.5). The agent dismisses every open dialog when the viewer is closed with
-4000, 4002, 4003 or 4005, and before a `binary` viewer is bridged; at that point it also stops listening for
-dialogs, so a classic viewer gets 0.6.4's behaviour (Playwright dismisses every dialog at once) until the next
-`fw.cast1` session. Until the first `fw.cast1` session of the pod's life, dialogs are dismissed by Playwright as in
-0.6.4.
+Dialogs are kept for whoever views the checkout, of either kind, from the gate's first admission of a viewer in the
+pod's life (before it, Playwright dismisses every dialog the moment it opens, as in 0.6.4, which suits the agent's
+own browsing). A kept dialog stays open until it is answered: by a stream viewer, with `dialog` (§6.13); or by a
+classic viewer on the pod's screen, where Chromium draws it (0.7.0 fixes 0.6.4's classic viewer, which never saw a
+dialog: Playwright dismissed each one unseen). Dialogs stay open across a reconnect (§3.5) and a switch between the
+two kinds. A dialog that closes without the stream viewer's answer (its page navigated or closed) is announced to
+the stream session as `dialog_closed` (§5.6). The agent dismisses every open dialog (and accepts a `beforeunload`, as
+Playwright does) when the gate closes the viewer with 4000, 4002 or 4003 (the checkout is over, access was
+revoked, the pod is draining), and then stops keeping them, so its own browsing afterwards (emptying the cart)
+can't wait on one. A 4005 leaves them open for the classic viewer the stream moves to.
 
 ### 5.6 `dialog_closed`
 
