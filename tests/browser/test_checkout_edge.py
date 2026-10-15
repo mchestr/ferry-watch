@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from types import ModuleType
 
+import aiohttp
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer, unused_port
@@ -43,6 +44,15 @@ GEN = 4
 POD = f"fw-{TRIP}-g{GEN}"
 CART = "cart-1"
 LANDING = f"/t/{TRIP}/g/{GEN}/"
+RECORD = f"fw:{TRIP}:{GEN}"
+STREAM_VIEWER = f"/fw/viewer.html#t={TRIP}&g={GEN}"
+# vnc.html's policy exactly as 0.6.4 served it with KasmVNC 1.5.0's client: the streamed viewer changes nothing
+# the classic viewer gets (docs/multi-tenant/streamed-viewer/DESIGN.md §9).
+CLASSIC_CSP = (
+    "default-src 'self'; script-src 'self' 'sha256-+w4uuxDuaRJ0kH5I4sifAwedyfxg1il+lsKFqslG+L0=' 'wasm-unsafe-eval'; "
+    "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' wss://ferry-checkout.chestr.dev "
+    "data:; worker-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+)
 
 
 def _load_build() -> ModuleType:
@@ -298,3 +308,79 @@ async def test_after_the_hold_ends_the_page_stops_reconnecting(edge: Edge, page:
     await page.wait_for_url(f"{edge.url}/gone.html")
     assert await page.text_content("h1") == "No checkout is open for this trip"
     assert len(edge.offers) == 1
+
+
+def classic_url(*, touch: bool = False) -> str:
+    """0.6.4's vnc.html fragment."""
+    settings = [
+        f"path=t/{TRIP}/g/{GEN}/ws",
+        "autoconnect=1",
+        "reconnect=1",
+        "reconnect_delay=1000",
+        "idle_disconnect=120",
+        "anti_aliasing=1",
+        *(["virtual_keyboard_visible=1"] if touch else []),
+    ]
+    return f"/vnc.html#{'&'.join(settings)}"
+
+
+async def device_record(page: Page) -> dict[str, object]:
+    record: dict[str, object] = await page.evaluate("(key) => JSON.parse(localStorage.getItem(key))", RECORD)
+    return record
+
+
+async def test_vnc_html_and_its_policy_are_as_0_6_4_served_them(edge: Edge, site: Site) -> None:
+    assert site.csp == CLASSIC_CSP
+    async with aiohttp.ClientSession() as http, http.get(f"{edge.url}/vnc.html") as response:
+        assert response.headers["Content-Security-Policy"] == CLASSIC_CSP
+        html = await response.text()
+    stock = (Path(os.environ["FW_KASMVNC_WWW"]) / "vnc.html").read_text()
+    assert html.replace('<script src="/fw/shim.js"></script>', "", 1) == stock
+
+
+@pytest.mark.parametrize("form", ["{t}", "t={t}", "v=s9&t={t}"], ids=["0.6.4", "no-viewer", "unknown-viewer"])
+async def test_a_classic_ticket_opens_vnc_html_as_0_6_4_did(edge: Edge, page: Page, form: str) -> None:
+    issued = ticket()
+    await page.goto(f"{edge.url}{LANDING}#{form.format(t=issued)}")
+    assert page.url == f"{edge.url}{LANDING}"
+    assert not await page.is_visible("#beta")
+    await page.click("#open")
+    await page.wait_for_selector("html.noVNC_connected")
+    assert page.url == f"{edge.url}{classic_url()}"
+    record = await device_record(page)
+    assert (record["viewer"], record["viewer_fallback"]) == ("classic", False)
+    assert sorted(edge.offers[-1]) == sorted(["binary", f"fw.n1.{record['n']}", f"fw.t1.{issued}"])
+
+
+async def test_a_stream_ticket_opens_the_streamed_viewer(edge: Edge, page: Page) -> None:
+    issued = ticket()
+    await page.goto(f"{edge.url}{LANDING}#v=s1&t={issued}")
+    assert page.url == f"{edge.url}{LANDING}"  # the ticket is out of the address bar and history
+    assert await page.text_content("#sailing") == "Swartz Bay → Tsawwassen · Fri, Oct 16 · 9:00 am · Saver"
+    assert await page.text_content("#beta") == "Opens in the new checkout viewer (beta)."
+    record = await device_record(page)
+    assert (record["viewer"], record["viewer_fallback"], record["opened"]) == ("stream", False, False)
+    pending = await page.evaluate("(key) => JSON.parse(sessionStorage.getItem(key)).ticket", f"{RECORD}:ticket")
+    assert pending == issued
+    async with page.expect_request(f"{edge.url}/fw/viewer.html") as opening:
+        await page.click("#open")
+    assert (await opening.value).is_navigation_request()
+
+
+async def test_once_the_streamed_viewer_gives_way_the_checkout_stays_classic_on_this_device(
+    edge: Edge, page: Page
+) -> None:
+    await page.goto(f"{edge.url}{LANDING}#v=s1&t={ticket()}")
+    # What "Use the classic viewer" does on the streamed viewer.
+    await page.evaluate("([trip, gen]) => FwSession.useClassic(trip, gen)", [TRIP, str(GEN)])
+    nonce = (await device_record(page))["n"]
+
+    # Ferry Watch still hands this device stream tickets for the checkout: they open the classic viewer.
+    await page.goto("about:blank")  # a new page, not a new fragment on this one
+    await page.goto(f"{edge.url}{LANDING}#v=s1&t={ticket()}")
+    assert not await page.is_visible("#beta")
+    await page.click("#open")
+    await page.wait_for_selector("html.noVNC_connected")
+    assert page.url == f"{edge.url}{classic_url()}"
+    record = await device_record(page)
+    assert (record["n"], record["viewer"], record["viewer_fallback"]) == (nonce, "stream", True)

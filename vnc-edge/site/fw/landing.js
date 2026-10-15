@@ -1,40 +1,30 @@
-// The checkout landing page, /t/<trip>/g/<gen>/#<ticket> (docs/multi-tenant/design-reference.md §7.9).
+// The checkout landing page, /t/<trip>/g/<gen>/#<fragment> (docs/multi-tenant/design-reference.md §7.9;
+// docs/multi-tenant/streamed-viewer/DESIGN.md §8.4).
 //
 // It turns the ticket Ferry Watch put in the fragment into a pending ticket for this tab, and gives
-// the device a nonce N it keeps in localStorage, keyed by (trip, gen); then it opens vnc.html, whose
-// shim offers both to the pod's gate. Once a connect succeeds the gate locks the cart to sha256(N),
+// the device a nonce N it keeps in localStorage, keyed by (trip, gen); then it opens the viewer, which
+// offers both to the pod's gate. Once a connect succeeds the gate locks the cart to sha256(N),
 // so only this device can come back, and it comes back with N alone.
+//
+// The fragment is `#<ticket>` (0.6.4's form: KasmVNC, the classic viewer) or `#v=s1&t=<ticket>` (the
+// streamed viewer). The device remembers which, per checkout, and opens that viewer from then on, unless
+// the streamed viewer has given way to the classic one for this checkout on this device.
 //
 // The ticket's display fields are signed but not checked here: they are shown as text, never markup.
 (() => {
   "use strict";
+  const session = window.FwSession; // fw/session.js
   const app = document.querySelector('meta[name="fw-app"]').content;
-  const where = /^\/t\/([a-f0-9]{16})\/g\/([0-9]{1,6})\/$/.exec(location.pathname);
-  if (!where) return;
-  const [, trip, gen] = where;
-  const key = `fw:${trip}:${gen}`;
+  const at = session.where(location.pathname);
+  if (!at) return;
+  const { trip, gen } = at;
+  const key = session.key(trip, gen);
   const now = Date.now();
   const TICKET = /^fw1\.[a-z0-9]{1,16}\.([A-Za-z0-9_-]+)\.[A-Za-z0-9_-]+$/;
   const MAX_TICKET_LENGTH = 1024;
   const OPEN_AFTER_MS = 2000;
   const MAX_HOLD_MS = 90 * 60 * 1000; // protocol.MAX_HARD_S, for a ticket that doesn't say
   const PACIFIC = "America/Vancouver";
-
-  const read = (store, name) => {
-    try {
-      return JSON.parse(store.getItem(name));
-    } catch {
-      return null;
-    }
-  };
-  const write = (store, name, value) => {
-    try {
-      store.setItem(name, JSON.stringify(value));
-      return true;
-    } catch {
-      return false;
-    }
-  };
 
   /** The ticket's claims, if the fragment holds a well-formed ticket for this trip. */
   function claimsOf(ticket) {
@@ -50,29 +40,28 @@
     }
   }
 
-  function nonce() {
-    const bytes = crypto.getRandomValues(new Uint8Array(32));
-    return btoa(String.fromCharCode(...bytes))
-      .replace(/\+/g, "-")
-      .replace(/\//g, "_")
-      .replace(/=+$/, "");
+  /** The ticket in the fragment and the viewer it opens in. */
+  function fromFragment(fragment) {
+    if (fragment.startsWith("fw1.")) return { ticket: fragment, viewer: "classic" };
+    const params = new URLSearchParams(fragment);
+    return { ticket: params.get("t") || "", viewer: params.get("v") === "s1" ? "stream" : "classic" };
   }
 
   // Forget checkouts whose holds are over (and anything unreadable).
   try {
     for (const name of Object.keys(localStorage)) {
       if (!name.startsWith("fw:")) continue;
-      const old = read(localStorage, name);
+      const old = session.read(localStorage, name);
       if (!old || !(old.hard_deadline * 1000 > now)) localStorage.removeItem(name);
     }
   } catch {
     // storage is blocked; the write below says so
   }
 
-  const ticket = location.hash.slice(1);
+  const { ticket, viewer } = fromFragment(location.hash.slice(1));
   history.replaceState(null, "", location.pathname); // the ticket stays out of history
   const claims = ticket ? claimsOf(ticket) : null;
-  let record = read(localStorage, key);
+  let record = session.record(key);
   const opened = Boolean(record && record.opened);
 
   if (claims && claims.exp * 1000 <= now && !opened) {
@@ -82,13 +71,16 @@
   if (claims && claims.exp * 1000 > now) {
     const disp = claims.disp && typeof claims.disp === "object" ? claims.disp : {};
     record = {
-      n: record && typeof record.n === "string" ? record.n : nonce(),
+      n: record && typeof record.n === "string" ? record.n : session.nonce(),
       opened,
       disp,
       hard_deadline: Number(disp.hard_deadline) || Math.floor((now + MAX_HOLD_MS) / 1000),
       session_deadline: Number.isFinite(disp.session_s) ? now + disp.session_s * 1000 : null,
+      viewer,
+      viewer_fallback: Boolean(record && record.viewer_fallback), // sticky for this checkout on this device
     };
-    if (!write(localStorage, key, record) || !write(sessionStorage, `${key}:ticket`, { ticket, exp: claims.exp })) {
+    const stored = session.write(localStorage, key, record);
+    if (!stored || !session.write(sessionStorage, `${key}:ticket`, { ticket, exp: claims.exp })) {
       fail(
         "Can't open the checkout in this window",
         "This browser isn't letting the page save the checkout's key. Try a regular (not private) window.",
@@ -96,7 +88,7 @@
       return;
     }
   }
-  const pending = read(sessionStorage, `${key}:ticket`);
+  const pending = session.pendingTicket(key);
   if (!opened && !(pending && pending.exp * 1000 > now)) {
     fail(
       "No checkout here",
@@ -105,29 +97,12 @@
     return;
   }
 
+  const streamed = Boolean(record && record.viewer === "stream" && !record.viewer_fallback);
   ready(record && record.disp);
-  const go = () => location.replace(viewerUrl());
+  document.getElementById("beta").hidden = !streamed;
+  const go = () => location.replace(streamed ? session.streamUrl(trip, gen) : session.classicUrl(trip, gen));
   document.getElementById("open").addEventListener("click", go);
   setTimeout(go, OPEN_AFTER_MS);
-
-  /** vnc.html, with the client's settings in the fragment, where it reads them first. */
-  function viewerUrl() {
-    const settings = [
-      `path=t/${trip}/g/${gen}/ws`,
-      "autoconnect=1",
-      "reconnect=1",
-      "reconnect_delay=1000",
-      "idle_disconnect=120",
-      // Smoothing on, which also turns off the client's auto-scaling on small high-DPI screens. That makes the
-      // screen about 1.5x a phone's viewport (585 px wide on an iPhone's 390), so the checkout shows at two
-      // thirds of its size. Without it the screen is the phone's viewport, and the checkout lays out for a phone.
-      "anti_aliasing=1",
-    ];
-    // A touch screen has no keyboard until a text field on this page has focus: the client's floating
-    // keyboard button gives it one. A tap on a field in the checkout focuses only the pod's field.
-    if (navigator.maxTouchPoints > 0) settings.push("virtual_keyboard_visible=1");
-    return `/vnc.html#${settings.join("&")}`;
-  }
 
   function fail(title, text) {
     document.getElementById("title").textContent = title;
