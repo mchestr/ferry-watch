@@ -2217,8 +2217,12 @@ kubernetes/apps/ferry-watch/                   namespace ferry-watch, components
   admission policy's parameters are templated from the same values. The browser quota and the LimitRange's
   memory maximum are computed from `podMemory`, `cpuRequest` and `maxBrowsersTotal`, so there is no separate
   budget to keep in step. `tests/apiserver/test_render.py` checks the parameters against the config.
-- **The render refuses** any of the three images without a digest, an empty `vncPubkeys`, a `podMemory` not in Mi
-  and a `cpuRequest` not in millicores. home-cluster's flux-local therefore fails until a release fills them in.
+  `ferry.checkout.streamViewer` (0.7.0: `"off"`, `"admins"` or `"everyone"`, who is offered the streamed checkout
+  viewer beta; streamed-viewer/DESIGN.md §8.3) goes into both configs as `checkout.streamViewer`. This repo's copy
+  says `"off"`; it is the one line a deployment's copy may change (`tests/test_deploy.py`).
+- **The render refuses** any of the three images without a digest, an empty `vncPubkeys`, a `podMemory` not in Mi,
+  a `cpuRequest` not in millicores and a `streamViewer` other than the three (a bare YAML `off` is false).
+  home-cluster's flux-local therefore fails until a release fills them in.
 - **One HelmRelease, two namespaces.** `rawResources` keep `metadata.namespace`, so the browser namespace's
   objects come from the release in `ferry-watch`. Flux's `targetNamespace` rewrites only the HelmRelease
   itself. The browser namespace gets no `components/common`: its object quota allows no Secret. It is kept
