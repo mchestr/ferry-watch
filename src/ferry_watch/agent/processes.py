@@ -50,6 +50,9 @@ def xvnc_argv(display: str, screen: tuple[int, int], rfb_socket: Path) -> list[s
         "-IgnoreClientSettingsKasm",
         "-FrameRate",
         "15",
+        # A scrolled region goes as a copy of pixels the client already has, not as new ones: scrolling the
+        # checkout costs a quarter to a tenth of the bytes, which a phone on cellular notices.
+        "-DetectScrolling",
         "-MaxVideoResolution",
         "1920x1080",
         "-MaxConnectionTime",

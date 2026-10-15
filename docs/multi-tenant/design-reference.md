@@ -1014,7 +1014,7 @@ is harmless: nothing can cart or open the gate before a check has launched Chrom
 **Xvnc flags** replace `entrypoint.sh:20-26`:
 `:99 -geometry 1280x1000 -depth 24 -rfbunixpath /tmp/kasm/rfb.sock -rfbunixmode 0600 -SecurityTypes None
 -DisableBasicAuth -NeverShared -DisconnectClients=0 -SendCutText=0 -AcceptCutText=1 -DLP_ClipAcceptMax 256
--IgnoreClientSettingsKasm -FrameRate 15 -MaxVideoResolution 1920x1080 -MaxConnectionTime 6000
+-IgnoreClientSettingsKasm -FrameRate 15 -DetectScrolling -MaxVideoResolution 1920x1080 -MaxConnectionTime 6000
 -AcceptSetDesktopSize -publicIP 127.0.0.1 -Log *:stderr:10`.
 
 - With `-rfbunixpath` set, KasmVNC creates only the unix listener and no WebSocket or TCP listener
@@ -1026,6 +1026,10 @@ is harmless: nothing can cart or open the gate before a check has launched Chrom
   there is no WebSocket or HTTP listener, so there is no basic auth to turn off; access stays the socket's
   0600 mode and the gate. Two tests run the real Xvnc with these flags and fail on a black or deaf screen:
   `tests/browser/test_checkout_screen.py` and the browser image's smoke test (`docker/browser/selftest.py`).
+- **Added:** `-DetectScrolling`. Xvnc sends a scrolled region as a copy of pixels the viewer already has
+  instead of new ones. On the pod's real screen with a 390x664 phone viewer, a 300 px one-finger drag (about
+  400 px of page) took about 60 KB instead of 620-750 KB, and a two-finger scroll about 65 KB instead of
+  250-300 KB, with no measurable change in Xvnc's CPU time. It changes only how frames are encoded.
 - **Removed:** `-AlwaysShared`, `-interface`, `-websocketPort`, `-httpd`, `-sslOnly`,
   `-IdleTimeout` (the gate's ping replaces it; idle-dropping a user who is reading the page only forces a
   reconnect), and `-DLP_KeyRateLimit` (KasmVNC drops any key-down within `1000/limit` ms of the previous key
@@ -2052,7 +2056,8 @@ would fail every upgrade.
 The image `ferry-watch-vnc-edge` is `nginxinc/nginx-unprivileged` by digest. It adds:
 - the KasmVNC `www` files extracted unmodified from the same sha256-checked deb (`Dockerfile:20-32`);
 - one inserted line in `vnc.html`: `<script src="/fw/shim.js"></script>` before the client's module script;
-- `/fw/shim.js` (about 60 lines) and the landing page `/fw/landing.html` (about 60 lines);
+- `/fw/shim.js` (the socket wrapper below, and the touch handling in *As built, on a phone*) and the landing
+  page `/fw/landing.html`;
 - a CSP computed at image build from the shipped `vnc.html` (the hash of its one inline `<script>`).
 
 The client's minified bundle is **not** patched. KasmVNC 1.5.0's client reads its settings from the URL hash
@@ -2063,12 +2068,13 @@ matching `^wss://ferry-checkout\.chestr\.dev/t/[a-f0-9]{16}/g/[0-9]{1,6}/ws$` on
 first successful open. If the client gives up reconnecting before the hold deadline it knows from `disp`, the
 shim reloads `vnc.html` with back-off (1, 2, 5, 10 s), so retries are effectively uncapped until the deadline.
 The landing page sets
-`#path=t/<trip>/g/<gen>/ws&autoconnect=1&reconnect=1&reconnect_delay=1000&idle_disconnect=120` and shows the
-sailing and deadlines with `textContent` (its note advising guest checkout went after 0.6.3, §5.7). If the
-fragment's ticket has already expired (a slow load) and this device holds no lock yet, it sends the user back
-to `https://ferry.chestr.dev/c/<trip>` to mint again; with no ticket and no stored `N` it shows only a link
-back to the dashboard. A CI test drives the stock client in headless Chromium against a fake gate and asserts
-the path and subprotocols, so a KasmVNC bump that changes this fails CI.
+`#path=t/<trip>/g/<gen>/ws&autoconnect=1&reconnect=1&reconnect_delay=1000&idle_disconnect=120&anti_aliasing=1`,
+plus `&virtual_keyboard_visible=1` on a touch screen (*As built, on a phone*), and shows the sailing and deadlines
+with `textContent` (its note advising guest checkout went after 0.6.3, §5.7). If the fragment's ticket has
+already expired (a slow load) and this device holds no lock yet, it sends the user back to
+`https://ferry.chestr.dev/c/<trip>` to mint again; with no ticket and no stored `N` it shows only a link back to
+the dashboard. A CI test drives the stock client in headless Chromium against a fake gate and asserts the path
+and subprotocols, so a KasmVNC bump that changes this fails CI.
 
 ```nginx
 map $http_upgrade $connection_upgrade { default upgrade; '' close; }
@@ -2117,6 +2123,64 @@ from a wrapper function rather than a subclass. `connect-src` also lists `data:`
 probe the browser's video decoders (a `data:` URL never leaves the page). The landing page keeps the pending
 ticket in the tab's sessionStorage, strips it from the address bar, and opens the viewer after two seconds or
 on "Open checkout". The client's request for `/package.json` gets the 404 every unlisted path gets.
+
+*As built, on a phone* (owner feedback: the checkout "works", but scrolls "like a monitor" and is "a bit jank on
+mobile"). The client stays stock; what changes is the fragment the landing page writes, and two more IIFEs in the
+shim, separate from its socket wrapper. Each relies on undocumented client internals and does nothing if they
+change: `tests/browser/test_checkout_screen.py` runs them with a phone-sized viewer (390x664 CSS px at 3x, touch)
+against the pod's real screen, and `test_checkout_edge.py` pins the fragment, so a KasmVNC bump that breaks them
+fails CI.
+- **The checkout at the phone's own size.** With `anti_aliasing` at its default 0, KasmVNC 1.5.0's client
+  auto-scales on a small high-DPI screen (DPR above 1, viewport under 1000 CSS px): it asks for a screen
+  DPR/1.5 times the viewport (DPR/2 above 2x), so an iPhone's 390 px became a 585 px screen and the checkout
+  showed at two thirds of its size. `anti_aliasing=1` skips that: the screen is the phone's CSS viewport
+  (390x664 on an iPhone 13), so bcferries.com lays out for a phone, at its own text size. The client draws the 1x
+  screen smoothed (bilinear) on the phone's 3x display; nearest-neighbour looked blockier. A computer's screen
+  size is unchanged (the auto-scaling never applied at 1000 px and wider); a high-DPI computer's now smoothed
+  too instead of nearest-neighbour.
+- **A keyboard button**, on touch screens only (`navigator.maxTouchPoints > 0`): `virtual_keyboard_visible=1`
+  shows the client's floating keyboard button (draggable; holding it shows Ctrl, Alt, Tab, Esc and other keys,
+  which the side panel's Keys already offered). A phone opens its keyboard only for a field on the viewer's own
+  page, and a tap on a checkout field focuses only the pod's field, so the button is how the keyboard opens.
+- **The side panel out of the way.** The client opens its side panel on load and closes it 2 s after connecting,
+  but on a phone the panel covers most of the screen, and a tap on it in those 2 s keeps it open. The shim
+  closes it as `<html>` gets `noVNC_connected`; its handle still opens it. The client's own close would still
+  come 2 s later and take the focus back, closing a keyboard opened in the meantime, so the shim cancels it as
+  the client does when its panel is in use (an `input` event on the panel). It does this on every connect,
+  since the client arms its close on reconnects too, and only once the panel has opened with the `noVNC_open`
+  class the shim removes: with a renamed class, the closing stays the client's. The shim also hides
+  `#noVNC_notification_overlay`, which names the stream mode ("JPEG/WEBP (Images)") in 30 px type across the
+  top of the screen for 3.5 s.
+- **One finger scrolls.** The client turns touches into `gesturestart`/`gesturemove`/`gestureend` events on its
+  canvas, and sends a one-finger `drag` as a left-button mouse drag, which selects text on the checkout. A
+  capturing listener on `window` sees these first and takes only `detail.type === "drag"`: it gives the client
+  wheel events at the canvas instead, half a delta unit per CSS px of finger travel (Xvnc scrolls the pod's
+  Chromium 2-2.4 px per unit, linearly from 1 to 64; a slow 300 px drag scrolls the page about 310 px),
+  along the axis the drag starts on. After a flick it coasts, decaying with a 200 ms time constant; a new touch
+  stops the coast, and, as in a browser, a tap that stops one doesn't click. Before taking a drag it sends a
+  zero-delta wheel event, and if the client doesn't cancel it (the client cancels every wheel event it
+  forwards), the drag stays the client's. Taps, long press (a right click), two-finger scrolling, pinch
+  (Ctrl+wheel) and the mouse are untouched. The cost: a one-finger mouse drag (a slider, drag-to-select) is no
+  longer possible on a touch screen; nothing in a checkout needs one.
+- **Scrolling costs less.** Xvnc's `-DetectScrolling` (§5.6) sends a scrolled region as a copy of what the
+  viewer already has: a one-finger scroll takes about a tenth of the bytes, which a phone on cellular notices.
+- **What the pod's automation sees.** The screen keeps a viewer's size after it leaves (Xvnc doesn't restore
+  it), so after a phone viewer the pod's Chromium is phone-sized; before this change it stayed 585 px wide. It
+  doesn't matter: a pod that had a checkout viewer only empties the cart (a navigation to a fixed URL) and exits
+  (C22), and a pod nobody viewed keeps its 1280x1000.
+- None of this touches the security design: no new listener, the same tickets, nonce and gate admission, and the
+  same CSP (the shim is `'self'`; vnc.html's inline-script hash still comes from KasmVNC's file).
+
+Still janky on a phone:
+- The keyboard doesn't open when a checkout field is tapped (above): the user taps the keyboard button.
+- The keyboard button answers only a quick tap: the client toggles the keyboard for a press shorter than 150 ms
+  and shows its extra keys after 350 ms, so a press in between does nothing.
+- The client's IME handling loses letters from a composition (what predictive and autocorrecting keyboards
+  send): in emulation, typing "Mike" and then composing "Chester" reached the pod as "MikeCester".
+- Text is drawn at 1x and smoothed onto a 2x or 3x display, so it's softer than a native page. Sharper text would
+  need the pod's Chromium to render at the phone's DPR, a much larger screen to send.
+- Every scroll is a round trip: the page moves when the pod's next frame arrives, so it trails the finger by the
+  network's latency, and there's no rubber-banding at the ends of the page.
 
 ### 7.10 Deployment layout and the home-cluster split
 
@@ -3216,7 +3280,7 @@ exec into or screenshot a pod that holds a cart.
 | A checkout is cut off mid-payment | Medium / high | Payment guard pauses session clocks; no navigation away while paying; the 30-minute session default tuned from `ferrywatch_checkout_seconds`; `hold_ending` warning at T−5. |
 | VNC reconnects fail on phones (bank-app switch, network change, Cloudflare idle) | Medium / high | 20 s pings; reconnect with `N` replaces stale sockets; shim reload until the deadline; only failed upgrades count; S-VNC-lite on three clients. |
 | The device that opened checkout is lost (iOS home-screen storage) | Medium / medium | No automatic open; device choice on `/c`; `N` reused across returns; S-VNC-lite checks the iOS path; no takeover ticket (round 3): iPhone users check out in Safari or on a computer if it fails. |
-| The stock KasmVNC client changes on upgrade | Low / medium | No bundle patch; a CI test drives the client through the shim against a fake gate. |
+| The stock KasmVNC client changes on upgrade | Low / medium | No bundle patch; a CI test drives the client through the shim against a fake gate. The shim's phone handling relies on the client's DOM and gesture events (§7.9, *As built, on a phone*): it does nothing if they change, and `test_checkout_screen.py` fails. |
 | Memory is higher than measured (heavy pages, tmpfs, checkout) | Medium / medium | S-MEM measures the cgroup working set including tmpfs; podMemory starts at 1.5 GiB; disk cache capped; recycle at 85 % while Watching, alert while Holding; quota backstop. |
 | A Talos upgrade releases a hold (R8) | Medium / low | "Pause carting" runbook; orderly release with an alert; hold PDB plus `drainTimeout` in M4 if it bites. |
 | A session token stolen through XSS on the dashboard origin (R17) | Low / medium | The strict hash-based CSP (blocks injection and fetch/form exfiltration, not navigation); the 24 h IdP re-verification, which a thief can't pass; idle and absolute expiry; server-side revocation (logout, "sign out everywhere", suspension); VNC still needs the pod's ticket and first-viewer lock. |

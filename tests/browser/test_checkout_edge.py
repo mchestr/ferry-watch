@@ -17,6 +17,7 @@ import os
 import struct
 import sys
 import time
+import urllib.parse
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -238,6 +239,35 @@ async def test_the_client_opens_the_checkout_with_the_ticket_then_comes_back_wit
     assert sorted(edge.offers[1]) == ["binary", nonce]
     assert edge.xvnc.connections == 2
     assert violations == []
+
+
+@pytest.mark.parametrize("touch", [False, True], ids=["mouse", "touch"])
+async def test_the_viewer_is_the_devices_own_size_and_a_touch_screen_gets_a_keyboard_button(
+    edge: Edge, browser: Browser, touch: bool
+) -> None:
+    context = await browser.new_context(has_touch=touch)
+    try:
+        page = await context.new_page()
+        await page.goto(f"{edge.url}{LANDING}#{ticket()}")
+        await page.click("#open")
+        await page.wait_for_selector("html.noVNC_connected")
+        settings = urllib.parse.urlsplit(page.url).fragment.split("&")
+        assert settings == [
+            f"path=t/{TRIP}/g/{GEN}/ws",
+            "autoconnect=1",
+            "reconnect=1",
+            "reconnect_delay=1000",
+            "idle_disconnect=120",
+            "anti_aliasing=1",  # no auto-scaling on a high-DPI phone
+            *(["virtual_keyboard_visible=1"] if touch else []),
+        ]
+        assert await page.is_visible("#noVNC_keyboard_control") == touch
+        # The side panel is closed as the client connects, and its handle opens it again.
+        assert not await page.is_visible("#noVNC_control_bar.noVNC_open")
+        await page.click("#noVNC_control_bar_handle")
+        await page.wait_for_selector("#noVNC_control_bar.noVNC_open")
+    finally:
+        await context.close()
 
 
 async def test_an_expired_ticket_goes_back_to_ferry_watch_to_open_it_again(edge: Edge, page: Page) -> None:
