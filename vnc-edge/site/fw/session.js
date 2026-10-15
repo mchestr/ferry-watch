@@ -109,9 +109,9 @@
   }
 
   // The escape hatch (PROTOCOL.md §8.10). viewer.html's own markup holds a hidden bar with a "Use the classic
-  // viewer" button. This shows it 3 s after the page starts, unless the viewer has reached its first `ready` by
-  // then, and at once on any uncaught error or unhandled rejection, or a script or stylesheet that failed to load.
-  // The button works without any of the viewer's modules.
+  // viewer" button. For a checkout's viewer, this shows it 3 s after the page starts, unless the viewer has reached
+  // its first `ready` by then, and at once on any uncaught error or unhandled rejection, or a script or stylesheet
+  // that failed to load. The button works without any of the viewer's modules.
   let ready = false;
   let shown = null; // why the bar is showing: "slow" or "error"
 
@@ -133,7 +133,7 @@
     placeEscape();
   }
 
-  if (location.pathname === VIEWER) {
+  if (location.pathname === VIEWER && where(location.hash)) {
     setTimeout(() => showEscape("slow"), WATCHDOG_MS);
     addEventListener("error", () => showEscape("error"), true); // capturing: a script that didn't load too
     addEventListener("unhandledrejection", () => showEscape("error"));
@@ -141,7 +141,7 @@
       placeEscape();
       const at = where(location.hash);
       const button = document.getElementById("fw-escape-classic");
-      if (!at || !button) return;
+      if (!button) return;
       button.addEventListener("click", () => {
         useClassic(at.trip, at.gen);
         location.replace(classicUrl(at.trip, at.gen)); // leaving closes the stream's socket

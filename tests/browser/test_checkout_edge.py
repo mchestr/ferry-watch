@@ -12,6 +12,7 @@ The client's files come from the KasmVNC package: set FW_KASMVNC_WWW to its extr
 from __future__ import annotations
 
 import asyncio
+import functools
 import importlib.util
 import os
 import struct
@@ -55,6 +56,7 @@ CLASSIC_CSP = (
 )
 
 
+@functools.cache
 def _load_build() -> ModuleType:
     spec = importlib.util.spec_from_file_location("vnc_edge_build", EDGE / "build.py")
     assert spec is not None
@@ -69,6 +71,14 @@ def _load_build() -> ModuleType:
 class Site:
     www: Path
     csp: str
+
+
+def viewer_policy(host: str) -> str:
+    """The streamed viewer's policy, served on a test server: its socket is ws://, not wss://."""
+    policy: str = _load_build().viewer_csp(host)
+    secure = f"connect-src wss://{host}"
+    assert policy.count(secure) == 1
+    return policy.replace(secure, f"connect-src ws://{host}")
 
 
 @pytest.fixture(scope="module")
@@ -120,8 +130,12 @@ class Edge:
     xvnc: FakeXvnc
 
 
-def edge_app(site: Site, gate: Gate, offers: list[list[str]]) -> web.Application:
-    """vnc-edge's nginx config, in aiohttp."""
+Handler = Callable[[web.Request], Awaitable[web.StreamResponse]]
+
+
+def edge_app(site: Site, gate: Gate | Handler, offers: list[list[str]]) -> web.Application:
+    """vnc-edge's nginx config, in aiohttp, with the pod's gate (or a stand-in's upgrade handler) behind the
+    checkout's socket path."""
 
     @web.middleware
     async def headers(
@@ -131,9 +145,10 @@ def edge_app(site: Site, gate: Gate, offers: list[list[str]]) -> web.Application
             offers.append([p.strip() for p in request.headers.get("Sec-WebSocket-Protocol", "").split(",")])
             return await handler(request)
         response = await handler(request)
+        viewer = request.path == "/fw/viewer.html"
         response.headers.update(
             {
-                "Content-Security-Policy": site.csp,
+                "Content-Security-Policy": viewer_policy(request.host) if viewer else site.csp,
                 "Referrer-Policy": "no-referrer",
                 "X-Content-Type-Options": "nosniff",
                 "Cache-Control": "no-store",
@@ -153,8 +168,10 @@ def edge_app(site: Site, gate: Gate, offers: list[list[str]]) -> web.Application
     app.router.add_get("/gone.html", file(site.www / "gone.html"))
     for directory in ("assets", "app", "core", "fw"):
         app.router.add_static(f"/{directory}", site.www / directory)
-    (upgrade,) = gate.app().router.routes()  # GET /ws, which nginx proxies this path to
-    app.router.add_get(f"/t/{TRIP}/g/{GEN}/ws", upgrade.handler, allow_head=False)
+    if isinstance(gate, Gate):
+        (upgrade,) = gate.app().router.routes()  # GET /ws, which nginx proxies this path to
+        gate = upgrade.handler
+    app.router.add_get(f"/t/{TRIP}/g/{GEN}/ws", gate, allow_head=False)
     return app
 
 
@@ -358,13 +375,13 @@ async def test_a_stream_ticket_opens_the_streamed_viewer(edge: Edge, page: Page)
     assert page.url == f"{edge.url}{LANDING}"  # the ticket is out of the address bar and history
     assert await page.text_content("#sailing") == "Swartz Bay → Tsawwassen · Fri, Oct 16 · 9:00 am · Saver"
     assert await page.text_content("#beta") == "Opens in the new checkout viewer (beta)."
+    await page.click("#open")
+    await page.wait_for_url(f"{edge.url}{STREAM_VIEWER}")
     record = await device_record(page)
-    assert (record["viewer"], record["viewer_fallback"], record["opened"]) == ("stream", False, False)
-    pending = await page.evaluate("(key) => JSON.parse(sessionStorage.getItem(key)).ticket", f"{RECORD}:ticket")
-    assert pending == issued
-    async with page.expect_request(f"{edge.url}/fw/viewer.html") as opening:
-        await page.click("#open")
-    assert (await opening.value).is_navigation_request()
+    assert (record["viewer"], record["viewer_fallback"]) == ("stream", False)
+    # The streamed viewer offers its own subprotocol, with the ticket (this gate refuses it: 0.6.4's takes binary).
+    await _until_offered(edge, 1)
+    assert edge.offers[0] == ["fw.cast1", f"fw.n1.{record['n']}", f"fw.t1.{issued}"]
 
 
 async def test_once_the_streamed_viewer_gives_way_the_checkout_stays_classic_on_this_device(
@@ -384,3 +401,11 @@ async def test_once_the_streamed_viewer_gives_way_the_checkout_stays_classic_on_
     assert page.url == f"{edge.url}{classic_url()}"
     record = await device_record(page)
     assert (record["n"], record["viewer"], record["viewer_fallback"]) == (nonce, "stream", True)
+
+
+async def _until_offered(edge: Edge, count: int) -> None:
+    for _ in range(100):
+        if len(edge.offers) >= count:
+            return
+        await asyncio.sleep(0.05)
+    raise AssertionError(f"{len(edge.offers)} sockets opened, expected {count}")

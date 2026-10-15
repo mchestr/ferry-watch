@@ -64,6 +64,15 @@
      "note": "a kind 2 is exactly 32 bytes"},
     {"id": "image-without-jpeg", "sec": "4.2",
      "hex": "0100010007000000860198020000803f0000000000a004440000000002010000", "only": "viewer",
-     "note": "a kind 1 has 1 or more bytes of JPEG"}
+     "note": "a kind 1 has 1 or more bytes of JPEG"},
+    {"id": "width-0", "sec": "4.2",
+     "hex": "0100010007000000000098020000803f0000000000a004440000000002010000ffd8ffd9", "only": "viewer",
+     "note": "an image of no width can't be drawn"},
+    {"id": "scale-nan", "sec": "4.2", "hex": "0200010007000000860198020000c07f00000000000000000000000002000000",
+     "only": "viewer"},
+    {"id": "scale-0", "sec": "4.2", "hex": "0200010007000000860198020000000000000000000000000000000002000000",
+     "only": "viewer"},
+    {"id": "sy-infinite", "sec": "4.2",
+     "hex": "0100010007000000860198020000803f000000000000807f0000000002000000ffd8ffd9", "only": "viewer"}
   ]
 }

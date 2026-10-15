@@ -41,6 +41,7 @@ class Built:
     www: Path
     nginx_conf: Path
     csp: str
+    viewer_csp: str
 
 
 def patch_vnc_html(html: str) -> tuple[str, str]:
@@ -74,6 +75,25 @@ def csp(script_hash: str, checkout_host: str) -> str:
     )
 
 
+def viewer_csp(checkout_host: str) -> str:
+    """The streamed viewer's own policy (docs/multi-tenant/streamed-viewer/DESIGN.md §5.2, C38): its scripts and
+    styles are files of this site, it connects only to the checkout's sockets, and nothing can reach an HTML sink."""
+    return "; ".join(
+        (
+            "default-src 'none'",
+            "script-src 'self'",
+            "style-src 'self'",
+            "img-src 'self'",
+            f"connect-src wss://{checkout_host}",
+            "base-uri 'none'",
+            "form-action 'none'",
+            "frame-ancestors 'none'",
+            "require-trusted-types-for 'script'",
+            "trusted-types 'none'",
+        )
+    )
+
+
 def build(kasmvnc_www: Path, out: Path, *, checkout_host: str, app_origin: str) -> Built:
     if not _HOST.fullmatch(checkout_host):
         raise BuildError(f"Not a host name: {checkout_host!r}")
@@ -102,7 +122,7 @@ def build(kasmvnc_www: Path, out: Path, *, checkout_host: str, app_origin: str) 
     policy = csp(script_hash, checkout_host)
     conf = out / "default.conf"
     conf.write_text(_fill((HERE / "default.conf.in").read_text(), {"__FW_CSP__": policy}, conf.name))
-    return Built(www, conf, policy)
+    return Built(www, conf, policy, viewer_csp(checkout_host))
 
 
 def _fill(text: str, values: dict[str, str], name: str) -> str:

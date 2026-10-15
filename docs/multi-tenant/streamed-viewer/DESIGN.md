@@ -1132,7 +1132,8 @@ Playwright's `wait_for_function` compiles with `eval`, which this CSP refuses. P
 
 - The `browser` job installs `xsettingsd x11-xserver-utils` next to KasmVNC and matchbox, and checks the tools are
   on `PATH`.
-- The `web` job gains `node --test vnc-edge/tests/` (no npm dependencies).
+- The `web` job gains `node --test vnc-edge/tests/*.test.mjs` (no npm dependencies; Node 22's `--test` takes
+  files and globs, not a directory).
 - The image's smoke test covers the image.
 
 ## 11. Build plan

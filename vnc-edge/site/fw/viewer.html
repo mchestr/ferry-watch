@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-visual"
+    />
+    <title>Ferry Watch checkout</title>
+    <link rel="stylesheet" href="/fw/viewer.css" />
+    <script src="/fw/session.js"></script>
+    <script type="module" src="/fw/viewer/main.js"></script>
+  </head>
+  <body>
+    <canvas id="screen" role="img" aria-label="The checkout page"></canvas>
+    <div id="gestures"></div>
+    <input
+      id="proxy"
+      type="text"
+      autocomplete="off"
+      autocorrect="off"
+      autocapitalize="off"
+      spellcheck="false"
+      tabindex="-1"
+      aria-label="Type into the checkout"
+    />
+    <section id="status" role="status">
+      <div class="sheet">
+        <h1 id="status-title">Opening your checkout…</h1>
+        <p id="status-text" hidden></p>
+        <button id="status-here" type="button" hidden>Show it here</button>
+        <button id="status-classic" type="button" hidden>Use the classic viewer</button>
+        <a id="status-back" href="__FW_APP_ORIGIN__/" hidden>Back to Ferry Watch</a>
+      </div>
+    </section>
+    <div id="fw-escape" role="alert" hidden>
+      <p>Checkout not showing?</p>
+      <button id="fw-escape-classic" type="button">Use the classic viewer</button>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,156 @@
+/* The streamed checkout viewer (docs/multi-tenant/streamed-viewer/DESIGN.md §7). The page never scrolls or
+   zooms: the checkout is drawn on one full-screen canvas, and a layer above it takes every touch, click and
+   wheel. The viewer's own controls sit above that, and the escape bar above everything. */
+
+:root {
+  color-scheme: light dark;
+  --letterbox: #d6d3d1;
+  --sheet: rgb(255 255 255 / 0.92);
+  --text: #1c1917;
+  --muted: #57534e;
+  --accent: #15803d;
+  --accent-text: #fff;
+  --quiet: #e7e5e4;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --letterbox: #292524;
+    --sheet: rgb(28 25 23 / 0.92);
+    --text: #fafaf9;
+    --muted: #a8a29e;
+    --quiet: #44403c;
+  }
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+  background: var(--letterbox);
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  font:
+    16px/1.4 system-ui,
+    -apple-system,
+    sans-serif;
+  color: var(--text);
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+#screen {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+#gestures {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  touch-action: none;
+}
+
+/* The phone's keyboard types into this, and the viewer sends what it types. Nothing can tap it: the gesture
+   layer above takes every touch, and the viewer focuses it itself (PROTOCOL.md §8.5). */
+#proxy {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  font-size: 16px;
+  color: transparent;
+  background: transparent;
+  caret-color: transparent;
+  pointer-events: none;
+}
+
+#status {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  padding: 24px 16px;
+  background: var(--sheet);
+}
+
+#status .sheet {
+  width: 100%;
+  max-width: 24rem;
+  text-align: center;
+}
+
+#status h1 {
+  margin: 0 0 8px;
+  font-size: 1.25rem;
+}
+
+#status p {
+  margin: 0 0 16px;
+  color: var(--muted);
+}
+
+#status button,
+#fw-escape button {
+  display: block;
+  width: 100%;
+  margin: 0 0 12px;
+  padding: 12px;
+  border: 0;
+  border-radius: 12px;
+  font: inherit;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--quiet);
+}
+
+#status button.primary,
+#fw-escape button {
+  color: var(--accent-text);
+  background: var(--accent);
+}
+
+#status a {
+  color: inherit;
+}
+
+#fw-escape {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 100;
+  padding: 12px max(16px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom))
+    max(16px, env(safe-area-inset-left));
+  background: var(--sheet);
+  box-shadow: 0 -1px 8px rgb(0 0 0 / 0.2);
+  text-align: center;
+}
+
+#fw-escape p {
+  margin: 0 0 8px;
+}
+
+#fw-escape button {
+  max-width: 24rem;
+  margin: 0 auto;
+}
