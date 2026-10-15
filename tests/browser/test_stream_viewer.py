@@ -256,6 +256,11 @@ async def status(viewer: Viewer) -> dict[str, Any]:
     return shown
 
 
+def shown_as(*, prominent: bool) -> Callable[[Any], bool]:
+    """A status reading that is shown, prominently or not."""
+    return lambda s: bool(s["shown"]) and s["prominent"] == prominent
+
+
 async def until_status(viewer: Viewer, title: str) -> dict[str, Any]:
     shown: dict[str, Any] = await until(lambda: status(viewer), lambda s: s["shown"] and s["title"] == title)
     assert shown["title"] == title
@@ -408,7 +413,7 @@ async def test_refused_the_viewer_backs_off_then_offers_the_classic_viewer(phone
         refused.append(time.monotonic())
         # The viewer hears of the refusal a moment after the agent made it.
         prominent = count == 3
-        shown = await until(lambda: status(phone), lambda s: s["shown"] and s["prominent"] == prominent)
+        shown = await until(lambda: status(phone), shown_as(prominent=prominent))
         assert shown["title"] == "Reconnecting…"
         assert shown["classic"]
         assert shown["prominent"] == prominent
@@ -438,7 +443,7 @@ async def test_a_broken_image_is_dropped_and_the_viewer_reconnects(phone: Viewer
         await session.closed.wait()
         assert session.close_code == 1000
         assert session.acks == []
-        shown = await until(lambda: status(phone), lambda s: s["shown"] and s["prominent"] == prominent)
+        shown = await until(lambda: status(phone), shown_as(prominent=prominent))
         assert shown["title"] == "Reconnecting…"
         assert shown["prominent"] == prominent
     await checkout.agent.session(2)
