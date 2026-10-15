@@ -150,9 +150,8 @@ values, an open JavaScript dialog) and the pod's screen size persist across conn
 3. The agent calls `verdict()` (§7.2: `hello` is a message like any other); when it returns a code, the agent
    closes with it and changes nothing, neither the screen nor the dialogs. Otherwise it applies the size (DESIGN
    §4.1). If the X screen already has exactly this size and scale factor (a reconnect from the same device),
-   nothing changes and the page sees nothing. Otherwise the agent changes
-   Xft/DPI first and then the RandR mode, without waiting in between, and waits until the page reports the new
-   size (at most 1 s).
+   nothing changes and the page sees nothing. Otherwise the agent changes Xft/DPI first and then the RandR mode,
+   without waiting in between, and waits until the page reports the new size (at most 1 s).
 4. It sends, in this order: `ready` (§5.1), `pages` (§5.2), `clock` (§5.8), a `dialog` (§5.5) for each JavaScript
    dialog already open on a page of the checkout, then a first image (§4) taken with `Page.captureScreenshot`,
    with header flag bit 0 set. (Chromium's screencast sends nothing until the page changes, so without this a
@@ -935,6 +934,7 @@ sheet MUST head each dialog as Chrome does, and only the page's main frame is th
 - otherwise (a frame inside the page, or `main` absent): "`<origin>` says:" when `origin` equals the page's origin in
   `pages`, "An embedded page at `<origin>` says:" when it differs, and "An embedded page on this page says:" when it
   is "".
+
 A dialog that isn't `main` MUST NOT be headed "This page says:" (found in review: a cross-site frame made a child at
 about:srcdoc, blob: or data: and asked from there, and the sheet headed it "This page says:", as if the checkout's
 own page were asking). The sheet MUST look like page content, not like the viewer's own controls (it never carries
