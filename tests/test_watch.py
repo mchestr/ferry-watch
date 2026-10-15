@@ -11,6 +11,7 @@ from typing import Any
 import msgspec
 import pytest
 
+from ferry_watch.agent.cast_protocol import Clock as ClockMessage
 from ferry_watch.agent.cast_protocol import CloseCode
 from ferry_watch.agent.store import OneTripStore
 from ferry_watch.agent.watch import (
@@ -534,6 +535,20 @@ async def test_the_viewers_verdict(rig: Rig) -> None:
     rig.watcher.drain()
     assert rig.watcher.viewer_verdict(cart_id, "rfb") is CloseCode.DRAINING
     assert rig.watcher.checkout_target() is None
+
+
+async def test_the_clock_a_streamed_viewer_is_shown(rig: Rig) -> None:
+    assert rig.watcher.clock_info() is None
+    await hold_one(rig)
+    started = rig.clock.now
+    hard = started + HOLD.hard_s
+    assert rig.watcher.clock_info() == ClockMessage(ends=started + HOLD.unclaimed_s, hard=hard, paused=False)
+    rig.clock.advance(60)
+    rig.watcher.viewer_changed(connected=True)
+    assert rig.watcher.clock_info() == ClockMessage(ends=started + 60 + HOLD.session_s, hard=hard, paused=False)
+    rig.site.view = CheckoutView(payment=True)
+    await rig.step()
+    assert rig.watcher.clock_info() == ClockMessage(ends=None, hard=hard, paused=True)  # the payment page stops it
 
 
 async def test_the_checkout_target_is_the_held_carts_window(rig: Rig) -> None:

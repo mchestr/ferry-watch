@@ -60,7 +60,7 @@ from ferry_watch.protocol import CartStatus as WireCartStatus
 from ferry_watch.protocol import FarePreference as WireFarePreference
 from ferry_watch.state import Cart, CartStatus
 
-from .cast_protocol import CloseCode
+from .cast_protocol import Clock, CloseCode
 from .store import OneTripStore
 
 if TYPE_CHECKING:
@@ -287,6 +287,18 @@ class TripWatcher:
         if self.checkout_cart() != cart_id:
             return CloseCode.ENDED
         return None
+
+    def clock_info(self) -> Clock | None:
+        """The hold's clocks for a streamed viewer's `clock` message (PROTOCOL §5.8), or None with no hold: when
+        the checkout ends (None while a payment page stops its clock), and the hard cap."""
+        hold = self.hold
+        if not self.holding or hold is None:
+            return None
+        verdict = peek(hold, self._limits(), self._clock())
+        paused = hold.payment_since is not None
+        running = verdict.session_deadline if verdict.session_deadline is not None else verdict.unclaimed_deadline
+        ends = None if paused else min(running, verdict.hard_deadline) if running is not None else verdict.hard_deadline
+        return Clock(ends=ends, hard=verdict.hard_deadline, paused=paused)
 
     def viewer_changed(self, connected: bool) -> None:
         """The gate: a checkout viewer connected or left."""

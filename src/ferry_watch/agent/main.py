@@ -23,7 +23,7 @@ from typing import Any
 
 import aiohttp
 from aiohttp import web
-from playwright.async_api import BrowserContext
+from playwright.async_api import BrowserContext, Page
 
 from ferry_watch.bcferries.site import PodBrowser, SiteSession
 from ferry_watch.bcferries.terminals import TerminalDirectory
@@ -45,8 +45,10 @@ from .gate import Gate, GateSettings
 from .hub import RECONNECT_BACKOFF_SECONDS, HubClient, Identity
 from .lockdown import Lockdown, self_test
 from .processes import pod_processes
+from .screen import Screen
 from .settings import AgentSettings, SettingsError
 from .store import OneTripStore
+from .stream import CastPod, factory
 from .watch import Browser, Finish, TripWatcher
 
 log = logging.getLogger("ferry_watch.agent")
@@ -96,6 +98,12 @@ class Agent:
             close_viewer=self._close_viewer,
         )
         self.dialogs = DialogKeeper(self._checkout_context)
+        # A streamed viewer's screen: the pod's own at launch, and restored before any classic viewer.
+        screen_env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(settings.home)}
+        self.screen = Screen(settings.display, settings.screen, settings.xsettings_dir, screen_env)
+        stream = CastPod(
+            target=self._checkout_page, clock=self.watcher.clock_info, screen=self.screen, dialogs=self.dialogs
+        )
         self.gate = Gate(
             GateSettings(
                 origin=settings.vnc_origin,
@@ -107,7 +115,9 @@ class Agent:
             ),
             checkout_cart=self.watcher.checkout_cart,
             viewer_changed=self.watcher.viewer_changed,
+            cast=factory(stream),
             verdict=self.watcher.viewer_verdict,
+            screen=self.screen,
             dialogs=self.dialogs,
         )
         self.gate_port: int | None = None
@@ -149,6 +159,7 @@ class Agent:
             await asyncio.gather(*tasks, return_exceptions=True)
             for runner in reversed(runners):
                 await runner.cleanup()
+            await self.screen.close()
 
     # ---- the operator
 
@@ -182,6 +193,11 @@ class Agent:
         """The held cart's browser context, whose dialogs a viewer answers."""
         target = self.watcher.checkout_target()
         return target.context if isinstance(target, SiteSession) else None
+
+    def _checkout_page(self) -> tuple[BrowserContext, Page] | None:
+        """The held cart's browser context and its page, which a streamed viewer is shown."""
+        target = self.watcher.checkout_target()
+        return (target.context, target.page) if isinstance(target, SiteSession) else None
 
     async def _publish(self) -> None:
         """Send the trip's state when it changes (coalesced) and at least every 15 s."""
