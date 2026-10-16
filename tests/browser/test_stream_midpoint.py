@@ -601,6 +601,12 @@ def says(text: str, shown: dict[str, Any]) -> bool:
     return bool(shown["message"] == text)
 
 
+def drawn_after(seq: int, seen: dict[str, Any]) -> bool:
+    """The viewer has drawn an image newer than `seq`."""
+    image = drawn(seen)
+    return image is not None and image["seq"] > seq
+
+
 async def test_a_frame_inside_the_checkout_never_heads_its_dialog_as_the_page(
     browser: Browser, checkout: Checkout
 ) -> None:
@@ -626,6 +632,12 @@ async def test_a_frame_inside_the_checkout_never_heads_its_dialog_as_the_page(
                 await frame.evaluate(stream.CHILD_DIALOG[how], lure)
             shown = await until(lambda: viewers.dialog_shown(phone), functools.partial(says, lure))
             assert shown["origin"] == expected, how
+            blocked = max(image["seq"] for image in (await wire(phone))["images"])  # nothing comes of a blocked page
             await phone.page.tap("#dialog-ok")
             await until(lambda: phone.page.is_hidden("#dialog"), bool)
+            # The answer was carried out: the page answers again, and its screenshot follows (PROTOCOL §5.5). Until
+            # then the dialog is open in the pod, where the next frame's dialog would take its place.
+            seen = await until(lambda: wire(phone), functools.partial(drawn_after, blocked))
+            assert [got["msg"] for got in seen["got"] if got["msg"]["t"] == "error"] == [], how
+            assert drawn_after(blocked, seen), f"the {how} dialog's answer wasn't carried out"
             await showing(phone, checkout.pod)

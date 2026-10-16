@@ -85,7 +85,11 @@ messages = list_of(message)
 image = shaped(page=integer, seq=integer, w=integer, h=integer, scale=num, sx=num, sy=num)
 call = shaped(method=text, params=obj)
 step = shaped(
-    at=integer, msg=message, times=integer, expect=one_of("ok", "rate", "invalid", "close"), **{"code?": one_of(4429)}
+    at=integer,
+    msg=message,
+    times=integer,
+    expect=one_of("ok", "rate", "invalid", "close"),
+    **{"code?": one_of(4429), "owed?": boolean},
 )
 map_case = {"map": message, "oks": messages, "image": image, "last_input": integer, "shifted": boolean}
 EVENTS = {  # each gesture event type and its fields besides `at` and `type`

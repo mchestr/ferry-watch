@@ -252,16 +252,20 @@ class RateLimiter:
         self._overall = _Bucket(OVERALL_RATE.rate, OVERALL_RATE.burst, OVERALL_RATE.burst, now)
         self._drops: deque[float] = deque()
 
-    def admit(self, message_type: str, code_points: int = 0) -> Literal["ok", "rate", "close"]:
-        """A message that passed the value rules: admitted (taking its tokens), dropped, or the end."""
+    def admit(self, message_type: str, code_points: int = 0, *, owed: bool = False) -> Literal["ok", "rate", "close"]:
+        """A message that passed the value rules: admitted (taking its tokens), dropped, or the end.
+
+        An `owed` message is the first answer to a dialog the session announced and is waiting on. Its type's bucket
+        never drops it (it takes a token if there is one): the answer is the only way out of a page the dialog
+        blocks, and each announced dialog is owed one, so a page's dialogs bound these, not the viewer."""
         now = self._clock()
         bucket = self._buckets[message_type]
         over = not bucket.has(1, now) or (message_type == "text" and not self._code_points.has(code_points, now))
-        if over:
+        if over and not owed:
             return "close" if self._dropped(now) else "rate"
         if not self._overall.has(1, now):
             return "close"
-        bucket.tokens -= 1
+        bucket.tokens = max(0.0, bucket.tokens - 1)
         self._overall.tokens -= 1
         if message_type == "text":
             self._code_points.tokens -= code_points
@@ -421,6 +425,7 @@ class CastSession:
         self._context: BrowserContext | None = None
         self._pages: PageList | None = None
         self._dialogs: dict[int, Page] = {}  # dialog number -> its page
+        self._owed: set[int] = set()  # announced dialogs no answer has been admitted for (never rate-limited, §7.1)
         self._dialog_opened = asyncio.Event()  # since the worker started carrying out its latest message
         self._held: asyncio.Task[Any] | None = None  # the rest of a message whose input opened a dialog
         self._early: list[Outbound] = []  # dialogs that opened before `ready` went out
@@ -480,6 +485,7 @@ class CastSession:
         if entry is None:
             return  # not a page the viewer knows: it stays for the classic viewer
         self._dialogs[number] = dialog.page
+        self._owed.add(number)
         entry.dialogs += 1
         self._dialog_opened.set()
         # The page sends no frames now and answers almost nothing: images, the map and input wait (entry.blocked).
@@ -492,6 +498,7 @@ class CastSession:
             self._early.append(message)
 
     def dialog_closed(self, number: int) -> None:
+        self._owed.discard(number)
         page = self._dialogs.pop(number, None)
         if page is None:
             return
@@ -637,6 +644,7 @@ class CastSession:
             return
         for number in [n for n, p in self._dialogs.items() if p is page]:
             del self._dialogs[number]
+            self._owed.discard(number)
         if entry.main:
             self._end(self._verdict() or CloseCode.ENDED)  # the cart's own page went
             return
@@ -753,7 +761,11 @@ class CastSession:
         if check(message, self._known) is not None:
             outcome: str = self._limiter.invalid()
         else:
-            outcome = self._limiter.admit(kind, len(message.s) if isinstance(message, Text) else 0)
+            owed = message.id if isinstance(message, Answer) and message.id in self._owed else None
+            code_points = len(message.s) if isinstance(message, Text) else 0
+            outcome = self._limiter.admit(kind, code_points, owed=owed is not None)
+            if owed is not None and outcome == "ok":
+                self._owed.discard(owed)  # one each: another answer to it is rate-limited as any message is
         if outcome == "close":
             self._end(CloseCode.RATE)
         elif outcome != "ok":

@@ -111,7 +111,7 @@ full at 0 ms:
 
 | Field | Type | Meaning |
 |---|---|---|
-| `steps` | array | `{at, msg, times, expect, code?}`: at `at` ms, `times` copies of `msg` arrive, and each gets `expect`: `"ok"` (admitted), `"rate"` (dropped by its bucket: `error rate`), `"invalid"` (dropped by the value rules) or `"close"` (the connection closes with `code`) |
+| `steps` | array | `{at, msg, times, expect, code?, owed?}`: at `at` ms, `times` copies of `msg` arrive, and each gets `expect`: `"ok"` (admitted), `"rate"` (dropped by its bucket: `error rate`), `"invalid"` (dropped by the value rules) or `"close"` (the connection closes with `code`). `owed`: each copy is the first answer to a different dialog the session announced and still waits on (§7.1) |
 
 ### `coalesce` (agent)
 

@@ -176,7 +176,8 @@ def test_the_rate_limiter(case: dict[str, Any]) -> None:
             if check(message, KNOWN) is not None:
                 got = limiter.invalid()
             else:
-                got = limiter.admit(message_type(message), len(message.s) if isinstance(message, Text) else 0)
+                code_points = len(message.s) if isinstance(message, Text) else 0
+                got = limiter.admit(message_type(message), code_points, owed=step.get("owed", False))
             assert got == step["expect"], step
 
 

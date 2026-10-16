@@ -784,6 +784,14 @@ burst) and refills continuously at its rate. Only messages that passed the value
 holds enough tokens, and then takes them and one from the overall bucket; a message over its type's bucket takes
 nothing from any bucket. The 10 s of the drop limit is a sliding window.
 
+One exception: the first answer (`dialog`, §6.13) to a dialog the agent announced in this session (§5.5) and is still
+waiting on is never dropped by the `dialog` bucket. It takes a token from it if there is one, and one from the
+overall bucket, which still closes the connection when empty. That answer is the only way out of a page the dialog
+blocks, and the page's dialogs, not the viewer, bound how many there are. Found in CI: four dialogs answered as fast
+as the sheet showed each were four answers within half a second; the fourth was dropped, and its dialog stayed open
+in the pod, the page blocked behind it, with the viewer's sheet gone. Another answer to the same dialog, or one to an
+id the agent never announced, is limited as any message is.
+
 | Type | Rate (/s) | Burst | Viewer sends at most |
 |---|---|---|---|
 | `ack` | 40 | 40 | one per binary message |

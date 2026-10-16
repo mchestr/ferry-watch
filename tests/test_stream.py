@@ -569,6 +569,29 @@ async def test_dialogs_that_open_and_close_while_streaming_are_reported(rig: Rig
     assert rig.dialogs.answers == []
 
 
+async def test_every_dialog_announced_gets_its_answer_however_quickly_the_answers_come(rig: Rig) -> None:
+    """Dialogs open at once (on pop-ups, in frames, all announced again after a reconnect), answered as fast as the
+    sheet shows each: no answer to a dialog the agent announced is dropped by the `dialog` rate (§7.1), or the dialog
+    would stay open in the pod, its page blocked behind it with the viewer's sheet gone (found in CI: the fourth of
+    four answers within 0.48 s). Another answer to one already answered is limited as any message is."""
+    viewer = await rig.opened()
+    for number in range(1, 6):
+        rig.dialogs.sink.dialog_opened(number, dialog(rig.page, "alert", f"Card declined ({number})"))
+    await viewer.message("dialog", where=lambda m: m["id"] == 5)
+    for number in range(1, 6):
+        await viewer.send({"t": "dialog", "id": number, "ok": True})
+    await eventually(lambda: len(rig.dialogs.answers) == 5 or any(m["t"] == "error" for m in viewer.messages))
+    assert [m for m in viewer.messages if m["t"] == "error"] == []
+    await eventually(lambda: len(rig.dialogs.answers) == 5)
+    assert rig.dialogs.answers == [(n, True, None) for n in range(1, 6)]
+
+    for _ in range(3):  # one more than the bucket's burst, at once
+        await viewer.send({"t": "dialog", "id": 5, "ok": False})
+    assert await viewer.message("error") == {"t": "error", "code": "rate", "ref": "dialog"}
+    await asyncio.sleep(0.1)
+    assert rig.dialogs.answers == [(n, True, None) for n in range(1, 6)]
+
+
 async def test_a_click_that_opens_a_dialog_is_done_when_the_dialog_opens(rig: Rig) -> None:
     """Chromium doesn't acknowledge a click in a cross-site frame until the dialog it opened there is answered. The
     answer, the viewer's next message, doesn't wait behind the click, and later input waits for the click's end."""

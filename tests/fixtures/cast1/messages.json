@@ -785,6 +785,17 @@
       ]
     },
     {
+      "id": "rate-dialog-owed", "sec": "7.1",
+      "steps": [
+        {"at": 0, "msg": {"t": "dialog", "id": 3, "ok": true}, "times": 2, "expect": "ok"},
+        {"at": 0, "msg": {"t": "dialog", "id": 3, "ok": true}, "times": 3, "owed": true, "expect": "ok"},
+        {"at": 0, "msg": {"t": "dialog", "id": 3, "ok": true}, "times": 1, "expect": "rate"},
+        {"at": 300, "msg": {"t": "dialog", "id": 3, "ok": true}, "times": 1, "owed": true, "expect": "ok"},
+        {"at": 300, "msg": {"t": "dialog", "id": 3, "ok": true}, "times": 1, "expect": "rate"}
+      ],
+      "note": "the first answer to each announced dialog is never dropped by the bucket, and takes a token if there is one: 1.2 by 300 ms, 0.2 left"
+    },
+    {
       "id": "rate-drop-window-slides", "sec": "7.1",
       "steps": [
         {"at": 0, "msg": {"t": "key", "k": "F12"}, "times": 200, "expect": "invalid"},
