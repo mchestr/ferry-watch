@@ -4,20 +4,25 @@
 // hidden input, the proxy, which it focuses in the `touchend` of a tap on a field of a usable map (or of the "Tap
 // to type" chip when the map couldn't say), with the attributes that give the right keyboard. The proxy takes no
 // touches (`pointer-events: none`): the gesture layer above it does, so taps in the field move the pod's caret and
-// drags scroll. What is typed into it goes to the pod as `key`, `text` and `compose`, and never stays in it, with
-// one exception: in a name, an address or a sentence, the phone's keyboard decides capitals from the text before
-// the caret, so the proxy keeps the last 64 code points typed since the field was tapped, and lets the browser
-// make replacements to that text itself, sending the difference. Nothing typed is ever stored or logged (§8.9).
+// drags scroll. What is typed into it goes to the pod as `key`, `text` and `compose`.
+//
+// The phone's keyboard works from the text before the caret: it capitalises from it, and a suggestion, AutoFill, an
+// autocorrection or a swiped word replaces the word that text ends with. So the proxy keeps the end of what was
+// typed since the field was tapped, as the pod's field has it before its caret (at most 64 code points, after the
+// last line break), lets the browser make those edits to it itself, and sends the pod the difference: a suggestion
+// replaces exactly what it replaced, rather than adding to it. Whenever it can't be sure that is what the pod has
+// (a tap, a focus change, a navigation key), it starts again from nothing. A password field's proxy keeps nothing,
+// so the phone's keyboard never has a password to show or suggest. Nothing typed is ever stored or logged (§8.9).
 //
 // A computer's keyboard is sent as it is, key down and key up, whether or not the proxy has focus; the proxy then
 // only serves compositions (dead keys, IME) and paste.
 
-import { proxyAttributes, typable } from "./core/fields.js";
+import { keepsText, proxyAttributes, typable } from "./core/fields.js";
 import { toView } from "./core/layout.js";
 import { NAMED_KEYS } from "./core/protocol.js";
 import { codePoints, composeMessages, edit, isClean, normalise, tail, textMessages } from "./core/text.js";
 
-const KEPT = 64; // code points of context kept for the phone's keyboard
+const KEPT = 64; // code points of what was typed that the proxy keeps for the phone's keyboard
 const REPEAT_MS = 25; // a held key's repeats are sent at most this often (PROTOCOL.md §8.4)
 const REVEAL_MARGIN = 16; // CSS px between a field and the phone's keyboard
 const MAX_DELTA = 4000;
@@ -28,8 +33,12 @@ const DELETES = {
   deleteWordForward: { k: "Delete", word: true },
 };
 const PASTED = new Set(["insertFromPaste", "insertFromPasteAsQuotation", "insertFromDrop", "insertReplacementText"]);
+const APPLIED = new Set(["insertText", "insertReplacementText"]); // edits the browser makes to what the proxy keeps
 const LINE_BREAKS = new Set(["insertLineBreak", "insertParagraph"]);
 const EDITABLE = new Set(["text", "area", "date", "time"]);
+const TRIMMED = new Set(["email", "url"]); // input types whose value leaves out ASCII whitespace at either end
+const SPACES_BEFORE = /^[\t\n\f\r ]+/;
+const SPACES_AFTER = /[\t\n\f\r ]*$/;
 
 export class Keyboard {
   /**
@@ -46,9 +55,9 @@ export class Keyboard {
     this.computer = computer;
     this.field = null; // the field the proxy types into
     this.reported = null; // the field the agent's latest focus report named
-    this.attributes = "";
+    this.setup = ""; // the proxy's attributes for the field, and whether it keeps what is typed into it
     this.keeps = false; // whether the proxy keeps what was typed (see above)
-    this.context = "";
+    this.context = ""; // what the proxy keeps: the end of what was typed before the pod's caret
     this.revealed = false;
     this.composition = null; // the composition last sent
     this.held = new Map(); // a physical key's `code` → the key message its `down` sent
@@ -132,15 +141,16 @@ export class Keyboard {
   /** Sets the proxy up for `field`. `moved`: only if it is another kind of field; the caret is where it was. */
   take(field, moved = false) {
     const attributes = proxyAttributes(field);
-    const signature = JSON.stringify(attributes);
+    const keeps = keepsText(field);
+    const setup = JSON.stringify([attributes, keeps]); // a password's attributes may be another field's
     this.field = field;
-    if (moved && signature === this.attributes) return;
-    this.attributes = signature;
+    if (moved && setup === this.setup) return;
+    this.setup = setup;
     for (const [name, value] of Object.entries(attributes)) {
       if (value === "") this.proxy.removeAttribute(name);
       else if (this.proxy.getAttribute(name) !== value) this.proxy.setAttribute(name, value);
     }
-    this.keeps = attributes.type === "text" && ["words", "sentences"].includes(attributes.autocapitalize);
+    this.keeps = keeps;
     this.forget();
   }
 
@@ -152,11 +162,38 @@ export class Keyboard {
 
   /** Keeps `s` as typed before the caret, where the phone's keyboard needs it. */
   remember(s) {
+    this.keep(this.context + s);
+  }
+
+  /**
+   * Keeps as much of `text`, which ends where the pod's caret is, as the phone's keyboard needs: what follows the last
+   * line break, at most KEPT code points. `inProxy`: what the browser has just put in the proxy itself, if it has.
+   */
+  keep(text, inProxy = null) {
     if (!this.keeps) return this.forget();
-    this.context = tail(this.context + s, KEPT);
-    this.proxy.value = this.context;
+    this.context = tail(text.slice(text.lastIndexOf("\n") + 1), KEPT);
+    if (this.context !== inProxy) this.show();
+  }
+
+  /**
+   * Puts what is kept in the proxy, with its caret at the end, as the pod's is. `again`: even if the proxy's value
+   * already reads so, as an email input's does with spaces at its end that the user typed but its value leaves out.
+   */
+  show(again = false) {
+    const proxy = this.proxy;
+    const trims = TRIMMED.has(proxy.type);
+    if (trims) {
+      // Its value loses the spaces at either end, so it holds text ending in one only when the user typed them there.
+      this.context = this.context.replace(SPACES_BEFORE, "");
+      if (SPACES_AFTER.exec(this.context)[0]) this.context = "";
+    }
+    if (again || proxy.value !== this.context) {
+      if (trims) proxy.value = ""; // its text then changes, spaces and all, and its caret goes to the end
+      proxy.value = this.context;
+    }
+    if (proxy.selectionStart === null) return; // an email input has no selection: setSelectionRange throws
     const end = this.context.length;
-    this.proxy.setSelectionRange(end, end);
+    if (proxy.selectionStart !== end || proxy.selectionEnd !== end) proxy.setSelectionRange(end, end);
   }
 
   /** Once the phone's keyboard is up, scrolls the pod's page so the field shows above it, as a browser does. */
@@ -181,12 +218,12 @@ export class Keyboard {
   beforeinput(event) {
     const type = event.inputType;
     if (event.isComposing || type === "insertCompositionText") return; // the composition's events say it
-    if (type === "insertReplacementText" && this.context) return; // input() sends what the browser changed
+    if (this.keeps && APPLIED.has(type)) return; // the browser makes the edit; input() sends what it changed
     event.preventDefault();
     if (type === "insertText") {
       this.typed(event.data ?? "", "insertText");
     } else if (PASTED.has(type)) {
-      this.typed(event.dataTransfer?.getData("text/plain") ?? event.data ?? "", "paste");
+      this.typed(event.dataTransfer?.getData("text/plain") || event.data || "", "paste");
     } else if (Object.hasOwn(DELETES, type)) {
       this.press(DELETES[type]);
     } else if (LINE_BREAKS.has(type)) {
@@ -194,16 +231,32 @@ export class Keyboard {
     }
   }
 
-  /** A change no `beforeinput` was cancelled for: a replacement, or some autofill. Sends the difference. */
+  /**
+   * The browser changed the proxy itself: what was typed, a suggestion, AutoFill or an autocorrection, in a field it
+   * keeps text for; some autofill in any field. Sends the difference: Backspaces for what the edit took away from the
+   * end of what was kept, then what it put there.
+   */
   input(event) {
     if (event.isComposing) return;
-    const value = this.proxy.value;
-    if (value === this.context) return;
-    const { removed, added } = edit(this.context, value);
-    for (let i = 0; i < Math.min(removed, KEPT); i++) this.sendAll([{ t: "key", k: "Backspace" }]);
+    const now = this.applied(event);
+    if (now === this.context) return;
+    const { removed, added } = edit(this.context, now);
+    for (let i = 0; i < Math.min(removed, KEPT); i++) this.send({ t: "key", k: "Backspace" });
     this.sendAll(textMessages(added, codePoints(added) === 1 ? "insertText" : "paste"));
-    this.context = "";
-    this.remember(normalise(value));
+    this.keep(normalise(now), now);
+  }
+
+  /**
+   * What the proxy holds after the browser's edit: its value, and the spaces typed at its end that an email or URL
+   * input's value leaves out (they reach the pod as typed; Backspace deletes them there).
+   */
+  applied(event) {
+    const value = this.proxy.value;
+    if (!TRIMMED.has(this.proxy.type)) return value;
+    const data = event.data ?? "";
+    const spaces = SPACES_AFTER.exec(data)[0];
+    if (spaces && spaces === data && value === trimmed(this.context)) return this.context + data; // only spaces
+    return value.endsWith(spaces) ? value : value + spaces;
   }
 
   /** The composition changed. The browser says so again as it commits it: once is enough. */
@@ -239,7 +292,7 @@ export class Keyboard {
     this.send({ t: "key", ...msg });
     if (msg.k !== "Backspace" || msg.word || !this.context) return this.forget();
     this.context = [...this.context].slice(0, -1).join("");
-    this.proxy.value = this.context;
+    this.show(true);
   }
 
   sendAll(messages) {
@@ -311,6 +364,9 @@ export class Keyboard {
     this.repeated.clear();
   }
 }
+
+/** `s` without ASCII whitespace at either end, as an email or URL input's value has it. */
+const trimmed = (s) => s.replace(SPACES_BEFORE, "").replace(SPACES_AFTER, "");
 
 /** What a `key` message says of a physical key, or null for one that isn't sent (Ctrl, F-keys, dead keys, IME). */
 function physical(key) {

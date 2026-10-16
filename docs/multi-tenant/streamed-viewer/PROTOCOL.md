@@ -907,6 +907,20 @@ The viewer's hidden `<input>` that receives the phone's keyboard (DESIGN §4.4):
   caret and drags starting on it scroll. It is focused programmatically, inside the `touchend` of the tap that hit
   the field (iOS opens the keyboard only for focus inside a user gesture).
 - The prompt input of the dialog sheet (§8.8) follows the password rules above.
+- **What it holds.** A phone's keyboard works from the text before the caret: it capitalises from it, and a
+  suggestion, AutoFill, an autocorrection or a swiped word replaces the word that text ends with. So for a `text` or
+  `area` field that isn't a password, the proxy holds the end of what was typed since the field was tapped, as the
+  pod's field has it before its caret: at most **64** code points, from the last line break. The viewer leaves
+  `insertText` and `insertReplacementText` to the browser, and on `input` sends the difference between what the
+  proxy held and what it holds: one `key` `Backspace` for each code point the edit took from the end, then what it
+  put there (§8.7). Every other edit is cancelled and sent as §8.4 says, and what the proxy holds follows: a
+  Backspace takes its last code point (with nothing held, it is still sent), a paste or a composition adds to it.
+  It is emptied whenever the viewer can't be sure the pod still has it before its caret: a tap, a focus change, any
+  other key (Enter, Tab, an arrow, a word-wise delete). An email or URL input's value leaves out spaces at either
+  end: a space typed at the end is sent all the same, and the viewer never puts text ending in a space there itself
+  (it empties the proxy instead).
+- For a password field, and for a date or a time (typed as digits), it holds nothing: every edit is cancelled and
+  sent, so the phone's keyboard never has a password to show, correct or suggest.
 
 ### 8.6 Pickers and sheets
 
@@ -932,6 +946,12 @@ Before sending `text`, the viewer MUST:
 
 The same rules apply to `compose` (without TAB and LF; a composition longer than 64 code points is not sent until it
 is committed by `text`) and to `dialog.s` (without TAB and LF; cut at 256). Test vectors: §11.4.
+
+An edit the browser made to the text the keyboard proxy holds (§8.5) is sent as one `key` `Backspace` for each code
+point it took from the end of that text, then the text it put there, by these rules (one code point on its own as
+`key` with `c`). Found on an iPhone: "mike" typed into an email field, then the keyboard's suggestion
+"mikeachester@gmail.com", gave "mikemikeachester@gmail.com", because the proxy of an email field held nothing for the
+suggestion to replace, so the whole word was sent as new text; it now sends `text` "achester@gmail.com".
 
 ### 8.8 Page-derived text
 

@@ -868,15 +868,27 @@ read once per session in the main world must start with `en-US`, else `date` ans
   - `deleteWordBackward`/`Forward` → the same with `word`;
   - `insertLineBreak`/`insertParagraph` → `key Enter`.
 
-  Each is `preventDefault()`ed, so the proxy stays empty. As built, with one exception: where the proxy's
-  `autocapitalize` is `words` or `sentences` (names, addresses, free text), it keeps the last 64 code points typed
-  since the field was tapped, because a phone's keyboard decides capitals from the text before the caret (an
-  always-empty field would capitalise every letter). It is emptied whenever the pod's caret may have moved (a
-  tap, a focus change, a navigation key), and an `insertReplacementText` on that text is left to the browser and
-  sent as the difference (`Backspace`s, then the new text).
-- Compositions: `compositionupdate` → `compose`; `compositionend` → `text` (or `compose ""`), then the proxy is
-  cleared. An `input` with no preceding `beforeinput` (some autofill paths) sends the proxy's value as `text` and
-  clears it.
+  In a password field (and a date or a time) each is `preventDefault()`ed, so the proxy stays empty and the phone's
+  keyboard never has a password to show or suggest. In every other field that takes typing, the proxy keeps the
+  last 64 code points typed since the field was tapped (after the last line break), as the pod's field has them
+  before its caret, because a phone's keyboard works from the text before the caret: it capitalises from it (an
+  always-empty field would capitalise every letter), and a suggestion, AutoFill, an autocorrection or a swiped word
+  replaces the word that text ends with. There `insertText` and `insertReplacementText` are left to the browser,
+  and `input` sends the difference (`Backspace`s for what the edit took from the end, then the new text); the rest
+  are `preventDefault()`ed and sent as above, the kept text following (a Backspace takes its last code point). It
+  is emptied whenever the pod's caret may have moved (a tap, a focus change, a navigation key).
+  - Found on an iPhone in 0.7.0, which kept text only where the proxy's `autocapitalize` was `words` or
+    `sentences` (names, addresses, free text): "mike" typed into an email field, then the keyboard's suggestion
+    "mikeachester@gmail.com", gave the pod "mikemikeachester@gmail.com". The empty proxy had no "mike" for the
+    suggestion to replace, so it arrived whole and was sent as new text.
+  - An email input's value leaves out spaces at either end, though the user typed them, and it has no selection
+    (`setSelectionRange` throws). A space typed at the end is sent all the same (the browser's `input` says what it
+    inserted), a Backspace takes it away again, the viewer moves the caret to the end by setting the value from
+    "", and it never puts text ending in a space there itself (a paste ending in one empties the proxy). URL
+    inputs' values lose those spaces when set, and get the same treatment.
+- Compositions: `compositionupdate` → `compose`; `compositionend` → `text` (or `compose ""`), and the proxy keeps
+  the committed text (a password's is cleared). An `input` with no preceding `beforeinput` (some AutoFill paths)
+  is sent as the difference too.
 
 **Physical keyboards (computers).**
 - `keydown`/`keyup` → `key` with `ph` per PROTOCOL §8.4, whether or not the proxy is focused (type-ahead and
@@ -1193,7 +1205,11 @@ check: apply 390x664 at 2x, the page reports it, restore, the page reports 1280x
   4. **A second tap inside the focused field sends `tap` and keeps the proxy focused; a drag starting on it sends
      `wheel`** (pointer-events).
   5. Typing gives `key {c}`; paste of `"4242\n"`, CRLF text and an emoji at position 256 gives PROTOCOL §11.4's messages;
-     IME gives `compose` then `text`; desktop keys give `ph` down/up with Shift.
+     IME gives `compose` then `text`; desktop keys give `ph` down/up with Shift. A suggestion, AutoFill or an
+     autocorrection, replayed into the proxy as the browser fires it (or typed by Chromium itself), leaves the pod's
+     field with exactly what it left in the proxy (an email suggested over "mike", a card AutoFilled over digits
+     typed, "teh " corrected to "the "); a password's proxy holds nothing; Backspace past what the proxy keeps
+     still deletes in the pod.
   6. Drag gives at most one `wheel` per 33 ms with exact sums; a flick coasts and stops; a tap during a coast sends
      no `tap`; on `inner.html`-style images (no `sy` change) no prediction shift is drawn.
   7. Two-point touch gives a local zoom and exactly one `pinch` with `x0..y1`.
@@ -1331,8 +1347,8 @@ Any disagreement between A and B is fixed in PROTOCOL.md and the pack first, the
 4. **On devices, before `streamViewer: everyone`.**
    - Devices and links: iPhone Safari and the iOS home-screen app; one Android Chrome; LTE.
    - Keyboard: it opens on a tap for name, email (email keyboard), phone, card (numeric); a second tap inside the
-     field moves the caret; Gboard swipe; QuickType; iOS AutoFill of contact and card into the proxy; the menu's
-     Paste.
+     field moves the caret; Gboard swipe; QuickType (a suggested email address over the start of one typed); iOS
+     AutoFill of contact and card into the proxy, also over part of it typed; the menu's Paste.
    - **With a saved `auth.chestr.dev` login on each phone: tapping a pod password field and an
      `autocomplete=username` field offers no chestr.dev credential, and no "save password" prompt appears.**
    - Native select wheel and date picker; rotation; pinch feel (with pan); momentum constants.
