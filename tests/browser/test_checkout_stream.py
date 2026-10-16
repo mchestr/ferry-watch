@@ -505,35 +505,54 @@ async def test_taps_focus_fields_in_the_page_and_the_card_frame_and_a_stale_tap_
     assert len(await rig.tab("window.__log.filter(e => e[0] === 'click')")) == clicks
 
 
+# When each wheel event reaches a document (the page's own, or a frame's), by Date.now().
+WHEELS = "window.__wheels = []; addEventListener('wheel', () => __wheels.push(Date.now()), {passive: true})"
+
+
 async def test_wheels_from_a_120_hz_gesture_finish_with_the_viewer_and_scroll_exactly(rig: Rig) -> None:
     """A drag and its coast at 120 Hz, which the viewer sums into one `wheel` per 33 ms (PROTOCOL §6.6), starting
     over the card frame (which doesn't scroll, so the page does)."""
     await rig.pod.at(f"{rig.sites.shop}/index.html")
     viewer = await rig.connect(PHONE)
     await viewer.image()
+    # The card in the middle of the screen, wherever the pod's fonts put it (the CI image's CJK fallback font sets
+    # the form taller than Inter or DejaVu do): a wheel's point must be on the image (§6), as the viewer's always is.
     await rig.tab(
-        "scrollTo(0, 300); window.__scrolls = []; addEventListener('scroll', () => __scrolls.push(Date.now()))"
+        "document.getElementById('card').scrollIntoView({block: 'center'});"
+        " window.__scrolls = []; addEventListener('scroll', () => __scrolls.push(Date.now()))"
     )
-    await current(viewer, rig.pod)
+    # The wheels the page gets: in the card frame, then in the page itself once the card has scrolled from under them.
+    frame = await card(rig.pod)
+    for tab in (rig.pod.tab, frame):
+        await tab.evaluate(WHEELS)
+    header = await current(viewer, rig.pod)
     before = await rig.tab("scrollY")
     start = middle(await frame_rect(rig.pod, "#card"))
-    total, step, summed, sent_at, last = 0.0, 18.0, 0.0, 0.0, 0.0
+    assert 0 <= start[0] <= header.w, f"the card's middle {start} isn't on the image"
+    assert 0 <= start[1] <= header.h, f"the card's middle {start} isn't on the image"
+    total, step, summed, sent_at = 0.0, 18.0, 0.0, 0.0
     for _ in range(150):  # 1.25 s of finger and coast, a frame every 8.3 ms
         summed += step
         step = max(step * 0.985, 1.0)
         if time.monotonic() - sent_at >= 0.033:
             await viewer.send({"t": "wheel", "page": 1, "x": start[0], "y": start[1], "dx": 0, "dy": summed})
-            total, summed, sent_at, last = total + summed, 0.0, time.monotonic(), time.time()
+            total, summed, sent_at = total + summed, 0.0, time.monotonic()
         await asyncio.sleep(1 / 120)
     if summed:
         await viewer.send({"t": "wheel", "page": 1, "x": start[0], "y": start[1], "dx": 0, "dy": summed})
-        total, last = total + summed, time.time()
+        total += summed
+    # The wheels reach the page as the pod gets to them (a busy pod or a slow link delays them, and the agent merges
+    # those that queue, §3.4), so finishing with the viewer is seen on the page's own clock: its scrolling stops with
+    # the last wheel it gets, with no coast of Chromium's or the agent's, and goes exactly as far as the viewer's.
+    await _until(lambda: rig.tab("scrollY"), lambda y: abs(y - before - total) <= 2)
     await asyncio.sleep(0.5)
-    finished = (await rig.tab("window.__scrolls"))[-1] / 1000
-    assert finished - last < 0.1, f"the page last scrolled {finished - last:.3f} s after the viewer's last wheel"
-    scrolled = await rig.tab("scrollY") - before
-    assert abs(scrolled - total) <= 2, f"scrolled {scrolled} CSS px for {total} frame px at page scale 1"
     assert not [m for m in viewer.messages if m["t"] == "error"]
+    scrolled = await rig.tab("scrollY") - before
+    scrolls = await rig.tab("window.__scrolls")
+    wheels = sorted([*await rig.tab("window.__wheels"), *await frame.evaluate("window.__wheels")])
+    assert wheels, "the page got no wheel"
+    assert scrolls[-1] - wheels[-1] < 100, f"the page scrolled on {scrolls[-1] - wheels[-1]} ms after its last wheel"
+    assert abs(scrolled - total) <= 2, f"scrolled {scrolled} CSS px for {total} frame px at page scale 1"
 
 
 async def test_a_pinch_zooms_about_where_it_started_and_pans_to_where_it_ended(rig: Rig) -> None:
