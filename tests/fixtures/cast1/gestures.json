@@ -1,0 +1,593 @@
+{
+  "protocol": "fw.cast1",
+  "cases": [
+    {
+      "id": "tap", "sec": "8.4", "viewport": [390, 664],
+      "image": {"page": 1, "seq": 7, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 0},
+      "events": [
+        {"at": 0, "type": "touchstart", "touches": [[120, 300]]},
+        {"at": 95, "type": "touchend", "touches": []}
+      ],
+      "end": 300, "expect": {"taps": [{"t": "tap", "page": 1, "seq": 7, "x": 120, "y": 300, "ms": 95}]}
+    },
+    {
+      "id": "tap-small-move", "sec": "8.4", "viewport": [390, 664],
+      "image": {"page": 1, "seq": 7, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 0},
+      "events": [
+        {"at": 0, "type": "touchstart", "touches": [[120, 300]]},
+        {"at": 30, "type": "touchmove", "touches": [[125, 305]]},
+        {"at": 80, "type": "touchend", "touches": []}
+      ],
+      "end": 300, "expect": {"taps": [{"t": "tap", "page": 1, "seq": 7, "x": 120, "y": 300, "ms": 80}]},
+      "note": "7.07 px from where it began: still a tap, at that point"
+    },
+    {
+      "id": "move-8px-scrolls", "sec": "8.4", "viewport": [390, 664],
+      "image": {"page": 1, "seq": 7, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 0},
+      "events": [
+        {"at": 0, "type": "touchstart", "touches": [[120, 300]]},
+        {"at": 30, "type": "touchmove", "touches": [[120, 292]]},
+        {"at": 200, "type": "touchend", "touches": []}
+      ],
+      "end": 500, "expect": {"wheels": {"page": 1, "x": 120, "y": 300, "dx": 0, "dy": 8}},
+      "note": "8 px or more is a scroll, from where the touch began"
+    },
+    {
+      "id": "tap-499ms", "sec": "8.4", "viewport": [390, 664],
+      "image": {"page": 1, "seq": 7, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 0},
+      "events": [
+        {"at": 0, "type": "touchstart", "touches": [[120, 300]]},
+        {"at": 499, "type": "touchend", "touches": []}
+      ],
+      "end": 800, "expect": {"taps": [{"t": "tap", "page": 1, "seq": 7, "x": 120, "y": 300, "ms": 300}]},
+      "note": "ms is clamped to 300"
+    },
+    {
+      "id": "press-500ms", "sec": "8.4", "viewport": [390, 664],
+      "image": {"page": 1, "seq": 7, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 0},
+      "events": [
+        {"at": 0, "type": "touchstart", "touches": [[120, 300]]},
+        {"at": 500, "type": "touchend", "touches": []}
+      ],
+      "end": 800, "expect": {}, "note": "a long press sends nothing"
+    },
+    {
+      "id": "tap-instant", "sec": "8.4", "viewport": [390, 664],
+      "image": {"page": 1, "seq": 7, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 0},
+      "events": [
+        {"at": 0, "type": "touchstart", "touches": [[120, 300]]},
+        {"at": 0, "type": "touchend", "touches": []}
+      ],
+      "end": 300, "expect": {"taps": [{"t": "tap", "page": 1, "seq": 7, "x": 120, "y": 300, "ms": 0}]}
+    },
+    {
+      "id": "tap-seq-at-end", "sec": "8.2", "viewport": [390, 664],
+      "image": {"page": 1, "seq": 7, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 0},
+      "events": [
+        {"at": 0, "type": "touchstart", "touches": [[120, 300]]},
+        {"at": 40, "type": "image", "image": {"page": 1, "seq": 8, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 0}},
+        {"at": 90, "type": "touchend", "touches": []}
+      ],
+      "end": 300, "expect": {"taps": [{"t": "tap", "page": 1, "seq": 8, "x": 120, "y": 300, "ms": 90}]},
+      "note": "the image drawn when the tap ended"
+    },
+    {
+      "id": "tap-letterboxed", "sec": "8.1", "viewport": [400, 600],
+      "image": {"page": 1, "seq": 7, "w": 800, "h": 1000, "scale": 1, "sx": 0, "sy": 0},
+      "events": [
+        {"at": 0, "type": "touchstart", "touches": [[200, 20]]},
+        {"at": 50, "type": "touchend", "touches": []},
+        {"at": 200, "type": "touchstart", "touches": [[200, 300]]},
+        {"at": 260, "type": "touchend", "touches": []}
+      ],
+      "end": 500, "expect": {"taps": [{"t": "tap", "page": 1, "seq": 7, "x": 400, "y": 500, "ms": 60}]},
+      "note": "k = 0.5, the box at (0, 50); the first touch is on the letterbox"
+    },
+    {
+      "id": "drag-60hz", "sec": "6.6", "viewport": [390, 664],
+      "image": {"page": 1, "seq": 7, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 0},
+      "events": [
+        {"at": 0, "type": "touchstart", "touches": [[200, 500]]},
+        {"at": 16, "type": "touchmove", "touches": [[200, 490]]},
+        {"at": 32, "type": "touchmove", "touches": [[200, 480]]},
+        {"at": 48, "type": "touchmove", "touches": [[200, 470]]},
+        {"at": 64, "type": "touchmove", "touches": [[200, 460]]},
+        {"at": 80, "type": "touchmove", "touches": [[200, 450]]},
+        {"at": 96, "type": "touchmove", "touches": [[200, 440]]},
+        {"at": 112, "type": "touchmove", "touches": [[200, 430]]},
+        {"at": 128, "type": "touchmove", "touches": [[200, 420]]},
+        {"at": 144, "type": "touchmove", "touches": [[200, 410]]},
+        {"at": 160, "type": "touchmove", "touches": [[200, 400]]},
+        {"at": 176, "type": "touchmove", "touches": [[200, 390]]},
+        {"at": 192, "type": "touchmove", "touches": [[200, 380]]},
+        {"at": 208, "type": "touchmove", "touches": [[200, 370]]},
+        {"at": 224, "type": "touchmove", "touches": [[200, 360]]},
+        {"at": 240, "type": "touchmove", "touches": [[200, 350]]},
+        {"at": 256, "type": "touchmove", "touches": [[200, 340]]},
+        {"at": 272, "type": "touchmove", "touches": [[200, 330]]},
+        {"at": 288, "type": "touchmove", "touches": [[200, 320]]},
+        {"at": 304, "type": "touchmove", "touches": [[200, 310]]},
+        {"at": 320, "type": "touchmove", "touches": [[200, 300]]},
+        {"at": 500, "type": "touchend", "touches": []}
+      ],
+      "end": 800, "expect": {"wheels": {"page": 1, "x": 200, "y": 500, "dx": 0, "dy": 200}},
+      "note": "released 180 ms after the last move: no coast"
+    },
+    {
+      "id": "drag-120hz-diagonal", "sec": "6.6", "viewport": [390, 664],
+      "image": {"page": 1, "seq": 7, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 0},
+      "events": [
+        {"at": 0, "type": "touchstart", "touches": [[200, 500]]},
+        {"at": 8, "type": "touchmove", "touches": [[197, 495]]},
+        {"at": 16, "type": "touchmove", "touches": [[194, 490]]},
+        {"at": 24, "type": "touchmove", "touches": [[191, 485]]},
+        {"at": 32, "type": "touchmove", "touches": [[188, 480]]},
+        {"at": 40, "type": "touchmove", "touches": [[185, 475]]},
+        {"at": 48, "type": "touchmove", "touches": [[182, 470]]},
+        {"at": 56, "type": "touchmove", "touches": [[179, 465]]},
+        {"at": 64, "type": "touchmove", "touches": [[176, 460]]},
+        {"at": 72, "type": "touchmove", "touches": [[173, 455]]},
+        {"at": 80, "type": "touchmove", "touches": [[170, 450]]},
+        {"at": 88, "type": "touchmove", "touches": [[167, 445]]},
+        {"at": 96, "type": "touchmove", "touches": [[164, 440]]},
+        {"at": 104, "type": "touchmove", "touches": [[161, 435]]},
+        {"at": 112, "type": "touchmove", "touches": [[158, 430]]},
+        {"at": 120, "type": "touchmove", "touches": [[155, 425]]},
+        {"at": 128, "type": "touchmove", "touches": [[152, 420]]},
+        {"at": 136, "type": "touchmove", "touches": [[149, 415]]},
+        {"at": 144, "type": "touchmove", "touches": [[146, 410]]},
+        {"at": 152, "type": "touchmove", "touches": [[143, 405]]},
+        {"at": 160, "type": "touchmove", "touches": [[140, 400]]},
+        {"at": 168, "type": "touchmove", "touches": [[137, 395]]},
+        {"at": 176, "type": "touchmove", "touches": [[134, 390]]},
+        {"at": 184, "type": "touchmove", "touches": [[131, 385]]},
+        {"at": 192, "type": "touchmove", "touches": [[128, 380]]},
+        {"at": 200, "type": "touchmove", "touches": [[125, 375]]},
+        {"at": 208, "type": "touchmove", "touches": [[122, 370]]},
+        {"at": 216, "type": "touchmove", "touches": [[119, 365]]},
+        {"at": 224, "type": "touchmove", "touches": [[116, 360]]},
+        {"at": 232, "type": "touchmove", "touches": [[113, 355]]},
+        {"at": 240, "type": "touchmove", "touches": [[110, 350]]},
+        {"at": 248, "type": "touchmove", "touches": [[107, 345]]},
+        {"at": 256, "type": "touchmove", "touches": [[104, 340]]},
+        {"at": 264, "type": "touchmove", "touches": [[101, 335]]},
+        {"at": 272, "type": "touchmove", "touches": [[98, 330]]},
+        {"at": 280, "type": "touchmove", "touches": [[95, 325]]},
+        {"at": 288, "type": "touchmove", "touches": [[92, 320]]},
+        {"at": 296, "type": "touchmove", "touches": [[89, 315]]},
+        {"at": 304, "type": "touchmove", "touches": [[86, 310]]},
+        {"at": 312, "type": "touchmove", "touches": [[83, 305]]},
+        {"at": 320, "type": "touchmove", "touches": [[80, 300]]},
+        {"at": 500, "type": "touchend", "touches": []}
+      ],
+      "end": 800, "expect": {"wheels": {"page": 1, "x": 200, "y": 500, "dx": 120, "dy": 200}}
+    },
+    {
+      "id": "drag-down", "sec": "6.6", "viewport": [390, 664],
+      "image": {"page": 1, "seq": 7, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 0},
+      "events": [
+        {"at": 0, "type": "touchstart", "touches": [[200, 200]]},
+        {"at": 20, "type": "touchmove", "touches": [[200, 210]]},
+        {"at": 40, "type": "touchmove", "touches": [[200, 220]]},
+        {"at": 60, "type": "touchmove", "touches": [[200, 230]]},
+        {"at": 80, "type": "touchmove", "touches": [[200, 240]]},
+        {"at": 100, "type": "touchmove", "touches": [[200, 250]]},
+        {"at": 120, "type": "touchmove", "touches": [[200, 260]]},
+        {"at": 140, "type": "touchmove", "touches": [[200, 270]]},
+        {"at": 160, "type": "touchmove", "touches": [[200, 280]]},
+        {"at": 180, "type": "touchmove", "touches": [[200, 290]]},
+        {"at": 200, "type": "touchmove", "touches": [[200, 300]]},
+        {"at": 220, "type": "touchmove", "touches": [[200, 310]]},
+        {"at": 240, "type": "touchmove", "touches": [[200, 320]]},
+        {"at": 260, "type": "touchmove", "touches": [[200, 330]]},
+        {"at": 280, "type": "touchmove", "touches": [[200, 340]]},
+        {"at": 300, "type": "touchmove", "touches": [[200, 350]]},
+        {"at": 500, "type": "touchend", "touches": []}
+      ],
+      "end": 800, "expect": {"wheels": {"page": 1, "x": 200, "y": 200, "dx": 0, "dy": -150}},
+      "note": "positive dy reveals what's below"
+    },
+    {
+      "id": "drag-letterboxed", "sec": "8.1", "viewport": [400, 600],
+      "image": {"page": 1, "seq": 7, "w": 800, "h": 1000, "scale": 1, "sx": 0, "sy": 0},
+      "events": [
+        {"at": 0, "type": "touchstart", "touches": [[200, 400]]},
+        {"at": 20, "type": "touchmove", "touches": [[200, 390]]},
+        {"at": 40, "type": "touchmove", "touches": [[200, 380]]},
+        {"at": 60, "type": "touchmove", "touches": [[200, 370]]},
+        {"at": 80, "type": "touchmove", "touches": [[200, 360]]},
+        {"at": 100, "type": "touchmove", "touches": [[200, 350]]},
+        {"at": 120, "type": "touchmove", "touches": [[200, 340]]},
+        {"at": 140, "type": "touchmove", "touches": [[200, 330]]},
+        {"at": 160, "type": "touchmove", "touches": [[200, 320]]},
+        {"at": 180, "type": "touchmove", "touches": [[200, 310]]},
+        {"at": 200, "type": "touchmove", "touches": [[200, 300]]},
+        {"at": 400, "type": "touchend", "touches": []}
+      ],
+      "end": 700, "expect": {"wheels": {"page": 1, "x": 400, "y": 700, "dx": 0, "dy": 200}},
+      "note": "frame px: the finger's travel / k"
+    },
+    {
+      "id": "drag-from-letterbox", "sec": "8.1", "viewport": [400, 600],
+      "image": {"page": 1, "seq": 7, "w": 800, "h": 1000, "scale": 1, "sx": 0, "sy": 0},
+      "events": [
+        {"at": 0, "type": "touchstart", "touches": [[200, 20]]},
+        {"at": 20, "type": "touchmove", "touches": [[200, 48]]},
+        {"at": 40, "type": "touchmove", "touches": [[200, 76]]},
+        {"at": 60, "type": "touchmove", "touches": [[200, 104]]},
+        {"at": 80, "type": "touchmove", "touches": [[200, 132]]},
+        {"at": 100, "type": "touchmove", "touches": [[200, 160]]},
+        {"at": 120, "type": "touchmove", "touches": [[200, 188]]},
+        {"at": 140, "type": "touchmove", "touches": [[200, 216]]},
+        {"at": 160, "type": "touchmove", "touches": [[200, 244]]},
+        {"at": 180, "type": "touchmove", "touches": [[200, 272]]},
+        {"at": 200, "type": "touchmove", "touches": [[200, 300]]},
+        {"at": 400, "type": "touchend", "touches": []}
+      ],
+      "end": 700, "expect": {}, "note": "a touch that begins outside the image does nothing"
+    },
+    {
+      "id": "flick-coasts", "sec": "6.6", "viewport": [390, 664],
+      "image": {"page": 1, "seq": 7, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 0},
+      "events": [
+        {"at": 0, "type": "touchstart", "touches": [[200, 500]]},
+        {"at": 16, "type": "touchmove", "touches": [[200, 488]]},
+        {"at": 32, "type": "touchmove", "touches": [[200, 476]]},
+        {"at": 48, "type": "touchmove", "touches": [[200, 464]]},
+        {"at": 64, "type": "touchmove", "touches": [[200, 452]]},
+        {"at": 80, "type": "touchmove", "touches": [[200, 440]]},
+        {"at": 96, "type": "touchmove", "touches": [[200, 428]]},
+        {"at": 112, "type": "touchmove", "touches": [[200, 416]]},
+        {"at": 128, "type": "touchmove", "touches": [[200, 404]]},
+        {"at": 144, "type": "touchmove", "touches": [[200, 392]]},
+        {"at": 160, "type": "touchmove", "touches": [[200, 380]]},
+        {"at": 170, "type": "touchend", "touches": []}
+      ],
+      "end": 5000,
+      "expect": {
+        "wheels": {"page": 1, "x": 200, "y": 500, "dx": 0, "dy_more_than": 120, "coast_after": 170,
+         "none_after": 4000}
+      },
+      "note": "momentum is the viewer's; its constants are tuned on devices"
+    },
+    {
+      "id": "tap-during-coast", "sec": "8.2", "viewport": [390, 664],
+      "image": {"page": 1, "seq": 7, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 0},
+      "events": [
+        {"at": 0, "type": "touchstart", "touches": [[200, 500]]},
+        {"at": 16, "type": "touchmove", "touches": [[200, 488]]},
+        {"at": 32, "type": "touchmove", "touches": [[200, 476]]},
+        {"at": 48, "type": "touchmove", "touches": [[200, 464]]},
+        {"at": 64, "type": "touchmove", "touches": [[200, 452]]},
+        {"at": 80, "type": "touchmove", "touches": [[200, 440]]},
+        {"at": 96, "type": "touchmove", "touches": [[200, 428]]},
+        {"at": 112, "type": "touchmove", "touches": [[200, 416]]},
+        {"at": 128, "type": "touchmove", "touches": [[200, 404]]},
+        {"at": 144, "type": "touchmove", "touches": [[200, 392]]},
+        {"at": 160, "type": "touchmove", "touches": [[200, 380]]},
+        {"at": 170, "type": "touchend", "touches": []},
+        {"at": 300, "type": "touchstart", "touches": [[100, 100]]},
+        {"at": 330, "type": "touchend", "touches": []}
+      ],
+      "end": 1000,
+      "expect": {
+        "wheels": {"page": 1, "x": 200, "y": 500, "dx": 0, "dy_more_than": 120, "coast_after": 170, "none_after": 333}
+      },
+      "note": "the touch stops the coast and isn't a tap"
+    },
+    {
+      "id": "tap-after-coast", "sec": "8.2", "viewport": [390, 664],
+      "image": {"page": 1, "seq": 7, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 0},
+      "events": [
+        {"at": 0, "type": "touchstart", "touches": [[200, 500]]},
+        {"at": 16, "type": "touchmove", "touches": [[200, 488]]},
+        {"at": 32, "type": "touchmove", "touches": [[200, 476]]},
+        {"at": 48, "type": "touchmove", "touches": [[200, 464]]},
+        {"at": 64, "type": "touchmove", "touches": [[200, 452]]},
+        {"at": 80, "type": "touchmove", "touches": [[200, 440]]},
+        {"at": 96, "type": "touchmove", "touches": [[200, 428]]},
+        {"at": 112, "type": "touchmove", "touches": [[200, 416]]},
+        {"at": 128, "type": "touchmove", "touches": [[200, 404]]},
+        {"at": 144, "type": "touchmove", "touches": [[200, 392]]},
+        {"at": 160, "type": "touchmove", "touches": [[200, 380]]},
+        {"at": 170, "type": "touchend", "touches": []},
+        {"at": 4500, "type": "touchstart", "touches": [[100, 100]]},
+        {"at": 4530, "type": "touchend", "touches": []}
+      ],
+      "end": 5000,
+      "expect": {
+        "wheels": {"page": 1, "x": 200, "y": 500, "dx": 0, "dy_more_than": 120, "coast_after": 170,
+         "none_after": 4000},
+        "taps": [{"t": "tap", "page": 1, "seq": 7, "x": 100, "y": 100, "ms": 30}]
+      }
+    },
+    {
+      "id": "prediction-blocks-tap", "sec": "8.2", "viewport": [390, 664],
+      "image": {"page": 1, "seq": 7, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 0},
+      "events": [
+        {"at": 0, "type": "touchstart", "touches": [[200, 500]]},
+        {"at": 20, "type": "touchmove", "touches": [[200, 480]]},
+        {"at": 40, "type": "touchmove", "touches": [[200, 460]]},
+        {"at": 60, "type": "touchmove", "touches": [[200, 440]]},
+        {"at": 80, "type": "touchmove", "touches": [[200, 420]]},
+        {"at": 100, "type": "touchmove", "touches": [[200, 400]]},
+        {"at": 120, "type": "touchmove", "touches": [[200, 380]]},
+        {"at": 120, "type": "image",
+         "image": {"page": 1, "seq": 8, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 60}},
+        {"at": 140, "type": "touchmove", "touches": [[200, 360]]},
+        {"at": 160, "type": "touchmove", "touches": [[200, 340]]},
+        {"at": 180, "type": "touchmove", "touches": [[200, 320]]},
+        {"at": 200, "type": "touchmove", "touches": [[200, 300]]},
+        {"at": 320, "type": "touchend", "touches": []},
+        {"at": 360, "type": "touchstart", "touches": [[100, 100]]},
+        {"at": 400, "type": "touchend", "touches": []}
+      ],
+      "end": 1000, "expect": {"wheels": {"page": 1, "x": 200, "y": 500, "dx": 0, "dy": 200}},
+      "note": "an image confirmed the document scrolls, so a shift is drawn until 250 ms after the last wheel"
+    },
+    {
+      "id": "prediction-dropped", "sec": "8.2", "viewport": [390, 664],
+      "image": {"page": 1, "seq": 7, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 0},
+      "events": [
+        {"at": 0, "type": "touchstart", "touches": [[200, 500]]},
+        {"at": 20, "type": "touchmove", "touches": [[200, 480]]},
+        {"at": 40, "type": "touchmove", "touches": [[200, 460]]},
+        {"at": 60, "type": "touchmove", "touches": [[200, 440]]},
+        {"at": 80, "type": "touchmove", "touches": [[200, 420]]},
+        {"at": 100, "type": "touchmove", "touches": [[200, 400]]},
+        {"at": 120, "type": "touchmove", "touches": [[200, 380]]},
+        {"at": 120, "type": "image",
+         "image": {"page": 1, "seq": 8, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 60}},
+        {"at": 140, "type": "touchmove", "touches": [[200, 360]]},
+        {"at": 160, "type": "touchmove", "touches": [[200, 340]]},
+        {"at": 180, "type": "touchmove", "touches": [[200, 320]]},
+        {"at": 200, "type": "touchmove", "touches": [[200, 300]]},
+        {"at": 320, "type": "touchend", "touches": []},
+        {"at": 700, "type": "touchstart", "touches": [[100, 100]]},
+        {"at": 740, "type": "touchend", "touches": []}
+      ],
+      "end": 1000,
+      "expect": {"wheels": {"page": 1, "x": 200, "y": 500, "dx": 0, "dy": 200},
+       "taps": [{"t": "tap", "page": 1, "seq": 8, "x": 100, "y": 100, "ms": 40}]}
+    },
+    {
+      "id": "inner-scroller-no-prediction", "sec": "8.2", "viewport": [390, 664],
+      "image": {"page": 1, "seq": 7, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 0},
+      "events": [
+        {"at": 0, "type": "touchstart", "touches": [[200, 500]]},
+        {"at": 20, "type": "touchmove", "touches": [[200, 480]]},
+        {"at": 40, "type": "touchmove", "touches": [[200, 460]]},
+        {"at": 60, "type": "touchmove", "touches": [[200, 440]]},
+        {"at": 80, "type": "touchmove", "touches": [[200, 420]]},
+        {"at": 100, "type": "touchmove", "touches": [[200, 400]]},
+        {"at": 120, "type": "touchmove", "touches": [[200, 380]]},
+        {"at": 120, "type": "image", "image": {"page": 1, "seq": 8, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 0}},
+        {"at": 140, "type": "touchmove", "touches": [[200, 360]]},
+        {"at": 160, "type": "touchmove", "touches": [[200, 340]]},
+        {"at": 180, "type": "touchmove", "touches": [[200, 320]]},
+        {"at": 200, "type": "touchmove", "touches": [[200, 300]]},
+        {"at": 320, "type": "touchend", "touches": []},
+        {"at": 360, "type": "touchstart", "touches": [[100, 100]]},
+        {"at": 400, "type": "touchend", "touches": []}
+      ],
+      "end": 1000,
+      "expect": {"wheels": {"page": 1, "x": 200, "y": 500, "dx": 0, "dy": 200},
+       "taps": [{"t": "tap", "page": 1, "seq": 8, "x": 100, "y": 100, "ms": 40}]},
+      "note": "the images' sy never moved (an inner element scrolled): no shift, so the tap is sent"
+    },
+    {
+      "id": "pinch", "sec": "8.4", "viewport": [390, 664],
+      "image": {"page": 1, "seq": 7, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 0},
+      "events": [
+        {"at": 0, "type": "touchstart", "touches": [[150, 300]]},
+        {"at": 10, "type": "touchstart", "touches": [[150, 300], [250, 300]]},
+        {"at": 50, "type": "touchmove", "touches": [[125, 275], [275, 275]]},
+        {"at": 100, "type": "touchmove", "touches": [[100, 250], [300, 250]]},
+        {"at": 150, "type": "touchend", "touches": []}
+      ],
+      "end": 400,
+      "expect": {
+        "pinches": [{"t": "pinch", "page": 1, "seq": 7, "x0": 200, "y0": 300, "x1": 200, "y1": 250, "scale": 2}]
+      }
+    },
+    {
+      "id": "pinch-image-midway", "sec": "8.2", "viewport": [390, 664],
+      "image": {"page": 1, "seq": 7, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 0},
+      "events": [
+        {"at": 0, "type": "touchstart", "touches": [[150, 300]]},
+        {"at": 10, "type": "touchstart", "touches": [[150, 300], [250, 300]]},
+        {"at": 50, "type": "touchmove", "touches": [[125, 275], [275, 275]]},
+        {"at": 60, "type": "image", "image": {"page": 1, "seq": 8, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 0}},
+        {"at": 100, "type": "touchmove", "touches": [[100, 250], [300, 250]]},
+        {"at": 150, "type": "touchend", "touches": []}
+      ],
+      "end": 400,
+      "expect": {
+        "pinches": [{"t": "pinch", "page": 1, "seq": 7, "x0": 200, "y0": 300, "x1": 200, "y1": 250, "scale": 2}]
+      },
+      "note": "seq is the image drawn when the pinch began"
+    },
+    {
+      "id": "pinch-lift-one-by-one", "sec": "8.4", "viewport": [390, 664],
+      "image": {"page": 1, "seq": 7, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 0},
+      "events": [
+        {"at": 0, "type": "touchstart", "touches": [[150, 300]]},
+        {"at": 10, "type": "touchstart", "touches": [[150, 300], [250, 300]]},
+        {"at": 50, "type": "touchmove", "touches": [[125, 275], [275, 275]]},
+        {"at": 100, "type": "touchmove", "touches": [[100, 250], [300, 250]]},
+        {"at": 150, "type": "touchend", "touches": [[100, 250]]},
+        {"at": 200, "type": "touchend", "touches": []}
+      ],
+      "end": 400,
+      "expect": {
+        "pinches": [{"t": "pinch", "page": 1, "seq": 7, "x0": 200, "y0": 300, "x1": 200, "y1": 250, "scale": 2}]
+      },
+      "note": "sent when fewer than two fingers remain; the last finger does nothing"
+    },
+    {
+      "id": "pinch-out-to-min", "sec": "8.4", "viewport": [390, 664],
+      "image": {"page": 1, "seq": 7, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 0},
+      "events": [
+        {"at": 0, "type": "touchstart", "touches": [[100, 300]]},
+        {"at": 10, "type": "touchstart", "touches": [[100, 300], [300, 300]]},
+        {"at": 60, "type": "touchmove", "touches": [[150, 315], [250, 315]]},
+        {"at": 100, "type": "touchmove", "touches": [[175, 330], [225, 330]]},
+        {"at": 150, "type": "touchend", "touches": []}
+      ],
+      "end": 400,
+      "expect": {
+        "pinches": [{"t": "pinch", "page": 1, "seq": 7, "x0": 200, "y0": 300, "x1": 200, "y1": 330, "scale": 0.25}]
+      }
+    },
+    {
+      "id": "pinch-clamped", "sec": "8.4", "viewport": [390, 664],
+      "image": {"page": 1, "seq": 7, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 0},
+      "events": [
+        {"at": 0, "type": "touchstart", "touches": [[175, 300]]},
+        {"at": 10, "type": "touchstart", "touches": [[175, 300], [225, 300]]},
+        {"at": 60, "type": "touchmove", "touches": [[125, 300], [275, 300]]},
+        {"at": 100, "type": "touchmove", "touches": [[75, 300], [325, 300]]},
+        {"at": 150, "type": "touchend", "touches": []}
+      ],
+      "end": 400,
+      "expect": {
+        "pinches": [{"t": "pinch", "page": 1, "seq": 7, "x0": 200, "y0": 300, "x1": 200, "y1": 300, "scale": 4}]
+      },
+      "note": "the fingers spread 5 times: scale 4"
+    },
+    {
+      "id": "pinch-then-tap-zoomed", "sec": "8.2", "viewport": [390, 664],
+      "image": {"page": 1, "seq": 7, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 0},
+      "events": [
+        {"at": 0, "type": "touchstart", "touches": [[150, 300]]},
+        {"at": 10, "type": "touchstart", "touches": [[150, 300], [250, 300]]},
+        {"at": 50, "type": "touchmove", "touches": [[125, 275], [275, 275]]},
+        {"at": 100, "type": "touchmove", "touches": [[100, 250], [300, 250]]},
+        {"at": 150, "type": "touchend", "touches": []},
+        {"at": 250, "type": "touchstart", "touches": [[100, 100]]},
+        {"at": 280, "type": "touchend", "touches": []}
+      ],
+      "end": 500,
+      "expect": {
+        "pinches": [{"t": "pinch", "page": 1, "seq": 7, "x0": 200, "y0": 300, "x1": 200, "y1": 250, "scale": 2}]
+      },
+      "note": "the local zoom is drawn: not a tap"
+    },
+    {
+      "id": "pinch-then-image-then-tap", "sec": "8.2", "viewport": [390, 664],
+      "image": {"page": 1, "seq": 7, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 0},
+      "events": [
+        {"at": 0, "type": "touchstart", "touches": [[150, 300]]},
+        {"at": 10, "type": "touchstart", "touches": [[150, 300], [250, 300]]},
+        {"at": 50, "type": "touchmove", "touches": [[125, 275], [275, 275]]},
+        {"at": 100, "type": "touchmove", "touches": [[100, 250], [300, 250]]},
+        {"at": 150, "type": "touchend", "touches": []},
+        {"at": 200, "type": "image",
+         "image": {"page": 1, "seq": 8, "w": 390, "h": 664, "scale": 2, "sx": 50, "sy": 100}},
+        {"at": 300, "type": "touchstart", "touches": [[100, 100]]},
+        {"at": 330, "type": "touchend", "touches": []}
+      ],
+      "end": 500,
+      "expect": {
+        "pinches": [{"t": "pinch", "page": 1, "seq": 7, "x0": 200, "y0": 300, "x1": 200, "y1": 250, "scale": 2}],
+        "taps": [{"t": "tap", "page": 1, "seq": 8, "x": 100, "y": 100, "ms": 30}]
+      },
+      "note": "an image with the new scale ends the local zoom"
+    },
+    {
+      "id": "pinch-then-wait-tap", "sec": "8.2", "viewport": [390, 664],
+      "image": {"page": 1, "seq": 7, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 0},
+      "events": [
+        {"at": 0, "type": "touchstart", "touches": [[150, 300]]},
+        {"at": 10, "type": "touchstart", "touches": [[150, 300], [250, 300]]},
+        {"at": 50, "type": "touchmove", "touches": [[125, 275], [275, 275]]},
+        {"at": 100, "type": "touchmove", "touches": [[100, 250], [300, 250]]},
+        {"at": 150, "type": "touchend", "touches": []},
+        {"at": 800, "type": "touchstart", "touches": [[100, 100]]},
+        {"at": 830, "type": "touchend", "touches": []}
+      ],
+      "end": 1000,
+      "expect": {
+        "pinches": [{"t": "pinch", "page": 1, "seq": 7, "x0": 200, "y0": 300, "x1": 200, "y1": 250, "scale": 2}],
+        "taps": [{"t": "tap", "page": 1, "seq": 7, "x": 100, "y": 100, "ms": 30}]
+      },
+      "note": "the local zoom lasts at most 600 ms without an image"
+    },
+    {
+      "id": "mouse-click-wide", "sec": "8.4", "viewport": [2560, 1440],
+      "image": {"page": 1, "seq": 7, "w": 1920, "h": 1440, "scale": 1, "sx": 0, "sy": 0},
+      "events": [
+        {"at": 0, "type": "pointermove", "x": 1280, "y": 700},
+        {"at": 40, "type": "pointerdown", "x": 1280, "y": 700},
+        {"at": 135, "type": "pointerup", "x": 1280, "y": 700}
+      ],
+      "end": 300,
+      "expect": {"moves": {"page": 1, "last": [960, 700]},
+       "taps": [{"t": "tap", "page": 1, "seq": 7, "x": 960, "y": 700, "ms": 95}]},
+      "note": "a 2560×1440 window sends hello 1920×1440 and letterboxes the image"
+    },
+    {
+      "id": "mouse-click-letterbox", "sec": "8.1", "viewport": [2560, 1440],
+      "image": {"page": 1, "seq": 7, "w": 1920, "h": 1440, "scale": 1, "sx": 0, "sy": 0},
+      "events": [
+        {"at": 0, "type": "pointermove", "x": 100, "y": 700},
+        {"at": 40, "type": "pointerdown", "x": 100, "y": 700},
+        {"at": 135, "type": "pointerup", "x": 100, "y": 700}
+      ],
+      "end": 300, "expect": {}
+    },
+    {
+      "id": "mouse-long-press", "sec": "8.4", "viewport": [2560, 1440],
+      "image": {"page": 1, "seq": 7, "w": 1920, "h": 1440, "scale": 1, "sx": 0, "sy": 0},
+      "events": [
+        {"at": 0, "type": "pointerdown", "x": 1280, "y": 700},
+        {"at": 700, "type": "pointerup", "x": 1280, "y": 700}
+      ],
+      "end": 900, "expect": {"taps": [{"t": "tap", "page": 1, "seq": 7, "x": 960, "y": 700, "ms": 300}]},
+      "note": "no 500 ms limit for a mouse"
+    },
+    {
+      "id": "mouse-moves-throttled", "sec": "8.4", "viewport": [1280, 800],
+      "image": {"page": 1, "seq": 7, "w": 1280, "h": 800, "scale": 1, "sx": 0, "sy": 0},
+      "events": [
+        {"at": 0, "type": "pointermove", "x": 100, "y": 300},
+        {"at": 10, "type": "pointermove", "x": 110, "y": 300},
+        {"at": 20, "type": "pointermove", "x": 120, "y": 300},
+        {"at": 30, "type": "pointermove", "x": 130, "y": 300},
+        {"at": 40, "type": "pointermove", "x": 140, "y": 300},
+        {"at": 50, "type": "pointermove", "x": 150, "y": 300},
+        {"at": 60, "type": "pointermove", "x": 160, "y": 300},
+        {"at": 70, "type": "pointermove", "x": 170, "y": 300},
+        {"at": 80, "type": "pointermove", "x": 180, "y": 300},
+        {"at": 90, "type": "pointermove", "x": 190, "y": 300},
+        {"at": 100, "type": "pointermove", "x": 200, "y": 300}
+      ],
+      "end": 300, "expect": {"moves": {"page": 1, "last": [200, 300]}},
+      "note": "at most one per 33 ms, the latest position last"
+    },
+    {
+      "id": "mouse-wheel-lines", "sec": "8.4", "viewport": [1280, 800],
+      "image": {"page": 1, "seq": 7, "w": 1280, "h": 800, "scale": 1, "sx": 0, "sy": 0},
+      "events": [
+        {"at": 0, "type": "wheel", "x": 200, "y": 300, "dx": 0, "dy": 1, "mode": 1},
+        {"at": 5, "type": "wheel", "x": 200, "y": 300, "dx": 0, "dy": 1, "mode": 1},
+        {"at": 10, "type": "wheel", "x": 200, "y": 300, "dx": 0, "dy": 1, "mode": 1}
+      ],
+      "end": 300, "expect": {"wheels": {"page": 1, "x": 200, "y": 300, "dx": 0, "dy": 120}}, "note": "line mode × 40"
+    },
+    {
+      "id": "mouse-wheel-pixels", "sec": "8.4", "viewport": [1280, 800],
+      "image": {"page": 1, "seq": 7, "w": 1280, "h": 800, "scale": 1, "sx": 0, "sy": 0},
+      "events": [
+        {"at": 0, "type": "wheel", "x": 200, "y": 300, "dx": 0, "dy": 53, "mode": 0},
+        {"at": 10, "type": "wheel", "x": 200, "y": 300, "dx": 0, "dy": 47, "mode": 0},
+        {"at": 50, "type": "wheel", "x": 200, "y": 300, "dx": 0, "dy": -20, "mode": 0}
+      ],
+      "end": 300, "expect": {"wheels": {"page": 1, "x": 200, "y": 300, "dx": 0, "dy": 80}}
+    },
+    {"id": "mouse-wheel-letterbox", "sec": "8.1", "viewport": [2560, 1440],
+     "image": {"page": 1, "seq": 7, "w": 1920, "h": 1440, "scale": 1, "sx": 0, "sy": 0},
+     "events": [{"at": 0, "type": "wheel", "x": 100, "y": 700, "dx": 0, "dy": 120, "mode": 0}], "end": 300,
+     "expect": {}}
+  ]
+}

@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Checkout (stand-in for bcferries.com)</title>
+<style>
+ body{font-family:system-ui,sans-serif;margin:0;padding:12px;background:#fff;color:#111}
+ header{position:sticky;top:0;background:#0b4f8a;color:#fff;padding:10px;z-index:2}
+ .sec{height:180px;border-bottom:1px solid #ccc;padding:8px;background:linear-gradient(#f4f8ff,#dde8f6)}
+ .sec:nth-child(odd){background:linear-gradient(#fff6ec,#f6e2c8)}
+ input,select,button,textarea{font-size:16px;padding:8px;margin:4px 0;width:100%;box-sizing:border-box}
+ input[type=checkbox]{width:auto}
+ iframe{width:100%;height:230px;border:2px solid #b00}
+ .row{display:flex;gap:8px}
+</style></head>
+<body>
+<header>Sailing held: 7:00 am Tsawwassen &rarr; Swartz Bay</header>
+<form id="contact" onsubmit="window.__log.push(['submit']); return false">
+ <label>Name <input id="name" autocomplete="name" autocapitalize="words"></label>
+ <label>Email <input id="email" type="email" autocomplete="email"></label>
+ <label>Phone <input id="tel" type="tel" autocomplete="tel"></label>
+ <label>Postal code <input id="postal" autocomplete="postal-code" enterkeyhint="next"></label>
+ <label>Province <select id="prov"><option>BC</option><option>AB</option><option>ON</option><option>QC</option><option>NS</option></select></label>
+ <label>Travel date <input id="date" type="date"></label>
+ <label>Arrival time <input id="time" type="time"></label>
+ <label>Notes <textarea id="notes" rows="2"></textarea></label>
+ <label><input id="terms" type="checkbox"> I accept the terms</label>
+ <div class="row"><button id="tapme" type="button">Tap me (0)</button><button id="pop" type="button">Bank window</button></div>
+ <a id="newtab" href="{{PAY}}/popup.html" target="_blank">Terms (new tab)</a>
+ <div class="row"><button id="alertbtn" type="button">alert()</button><button id="confirmbtn" type="button">confirm()</button><button id="promptbtn" type="button">prompt()</button></div>
+</form>
+<p>Card (a cross-site iframe):</p>
+<iframe id="card" src="{{PAY}}/card.html"></iframe>
+<div id="secs"></div>
+<script>
+ window.__log = [];
+ window.__dialogs = [];
+ let taps = 0;
+ for (const t of ["click", "mousedown", "mouseup", "mousemove", "mouseenter", "keydown", "keyup", "wheel", "resize",
+                  "touchstart", "touchend", "gesturestart"]) {
+   addEventListener(t, (e) => window.__log.push([t, e.target && e.target.id || "", e.ctrlKey ? 1 : 0, e.shiftKey ? 1 : 0,
+     e.key || e.pointerType || "", e.isTrusted ? 1 : 0, Math.round(e.deltaY || 0)]), {passive: true, capture: true});
+ }
+ window.__sizes = [[innerWidth, innerHeight, devicePixelRatio]];
+ addEventListener("resize", () => window.__sizes.push([innerWidth, innerHeight, devicePixelRatio]));
+ document.getElementById("tapme").addEventListener("click", (e) => { e.target.textContent = `Tap me (${++taps})`; });
+ document.getElementById("pop").addEventListener("click", () => { window.open("{{PAY}}/popup.html", "bank", "width=400,height=600"); });
+ document.getElementById("alertbtn").addEventListener("click", () => { alert("Your session will expire soon"); window.__dialogs.push(["alert"]); });
+ document.getElementById("confirmbtn").addEventListener("click", () => { window.__dialogs.push(["confirm", confirm("Leave checkout?")]); });
+ document.getElementById("promptbtn").addEventListener("click", () => { window.__dialogs.push(["prompt", prompt("Promo code?", "none")]); });
+ const s = document.getElementById("secs");
+ for (let i = 1; i <= 70; i++) {
+   const d = document.createElement("div");
+   d.className = "sec";
+   d.textContent = `Section ${i}: fare details, vehicle, passengers, terms and conditions paragraph ${i}.`;
+   s.appendChild(d);
+ }
+</script>
+</body></html>

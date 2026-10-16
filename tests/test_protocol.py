@@ -150,6 +150,18 @@ def test_configure_outside_the_contract_is_refused(change: dict[str, Any]) -> No
         decode_control_message(frame(good | change))
 
 
+def test_the_streamed_viewer_is_off_unless_the_operator_says_so() -> None:
+    assert configure().cast_allowed is False
+    shaped_064 = json.loads(encode(configure()))
+    del shaped_064["cast_allowed"]  # what a 0.6.4 ferry-control sends
+    decoded = decode_control_message(frame(shaped_064))
+    assert isinstance(decoded, Configure)
+    assert decoded.cast_allowed is False
+    allowed = decode_control_message(encode(configure(cast_allowed=True)))
+    assert isinstance(allowed, Configure)
+    assert allowed.cast_allowed is True
+
+
 def test_the_trip_spec_is_strict() -> None:
     good = json.loads(encode(configure()))
     good["trip_spec"]["base_url"] = "https://evil.example/"

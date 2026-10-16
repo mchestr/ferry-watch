@@ -170,7 +170,7 @@ async def test_web_keeps_each_users_settings_and_control_only_reads_them(db: Dat
             await web.execute("UPDATE user_settings SET quiet_end = NULL")
         with pytest.raises(asyncpg.CheckViolationError):  # hours that start and end together cover nothing
             await web.execute("UPDATE user_settings SET quiet_start = '06:00'")
-        await web.execute("UPDATE user_settings SET quiet_start = '22:30'")
+        await web.execute("UPDATE user_settings SET quiet_start = '22:30', checkout_viewer = 'stream'")
     finally:
         await web.close()
     control = await db.connect(ROLES.control)
@@ -179,6 +179,7 @@ async def test_web_keeps_each_users_settings_and_control_only_reads_them(db: Dat
         for statement in (
             "INSERT INTO user_settings (user_id) VALUES ('bbbbbbbbbbbbbbbbbbbb')",
             "UPDATE user_settings SET quiet_start = '22:00', quiet_end = '07:00'",
+            "UPDATE user_settings SET checkout_viewer = 'classic'",
             "DELETE FROM user_settings",
         ):
             with pytest.raises(asyncpg.InsufficientPrivilegeError):
@@ -260,6 +261,37 @@ async def test_0005_gives_everyone_quiet_hours(pg_server: Server) -> None:
             " DO UPDATE SET quiet_start = NULL, quiet_end = NULL, updated_at = now()",
             bob,
         )
+
+
+async def test_0006_gives_everyone_the_classic_viewer(pg_server: Server) -> None:
+    """The streamed viewer is a beta each user turns on: everyone starts on KasmVNC, rows from before 0006
+    included, and a 0.6.4 ferry-web (still running during the rollout, or after a rollback) keeps working."""
+    async with migrated_up_to(pg_server, "0006") as owner:
+        ann, bob, cat = "a" * 20, "b" * 20, "c" * 20
+        await owner.execute(
+            "INSERT INTO users (id, username) VALUES ($1, 'ann'), ($2, 'bob'), ($3, 'cat')", ann, bob, cat
+        )
+        await owner.execute(
+            "INSERT INTO user_settings (user_id, quiet_start, quiet_end) VALUES ($1, '23:30', '06:15')", ann
+        )
+        assert await migrate(owner) == [v for v, _ in migrations() if v >= "0006"]
+        # 0.6.4 ferry-web's own statements, which never name the column: the insert gets the default, and its
+        # upsert leaves a chosen viewer alone.
+        upsert_064 = (
+            "INSERT INTO user_settings (user_id, quiet_start, quiet_end) VALUES ($1, $2, $3) ON CONFLICT (user_id)"
+            " DO UPDATE SET quiet_start = $2, quiet_end = $3, updated_at = now()"
+        )
+        await owner.execute(upsert_064, bob, time(23), time(6))
+        await owner.execute("UPDATE user_settings SET checkout_viewer = 'stream' WHERE user_id = $1", ann)
+        await owner.execute(upsert_064, ann, time(22), time(5))
+        rows = await owner.fetch("SELECT user_id, quiet_start, checkout_viewer FROM user_settings ORDER BY user_id")
+        assert [tuple(r) for r in rows] == [(ann, time(22), "stream"), (bob, time(23), "classic")]
+        assert await owner.fetchval("SELECT quiet_start FROM user_settings WHERE user_id = $1", cat) is None  # no row
+        for value in ("kasm", "", "STREAM"):
+            with pytest.raises(asyncpg.CheckViolationError):
+                await owner.execute("UPDATE user_settings SET checkout_viewer = $1 WHERE user_id = $2", value, bob)
+        with pytest.raises(asyncpg.NotNullViolationError):
+            await owner.execute("UPDATE user_settings SET checkout_viewer = NULL WHERE user_id = $1", bob)
 
 
 async def test_web_flips_only_the_maintenance_switches(db: Database) -> None:

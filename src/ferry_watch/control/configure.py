@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime
+from typing import Literal
 
 import msgspec
 
@@ -28,6 +29,14 @@ from ferry_watch.protocol import (
 PUSH_CHANGE = 0.10  # a new interval is pushed only if it differs by more than this
 MAX_CHECKS_PER_MINUTE = 40  # the owner's ceiling for the budget
 
+# `checkout.streamViewer`: who is offered the streamed checkout viewer (beta). "off" is its kill switch.
+StreamViewer = Literal["off", "admins", "everyone"]
+
+
+def stream_viewer_offered(setting: StreamViewer, *, is_admin: bool) -> bool:
+    """Whether a user may use the streamed checkout viewer: offered to everyone, or to admins and they are one."""
+    return setting == "everyone" or (setting == "admins" and is_admin)
+
 
 @dataclass(frozen=True, slots=True)
 class HubSettings:
@@ -41,6 +50,7 @@ class HubSettings:
     auto_cart: bool = True  # fleet-wide; off makes everything alert-only
     alert_only_fares: frozenset[str] = frozenset()
     alert_only_vehicles: frozenset[str] = frozenset()
+    stream_viewer: StreamViewer = "off"  # who may use the streamed checkout viewer: each pod's `cast_allowed`
 
     def __post_init__(self) -> None:
         if not 1 <= self.checks_per_minute <= MAX_CHECKS_PER_MINUTE:
@@ -138,6 +148,7 @@ class TripRow:
     offered: tuple[str, ...] = ()
     hold_requested_until: float | None = None  # "Hold it for me", until then
     quiet_lifted_until: float | None = None  # a manual check lifted the user's quiet hours for this trip
+    owner_is_admin: bool = False  # for `checkout.streamViewer: admins`
 
     def hold_requested(self, now: float) -> bool:
         return self.hold_requested_until is not None and now < self.hold_requested_until
@@ -181,6 +192,9 @@ def build_configure(
         vnc_allowed=user_active,
         brake=switches.brake,
         breaker="open" if switches.breaker_open else "closed",
+        # The streamed viewer's kill switch, enforced by the pod's gate. The hub sends it only to agents that know
+        # the field (0.7.0 on); older ones have no streamed viewer to switch off.
+        cast_allowed=user_active and stream_viewer_offered(settings.stream_viewer, is_admin=row.owner_is_admin),
     )
 
 

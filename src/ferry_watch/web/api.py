@@ -2,7 +2,8 @@
 
 Every route acts for the signed-in user only, through `WebStore`, which scopes every query to them.
 The checkout route mints the one-minute ticket that opens the user's own browser pod's screen, and
-only while that pod holds their cart.
+only while that pod holds their cart. Its link opens KasmVNC, or the streamed viewer (beta) for a user who
+turned it on while the deployment offers it (docs/multi-tenant/streamed-viewer/DESIGN.md §8).
 """
 
 from __future__ import annotations
@@ -20,14 +21,16 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from ferry_watch.bcferries.errors import BookingError, RouteRejected
 from ferry_watch.bcferries.terminals import TerminalDirectory, Terminals
 from ferry_watch.bcferries.urls import search_url
+from ferry_watch.control.configure import StreamViewer, stream_viewer_offered
 from ferry_watch.models import Trip, ValidationError
 from ferry_watch.polling import QuietHours
 from ferry_watch.tickets import TTL_SECONDS, Display, mint
+from ferry_watch.versions import STREAM_VIEWER, at_least
 
 from .auth import signed_in
 from .http import ApiError, json_body
 from .outbox import subscription_row
-from .repo import WebStore
+from .repo import CheckoutViewer, WebStore
 
 STORE = web.AppKey("store", WebStore)
 TERMINALS = web.AppKey("terminals", TerminalDirectory)
@@ -38,15 +41,30 @@ _HHMM = re.compile(r"([01][0-9]|2[0-3]):[0-5][0-9]")  # 00:00 to 23:59
 
 @dataclass(frozen=True, slots=True)
 class CheckoutSigner:
-    """Mints checkout tickets with the private half of the keys pinned in every browser pod."""
+    """Mints checkout tickets with the private half of the keys pinned in every browser pod, and says who may open
+    them in the streamed viewer (`checkout.streamViewer`)."""
 
     key: Ed25519PrivateKey
     key_id: str
     origin: str  # https://ferry-checkout.chestr.dev
     route_name: Callable[[Trip], str] = lambda trip: f"{trip.origin} → {trip.destination}"
+    stream_viewer: StreamViewer = "off"
 
 
 CHECKOUT = web.AppKey("checkout", CheckoutSigner)
+
+
+def offered(app: web.Application, *, is_admin: bool) -> bool:
+    """Whether the deployment offers this user the streamed checkout viewer (beta): the Settings switch, and stream
+    links for those who turned it on."""
+    return stream_viewer_offered(app[CHECKOUT].stream_viewer, is_admin=is_admin)
+
+
+def checkout_url(origin: str, trip_id: str, gen: int, ticket: str, viewer: CheckoutViewer) -> str:
+    """The checkout link. The ticket rides in the fragment, so it never reaches a server log. The classic form is
+    0.6.4's, byte for byte; the stream form tells vnc-edge's landing page to open the streamed viewer."""
+    fragment = ticket if viewer == "classic" else f"v=s1&t={ticket}"
+    return f"{origin}/t/{trip_id}/g/{gen}/#{fragment}"
 
 
 def _trip_id(request: web.Request) -> str:
@@ -67,6 +85,7 @@ async def user_state(app: web.Application, uid: str) -> dict[str, Any]:
     terminals = directory.cached if directory is not None else None
     for trip in state["trips"]:
         trip["booking_url"] = _booking_url(trip["trip"], terminals)
+    state["settings"]["stream_viewer_offered"] = offered(app, is_admin=state["me"]["is_admin"])
     return state | app[PUBLIC]
 
 
@@ -169,20 +188,40 @@ def _quiet_hours(value: Any) -> QuietHours:
 
 
 async def update_me(request: web.Request) -> web.Response:
-    """The user's own settings: their quiet hours, the only one there is."""
+    """The user's own settings, {quiet_hours?, checkout_viewer?}: each one given is set, and at least one must be.
+    Everything is checked before anything is stored."""
+    user = signed_in(request)
     body = await json_body(request)
-    if set(body) - {"quiet_hours"}:
-        raise ApiError(400, "Only quiet hours can be changed", "quiet_hours")
-    await request.app[STORE].set_settings(signed_in(request).uid, quiet=_quiet_hours(body.get("quiet_hours")))
-    await request.app[STORE].notify(signed_in(request).uid)
+    if set(body) - {"quiet_hours", "checkout_viewer"}:
+        raise ApiError(400, "Only quiet hours and the checkout viewer can be changed", "quiet_hours")
+    # Without either key this asks for quiet hours, as it always has: everyone has them, so there's no unsetting.
+    quiet = _quiet_hours(body.get("quiet_hours")) if "quiet_hours" in body or "checkout_viewer" not in body else None
+    viewer: CheckoutViewer | None = None
+    if "checkout_viewer" in body:
+        if body["checkout_viewer"] not in ("classic", "stream"):
+            raise ApiError(400, "The checkout viewer is classic or stream", "checkout_viewer")
+        viewer = "stream" if body["checkout_viewer"] == "stream" else "classic"
+        if viewer == "stream" and not offered(request.app, is_admin=user.is_admin):
+            raise ApiError(403, "The new checkout viewer isn't available to you", "checkout_viewer")
+    await request.app[STORE].set_settings(user.uid, quiet=quiet, viewer=viewer)
+    await request.app[STORE].notify(user.uid)
     return await get_state(request)
 
 
 async def open_checkout(request: web.Request) -> web.Response:
-    """A one-minute ticket for the user's own browser pod's screen, while it holds their cart."""
+    """A one-minute ticket for the user's own browser pod's screen, while it holds their cart, and the link that
+    opens it: in the streamed viewer when the user turned it on, it's offered to them and the pod's agent has it;
+    otherwise in KasmVNC, as before."""
     user = signed_in(request)
     store, signer = request.app[STORE], request.app[CHECKOUT]
     held = await store.held_cart(user.uid, _trip_id(request))
+    viewer: CheckoutViewer = "classic"
+    if (
+        offered(request.app, is_admin=user.is_admin)
+        and await store.checkout_viewer(user.uid) == "stream"
+        and at_least(held.agent_version, STREAM_VIEWER)
+    ):
+        viewer = "stream"
     display = Display(
         route=signer.route_name(held.trip)[:64],
         date=held.trip.date.isoformat(),
@@ -203,9 +242,10 @@ async def open_checkout(request: web.Request) -> web.Response:
         disp=display,
         jti=jti,
     )
-    # The ticket rides in the fragment, so it never reaches a server log.
-    url = f"{signer.origin}/t/{held.trip.id}/g/{held.gen}/#{ticket}"
-    return web.json_response({"url": url, "ttl": TTL_SECONDS, "nonce_key": f"{held.trip.id}:{held.gen}"})
+    url = checkout_url(signer.origin, held.trip.id, held.gen, ticket, viewer)
+    return web.json_response(
+        {"url": url, "ttl": TTL_SECONDS, "nonce_key": f"{held.trip.id}:{held.gen}", "viewer": viewer}
+    )
 
 
 async def subscribe(request: web.Request) -> web.Response:

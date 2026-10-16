@@ -64,6 +64,11 @@ class AgentSettings:
     def debug_dir(self) -> Path:
         return self.tmp / "debug"
 
+    @property
+    def xsettings_dir(self) -> Path:
+        """xsettingsd's config while a streamed viewer is at 2x (screen.py): private, in memory-backed /tmp."""
+        return self.tmp / "xsettings"
+
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> AgentSettings:
         def need(name: str) -> str:

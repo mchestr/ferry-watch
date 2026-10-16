@@ -45,6 +45,7 @@ from ferry_watch.protocol import (
     decode_agent_message,
     encode,
 )
+from ferry_watch.versions import STREAM_VIEWER, at_least
 
 from .configure import HubSettings, build_configure, cart_gate, worth_pushing
 from .kube import Cluster
@@ -67,6 +68,7 @@ class Peer:
     binding: Binding
     ws: web.WebSocketResponse
     boot: str
+    agent_version: str = ""  # as its hello said: what it can be sent
     rev: int = 0
     last_heard: float = field(default_factory=time.time)
     sent_configure: Configure | None = None
@@ -75,6 +77,11 @@ class Peer:
 
     def envelope(self) -> dict[str, Any]:
         return {"seq": next(self.seq), "trip": self.binding.trip_id, "boot": self.boot, "rev": self.rev}
+
+    @property
+    def streams(self) -> bool:
+        """Whether the agent has the streamed checkout viewer, and so knows configure's `cast_allowed`."""
+        return at_least(self.agent_version, STREAM_VIEWER)
 
 
 class Violation(Exception):
@@ -185,7 +192,7 @@ class HubEndpoint:
         if VERSION not in hello.proto:
             raise ProtocolError("No protocol version in common")
         await self._store.record_agent_version(binding, hello.agent_version)  # for the admin page
-        peer = Peer(binding, ws, hello.boot)
+        peer = Peer(binding, ws, hello.boot, hello.agent_version)
         old = self._peers.get(binding.pod)
         self._peers[binding.pod] = peer  # one live socket per pod: the newest wins
         if old is not None:
@@ -289,6 +296,8 @@ class HubEndpoint:
             stretch_by=self._stretch(),
             now=now,
         )
+        if not peer.streams:  # never sent to it (_encode_for), so a change to it is no change at all
+            configure = msgspec.structs.replace(configure, cast_allowed=False)
         last = peer.sent_configure
         if last is not None:
             same_otherwise = _without(last, "interval_s") == _without(configure, "interval_s")
@@ -310,7 +319,17 @@ class HubEndpoint:
 
     async def _send(self, peer: Peer, message: ControlMessage) -> None:
         with contextlib.suppress(ConnectionResetError):
-            await peer.ws.send_bytes(encode(message))
+            await peer.ws.send_bytes(_encode_for(peer, message))
+
+
+def _encode_for(peer: Peer, message: ControlMessage) -> bytes:
+    """The frame for this agent. Agents before 0.7.0 refuse a configure with a field they don't know, so theirs
+    leaves out `cast_allowed`: they have no streamed viewer, and an absent field reads as false on newer ones."""
+    if isinstance(message, Configure) and not peer.streams:
+        data = msgspec.to_builtins(message)
+        del data["cast_allowed"]
+        return msgspec.json.encode(data)
+    return encode(message)
 
 
 def _without(configure: Configure, *fields: str) -> dict[str, Any]:

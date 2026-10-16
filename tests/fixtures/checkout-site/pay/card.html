@@ -1,0 +1,20 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<style>body{margin:0;padding:8px;font-family:system-ui;background:#fff0f0}input,button{font-size:16px;padding:8px;width:100%;box-sizing:border-box;margin:2px 0}.row{display:flex;gap:6px}</style></head>
+<body><label>Card number <input id="cc" autocomplete="cc-number" inputmode="numeric" name="cardnumber"></label>
+<div class="row"><label>Expiry <input id="exp" autocomplete="cc-exp" placeholder="MM/YY" inputmode="numeric"></label><label>CVC <input id="cvc" autocomplete="cc-csc" inputmode="numeric" maxlength="4"></label></div>
+<div class="row"><button id="pop3ds" type="button">Bank window</button><button id="cardalert" type="button">Card alert</button></div>
+<script>
+ window.__events = [];
+ for (const id of ["cc", "exp", "cvc"]) {
+   const el = document.getElementById(id);
+   for (const t of ["focus", "keydown", "input", "compositionstart", "compositionend", "click"]) {
+     el.addEventListener(t, (e) => window.__events.push([id, t, e.inputType || e.key || "", e.isTrusted ? 1 : 0]));
+   }
+ }
+ // A card form that moves on by itself once the number is complete, as many do.
+ document.getElementById("cc").addEventListener("input", (e) => {
+   if (e.target.value.replace(/\D/g, "").length >= 16) document.getElementById("exp").focus();
+ });
+ document.getElementById("pop3ds").addEventListener("click", () => window.open("{{PAY}}/popup.html", "_blank"));
+ document.getElementById("cardalert").addEventListener("click", () => alert("Card declined: check the number"));
+</script></body></html>

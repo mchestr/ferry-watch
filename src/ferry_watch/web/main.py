@@ -148,7 +148,7 @@ def main() -> None:
         config = load(Path(os.environ.get("FW_WEB_CONFIG", "/etc/ferry-web/config.json")), client_id=client_id)
         client_secret = read_secret(os.environ, "FW_OIDC_CLIENT_SECRET_FILE")
         key_id, key = checkout_key(read_secret(os.environ, "FW_CHECKOUT_KEY_FILE"), config.checkout.key_id)
-        checkout = CheckoutSigner(key, key_id, config.checkout.origin)
+        checkout = CheckoutSigner(key, key_id, config.checkout.origin, stream_viewer=config.checkout.stream_viewer)
         vapid_key = read_secret(os.environ, "FW_VAPID_KEY_FILE") if os.environ.get("FW_VAPID_KEY_FILE") else None
     except ConfigError as e:
         sys.exit(f"ferry-web: {e}")

@@ -385,3 +385,50 @@ async def test_the_operator_can_drain_and_revoke(aiohttp_server: Callable[..., A
         finish = await asyncio.wait_for(agent.run(), 10)
     assert finish == Finish("recycle")
     assert [m.reason for m in operator.received if isinstance(m, Bye)] == ["recycle"]
+
+
+async def test_the_agent_runs_a_streamed_viewer_only_while_the_operator_allows_it(
+    aiohttp_server: Callable[..., Any], tmp_path: Path
+) -> None:
+    operator = FakeOperator(after_hello=[configure(cast_allowed=True)])
+    app = web.Application()
+    app.router.add_get("/agent/v1", operator.handler)
+    server: TestServer = await aiohttp_server(app)
+    (tmp_path / "token").write_text(operator.token)
+    settings = replace(
+        AgentSettings.from_env(ENV | {"FW_HUB_URL": str(server.make_url("/agent/v1")).replace("http", "ws", 1)}),
+        token_path=tmp_path / "token",
+        deadline_at=1e12,
+        tmp=tmp_path,
+        gate_port=0,
+        probe_port=0,
+    )
+    nonce = "fw.n1." + "s" * 32
+    async with aiohttp.ClientSession() as http:
+        agent = Agent(
+            settings, http, FakeSite(sailings=[sailing(9)]), lockdown=Lockdown(ok=True), agent_version="0.7.0"
+        )
+        run = asyncio.create_task(agent.run())
+        try:
+            await operator.wait_for(
+                lambda: any(isinstance(m, Alert) and m.kind == "cart_held" for m in operator.received)
+            )
+            cart = agent.watcher.cart
+            assert cart is not None
+            ticket = mint(KEY, "k1", sub="user-7", trip=TRIP_ID, pod=settings.pod_name, cart_id=cart.id)
+            url = f"http://127.0.0.1:{agent.gate_port}/ws"
+            ws = await http.ws_connect(url, protocols=["fw.cast1", f"fw.t1.{ticket}", nonce], origin=ORIGIN)
+            assert ws.protocol == "fw.cast1"
+            await ws.send_str('{"t": "hello", "v": 1, "w": 390, "h": 664, "dpr": 3}')
+            assert (await asyncio.wait_for(ws.receive(), 5)).type == aiohttp.WSMsgType.CLOSE
+            assert ws.close_code == 4000  # this stand-in site has no browser page to show
+
+            # The kill switch: the next configure says no, and a stream isn't even admitted.
+            agent.store.apply(configure(rev=2, cast_allowed=False))
+            with pytest.raises(aiohttp.WSServerHandshakeError) as refused:
+                await http.ws_connect(url, protocols=["fw.cast1", nonce], origin=ORIGIN)
+            assert refused.value.status == 400
+        finally:
+            agent.terminate()
+            await asyncio.wait_for(run, 10)
+            await asyncio.gather(run, return_exceptions=True)
