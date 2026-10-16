@@ -23,12 +23,15 @@ import json
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from aiohttp.test_utils import TestServer, unused_port
 from playwright.async_api import Browser, BrowserContext, Page
 
+from ferry_watch.agent import cast_protocol
+from ferry_watch.agent.cast_cdp import Cdp
+from ferry_watch.agent.cast_input import ImageRing, InputMapper
 from tests.browser import test_checkout_edge as edge
 from tests.browser.fake_agent import Context, FakeAgent, Hello, Image, Refused, Session, decode, pack, valid
 
@@ -968,6 +971,74 @@ async def proxy_value(viewer: Viewer) -> str:
     return value
 
 
+async def typed_now(session: Session, before: int) -> list[dict[str, Any]]:
+    """The viewer's `key`, `text`, `compose` and `tap` messages from `before` on, once it sends no more of them."""
+
+    def read() -> list[dict[str, Any]]:
+        return [m for m in session.received[before:] if m["t"] in ("key", "text", "compose", "tap")]
+
+    count = -1
+    while count != len(read()):
+        count = len(read())
+        await asyncio.sleep(0.3)
+    return read()
+
+
+FIELD_END = """(() => {
+  const box = document.getElementById("f").getBoundingClientRect();
+  return [box.right - 2, box.top + box.height / 2];
+})()"""
+
+
+@dataclass
+class Pod:
+    """A checkout field on a page of the pod's Chromium, typed into by the agent's own input mapping
+    (cast_input.InputMapper) as the viewer's messages reach it."""
+
+    page: Page
+    mapper: InputMapper
+
+    async def carry_out(self, messages: Sequence[dict[str, Any]]) -> str:
+        """Carries out `key`, `text` and `compose`, and a `tap` as a click at the end of the field (its caret stays
+        at the end). What the field holds then."""
+        for msg in messages:
+            if msg["t"] == "tap":
+                x, y = await self.page.evaluate(FIELD_END)
+                await self.mapper.click(x, y)
+                continue
+            message = cast_protocol.decode(json.dumps(msg))
+            if isinstance(message, cast_protocol.Key):
+                await self.mapper.key(message)
+            elif isinstance(message, cast_protocol.Text):
+                await self.mapper.text(message)
+            else:
+                assert isinstance(message, cast_protocol.Compose), msg
+                await self.mapper.compose(message)
+        value: str = await self.page.evaluate("document.getElementById('f').value")
+        return value
+
+
+@contextlib.asynccontextmanager
+async def pod_field(browser: Browser, tag: str = "input") -> AsyncIterator[Pod]:
+    """An empty field with the focus, on a page of its own: an `<input>`, or a `<textarea>`."""
+    context = await browser.new_context()
+    try:
+        page = await context.new_page()
+        await page.set_content(f'<{tag} id="f"></{tag}>' if tag == "textarea" else '<input id="f">')
+        await page.focus("#f")
+        mapper = InputMapper(ImageRing())
+        mapper.aim(1, Cdp(cast(Any, await context.new_cdp_session(page))))
+        yield Pod(page, mapper)
+    finally:
+        await context.close()
+
+
+async def in_pod(browser: Browser, messages: Sequence[dict[str, Any]], tag: str = "input") -> str:
+    """What an empty field of the pod holds once the viewer's `messages` are carried out there."""
+    async with pod_field(browser, tag) as field:
+        return await field.carry_out(messages)
+
+
 async def tap_field(viewer: Viewer, session: Session, fields: list[dict[str, Any]], seq: int, fid: int) -> int:
     """A tap in the middle of field `fid` of a map up to date: the proxy takes it. How many messages had come."""
     await send_map(session, fields, seq=seq)
@@ -1139,6 +1210,239 @@ async def test_spaces_typed_into_an_email_reach_the_pod(phone: Viewer, checkout:
         await typed(ch)
     assert into_field(await typed_since(session, before, "mikex  y")) == "mikex  y"
     assert await proxy_value(phone) == "mikex  y"
+
+
+class Phone:
+    """The phone's keyboard, as the browser carries it out on the proxy (CDP Input): typing, the Backspace key, an
+    IME's composition (Gboard's word in progress, or one it re-opens or deletes over `replace`, in UTF-16 units)."""
+
+    def __init__(self, viewer: Viewer, session: Any) -> None:
+        self.viewer = viewer
+        self.session = session
+
+    async def type(self, *texts: str) -> None:
+        for text in texts:
+            await self.session.send("Input.insertText", {"text": text})
+
+    async def backspace(self) -> None:
+        for kind in ("rawKeyDown", "keyUp"):
+            key = {"key": "Backspace", "code": "Backspace", "windowsVirtualKeyCode": 8}
+            await self.session.send("Input.dispatchKeyEvent", {"type": kind, **key})
+
+    async def compose(self, text: str, replace: tuple[int, int] | None = None) -> None:
+        caret = len(text.encode("utf-16-le")) // 2
+        params: dict[str, Any] = {"text": text, "selectionStart": caret, "selectionEnd": caret}
+        if replace is not None:
+            params |= {"replacementStart": replace[0], "replacementEnd": replace[1]}
+        await self.session.send("Input.imeSetComposition", params)
+
+    async def word(self, word: str, commit: str | None = None) -> None:
+        """Gboard's word: each letter extends the composition, then it is committed, as typed or as a suggestion."""
+        for end in range(1, len(word) + 1):
+            await self.compose(word[:end])
+        await self.type(word if commit is None else commit)
+
+
+async def test_the_keyboards_trackpad_moves_nothing(phone: Viewer, checkout: Edge, browser: Browser) -> None:
+    """Found in review: the keyboard's trackpad (iOS's space bar, Gboard's) moves the proxy's caret but not the
+    pod's. With the browser typing into the proxy where its caret was, "Mike", the caret moved 2 to the left, "x" and
+    Backspace gave the pod "Mixk": "x" went into the word, but Backspace deleted at the end. The proxy's caret goes
+    back to its end as soon as it moves (an email input's can't be set: what is typed there goes to the end), so
+    typing and Backspace both act where the pod shows its caret, as they did in 0.7.0."""
+    session, seq = await started(phone, checkout)
+    keys = Phone(phone, await cdp(phone))
+    moves = {  # n UTF-16 units to the left, as the trackpad moves the caret: nothing else happens
+        "text": "(n) => { const proxy = document.getElementById('proxy'); const at = proxy.value.length - n; "
+        "proxy.setSelectionRange(at, at); return proxy.selectionEnd; }",
+        "email": "(n) => { for (let i = 0; i < n; i++) getSelection().modify('move', 'backward', 'character'); }",
+    }
+    at_end = "(() => { const proxy = document.getElementById('proxy'); return proxy.selectionEnd; })()"
+    cases = [
+        (1, ["M", "i", "k", "e"], 2, ["x", "Backspace"], "Mike"),
+        (2, ["m", "i", "k", "e"], 2, ["x", "Backspace"], "mike"),
+        (2, [*"mikeachster@gmail.com"], 15, ["w", "Backspace", "e"], "mikeachster@gmail.come"),
+        (1, ["a", "👍🏽", "b"], 5, ["x"], "a👍🏽bx"),
+    ]
+    for fid, typed, left, then, expected in cases:
+        before = await tap_field(phone, session, FIELDS, seq, fid)
+        await keys.type(*typed)
+        kind = await phone.evaluate("document.getElementById('proxy').type")
+        moved = await phone.evaluate(moves[kind], left)
+        if kind == "text":
+            end = len("".join(typed).encode("utf-16-le")) // 2
+            assert moved == end - left
+            assert await until(lambda: phone.evaluate(at_end), end.__eq__) == end
+        for step in then:
+            await (keys.backspace() if step == "Backspace" else keys.type(step))
+        assert await in_pod(browser, await typed_now(session, before)) == expected
+        assert await proxy_value(phone) == expected
+
+
+async def test_a_line_break_typed_stays_in_the_pod(phone: Viewer, checkout: Edge, browser: Browser) -> None:
+    """Found in review: text with a line break typed in one go (a dictated "new line", Live Text) was left to the
+    browser like other typing, and the one-line proxy made the break a space, or dropped it at the end, before
+    sending it. It is sent as typed, and the proxy keeps what follows the break."""
+    session, seq = await started(phone, checkout)
+    phone_keys = Phone(phone, await cdp(phone))
+    cases = [
+        (["Deck 5\nCabin 7"], "Deck 5\nCabin 7", "Cabin 7"),
+        (["H", "i", "\nBye"], "Hi\nBye", "Bye"),
+        (["Hello\n", "B"], "Hello\nB", "B"),
+    ]
+    for typed, expected, kept in cases:
+        before = await tap_field(phone, session, FIELDS, seq, 8)  # the textarea
+        await phone_keys.type(*typed)
+        assert await in_pod(browser, await typed_now(session, before), "textarea") == expected
+        assert await proxy_value(phone) == kept
+
+
+async def test_an_ime_composing_over_a_word_kept_replaces_it(phone: Viewer, checkout: Edge, browser: Browser) -> None:
+    """Found in review: Gboard re-opens the word before the caret (after a Backspace into it, or to offer a
+    suggestion for it) as its composition, and each composition was sent as new text at the pod's caret, after the
+    word the pod already had: "mike", tapping the suggestion "mikeachester@gmail.com" for it, gave
+    "mikemikeachester@gmail.com" in an email field, the owner's bug the Android way. A composition over text the proxy
+    keeps is an edit to that text: it is deleted in the pod and composed there again, and what follows it in the
+    proxy follows it."""
+    session, seq = await started(phone, checkout)
+    keys = Phone(phone, await cdp(phone))
+    name, email, username, area = 1, 2, 6, 8
+
+    async def suggested_after_backspace() -> None:
+        await keys.word("mike")
+        await keys.type(" ")
+        await keys.backspace()
+        await keys.compose("mike", replace=(0, 4))
+        await keys.type(EMAIL)
+
+    async def suggested_after_letters() -> None:
+        await keys.type(*"mike")
+        await keys.compose("mike", replace=(0, 4))
+        await keys.type(EMAIL)
+
+    async def reopened_and_typed_into() -> None:
+        await keys.word("mike")
+        await keys.type(".")
+        await keys.backspace()
+        await keys.compose("mikea", replace=(0, 4))
+        await keys.type("mikea")
+
+    async def reopened_and_emptied() -> None:
+        await keys.word("mike")
+        await keys.type(".")
+        await keys.backspace()
+        await keys.compose("mike", replace=(0, 4))
+        for end in (3, 2, 1, 0):
+            await keys.compose("mike"[:end])
+        await keys.word("x")
+
+    async def name_suggested() -> None:
+        await keys.word("Mike")
+        await keys.type(" ")
+        await keys.backspace()
+        await keys.compose("Mike", replace=(0, 4))
+        await keys.type("Michael")
+
+    async def earlier_word_corrected() -> None:
+        await keys.word("mike")
+        await keys.type(" ")
+        await keys.compose("Mike", replace=(0, 4))
+        await keys.type("Mike")
+
+    async def autocorrection_undone() -> None:
+        await keys.word("teh", commit="the")
+        await keys.type(" ")
+        await keys.backspace()
+        await keys.compose("the", replace=(0, 3))
+        await keys.type("teh")
+
+    cases = [
+        (email, suggested_after_backspace, EMAIL),
+        (email, suggested_after_letters, EMAIL),
+        (username, suggested_after_letters, EMAIL),
+        (email, reopened_and_typed_into, "mikea"),
+        (email, reopened_and_emptied, "x"),
+        (name, name_suggested, "Michael"),
+        (name, earlier_word_corrected, "Mike "),
+        (area, autocorrection_undone, "teh"),
+    ]
+    for fid, keyboard, expected in cases:
+        before = await tap_field(phone, session, FIELDS, seq, fid)
+        await keyboard()
+        assert await in_pod(browser, await typed_now(session, before)) == expected, keyboard.__name__
+        assert await proxy_value(phone) == expected, keyboard.__name__
+
+
+async def test_an_ime_deleting_more_than_a_character_deletes_as_much_in_the_pod(
+    phone: Viewer, checkout: Edge, browser: Browser
+) -> None:
+    """Found in review: an IME deletes as much as it likes before the caret (Gboard deletes a word swiped with one
+    Backspace), and Chromium carries out that delete even when its `beforeinput` is cancelled. The viewer sent one
+    Backspace and rewrote the proxy, against what Chromium did to it: "Mike Chester", the word deleted, then "John"
+    gave "Mike ChesteJohn". Such a delete is left to the browser, and the pod gets as many Backspaces as it takes to
+    delete what went: one for an emoji with its skin tone, as one Backspace deletes it in the pod's Chromium."""
+    session, seq = await started(phone, checkout)
+    keys = Phone(phone, await cdp(phone))
+    name, email, card = 1, 2, 4
+
+    async def word_deleted() -> None:
+        await keys.word("Mike")
+        await keys.type(" ")
+        await keys.word("Chester")
+        await keys.compose("", replace=(5, 12))
+        await keys.word("John")
+
+    async def letters_deleted() -> None:
+        await keys.type(*"mike")
+        await keys.compose("", replace=(2, 4))
+
+    async def deleted_then_suggested() -> None:
+        await keys.type(*"mike")
+        await keys.compose("", replace=(0, 4))
+        await keys.type(EMAIL)
+
+    async def emoji_deleted() -> None:
+        await keys.type("a", "👍🏽")
+        await keys.compose("", replace=(1, 5))
+        await keys.type("b")
+
+    async def digit_deleted() -> None:
+        await keys.type(*"4242")
+        await keys.compose("", replace=(3, 4))
+        await keys.type(*"24242")
+
+    async def emoji_backspaced() -> None:
+        await keys.type("a", "👍🏽")
+        await keys.backspace()
+
+    cases = [
+        (name, word_deleted, "Mike John"),
+        (email, letters_deleted, "mi"),
+        (email, deleted_then_suggested, EMAIL),
+        (name, emoji_deleted, "ab"),
+        (card, digit_deleted, "42424242"),
+        (name, emoji_backspaced, "a"),
+    ]
+    for fid, keyboard, expected in cases:
+        before = await tap_field(phone, session, FIELDS, seq, fid)
+        await keyboard()
+        assert await in_pod(browser, await typed_now(session, before)) == expected, keyboard.__name__
+        assert await proxy_value(phone) == expected, keyboard.__name__
+
+
+async def test_a_tap_commits_the_word_being_composed(phone: Viewer, checkout: Edge, browser: Browser) -> None:
+    """Found in review: Gboard keeps the word being typed composing until a space or a suggestion. A tap in the field
+    then emptied the proxy, which ends its composition without a `compositionend`, so the word was never committed;
+    the pod's Chromium keeps a composition through a click, and the next word's replaced it: "mike", a tap, then "x"
+    gave "x". The tap commits what the pod shows first, as a tap in a browser would."""
+    session, seq = await started(phone, checkout)
+    keys = Phone(phone, await cdp(phone))
+    for fid in (1, 2):
+        before = await tap_field(phone, session, FIELDS, seq, fid)
+        for end in range(1, 5):
+            await keys.compose("mike"[:end])
+        await tap_field(phone, session, FIELDS, seq, fid)
+        await keys.word("x")
+        assert await in_pod(browser, await typed_now(session, before)) == "mikex"
 
 
 @pytest.mark.parametrize("device", ["desktop", "wide"])

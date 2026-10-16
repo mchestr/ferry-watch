@@ -910,15 +910,27 @@ The viewer's hidden `<input>` that receives the phone's keyboard (DESIGN §4.4):
 - **What it holds.** A phone's keyboard works from the text before the caret: it capitalises from it, and a
   suggestion, AutoFill, an autocorrection or a swiped word replaces the word that text ends with. So for a `text` or
   `area` field that isn't a password, the proxy holds the end of what was typed since the field was tapped, as the
-  pod's field has it before its caret: at most **64** code points, from the last line break. The viewer leaves
-  `insertText` and `insertReplacementText` to the browser, and on `input` sends the difference between what the
-  proxy held and what it holds: one `key` `Backspace` for each code point the edit took from the end, then what it
-  put there (§8.7). Every other edit is cancelled and sent as §8.4 says, and what the proxy holds follows: a
-  Backspace takes its last code point (with nothing held, it is still sent), a paste or a composition adds to it.
-  It is emptied whenever the viewer can't be sure the pod still has it before its caret: a tap, a focus change, any
-  other key (Enter, Tab, an arrow, a word-wise delete). An email or URL input's value leaves out spaces at either
-  end: a space typed at the end is sent all the same, and the viewer never puts text ending in a space there itself
-  (it empties the proxy instead).
+  pod's field has it before its caret: at most **64** code points, from the last line break. The viewer leaves to
+  the browser `insertText` and `insertReplacementText` (unless their text has a line break, which the one-line proxy
+  would make a space) and, while the proxy holds something, `deleteContentBackward` (an IME deletes as much as it
+  likes with one, and Chromium carries that out even when it is cancelled). On `input` it sends the difference
+  between what the proxy held and what it holds: `key` `Backspace`s for what the edit took from the end, then what
+  it put there (§8.7). Every other edit is cancelled and sent as §8.4 says, and what the proxy holds follows: a
+  Backspace takes what it takes in the pod (with nothing held, it is still sent), a paste adds to it.
+- A composition at the end of what the proxy holds is sent as `compose`, then as `text` when it is committed, and
+  the proxy holds it from then on. A composition over text the proxy holds (Gboard re-opens the word before the
+  caret after a Backspace into it, or to offer a suggestion for it) is an edit to that text: the viewer deletes the
+  text in the pod with `Backspace`s and sends the composition as `compose`, then, once it is committed, as `text`
+  followed by what follows it in the proxy. A tap first commits a composition the pod shows, as `text`, as a tap in
+  a browser does: the pod's Chromium keeps its composition through a click.
+- The proxy's caret stays at its end, where the pod's is. When it moves with no edit (the keyboard's trackpad, a
+  selection made with the keyboard), the viewer puts it back, so typing and Backspace act where the pod shows its
+  caret. An email input has no caret the viewer can read or set: text typed into it anywhere but at its end is
+  sent as typed, at the pod's caret, and the proxy then holds it at its end.
+- The proxy is emptied whenever the viewer can't be sure the pod still has what it holds before its caret: a tap, a
+  focus change, any other key (Enter, Tab, an arrow, a word-wise delete). An email or URL input's value leaves out
+  spaces at either end: a space typed at the end is sent all the same, and the viewer never puts text ending in a
+  space there itself (it empties the proxy instead).
 - For a password field, and for a date or a time (typed as digits), it holds nothing: every edit is cancelled and
   sent, so the phone's keyboard never has a password to show, correct or suggest.
 
@@ -947,11 +959,14 @@ Before sending `text`, the viewer MUST:
 The same rules apply to `compose` (without TAB and LF; a composition longer than 64 code points is not sent until it
 is committed by `text`) and to `dialog.s` (without TAB and LF; cut at 256). Test vectors: §11.4.
 
-An edit the browser made to the text the keyboard proxy holds (§8.5) is sent as one `key` `Backspace` for each code
-point it took from the end of that text, then the text it put there, by these rules (one code point on its own as
-`key` with `c`). Found on an iPhone: "mike" typed into an email field, then the keyboard's suggestion
-"mikeachester@gmail.com", gave "mikemikeachester@gmail.com", because the proxy of an email field held nothing for the
-suggestion to replace, so the whole word was sent as new text; it now sends `text` "achester@gmail.com".
+An edit the browser made to the text the keyboard proxy holds (§8.5) is sent as `key` `Backspace`s for what it took
+from the end of that text, as many as the pod's Chromium needs to delete it (its backspace state machine: one
+Backspace deletes an emoji with its skin tone, keycap or ZWJ sequence, or a flag, whole, and other text one code point
+at a time; where that deletes more than the edit took, the rest is typed again), then the text it put there, by these
+rules (one code point on its own as `key` with `c`). Found on an iPhone: "mike" typed into an email field, then the
+keyboard's suggestion "mikeachester@gmail.com", gave "mikemikeachester@gmail.com", because the proxy of an email field
+held nothing for the suggestion to replace, so the whole word was sent as new text; it now sends `text`
+"achester@gmail.com".
 
 ### 8.8 Page-derived text
 
