@@ -177,6 +177,10 @@ class Context:
         """The image `move` and `wheel` coordinates are in: the latest of their page."""
         return next((image for image in reversed(self.images) if image.page == page), None)
 
+    def sent(self, seq: int) -> bool:
+        """A `tap` or `pinch` may name only an image that was sent: none newer than the newest."""
+        return seq <= max((image.seq for image in self.images), default=0)
+
 
 class Refused(Exception):
     """A structural violation (§6 step 1): the connection closes with ``code``."""
@@ -266,10 +270,12 @@ _VALUES: dict[type[_Inbound], Callable[[Any, Context], bool]] = {
     Hello: lambda m, _: m.v == 1 and _size(m.w, m.h, m.dpr),
     Resize: lambda m, _: _size(m.w, m.h, m.dpr),
     Ack: lambda m, _: _seq(m.seq),
-    Tap: lambda m, seen: _seq(m.seq) and 0 <= m.ms <= 300 and _in(seen.named(m.seq), m.x, m.y),
+    Tap: lambda m, seen: _seq(m.seq) and 0 <= m.ms <= 300 and seen.sent(m.seq) and _in(seen.named(m.seq), m.x, m.y),
     Move: lambda m, seen: _in(seen.latest(m.page), m.x, m.y),
     Wheel: lambda m, seen: max(abs(m.dx), abs(m.dy)) <= 4000 and _in(seen.latest(m.page), m.x, m.y),
-    Pinch: lambda m, seen: (_seq(m.seq) and 0.25 <= m.scale <= 4 and _in(seen.named(m.seq), m.x0, m.y0, m.x1, m.y1)),
+    Pinch: lambda m, seen: (
+        _seq(m.seq) and 0.25 <= m.scale <= 4 and seen.sent(m.seq) and _in(seen.named(m.seq), m.x0, m.y0, m.x1, m.y1)
+    ),
     Key: lambda m, _: _key_ok(m),
     Text: lambda m, _: 1 <= len(m.s) <= 256 and len(m.s.encode()) <= 1024 and _clean(m.s, lines=True),
     Compose: lambda m, _: len(m.s) <= 64 and _clean(m.s),
