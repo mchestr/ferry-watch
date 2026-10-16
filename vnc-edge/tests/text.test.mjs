@@ -4,6 +4,7 @@ import { describe, test } from "node:test";
 
 import { check } from "../site/fw/viewer/core/protocol.js";
 import {
+  backspaced,
   composeMessages,
   dialogAnswer,
   edit,
@@ -52,6 +53,39 @@ describe("what the browser changed in the proxy", () => {
     assert.deepEqual(edit("ab😀", "ab"), { removed: 1, added: "" });
     assert.deepEqual(edit("", "Victoria"), { removed: 0, added: "Victoria" });
     assert.deepEqual(edit("same", "same"), { removed: 0, added: "" });
+  });
+
+  test("a Backspace deletes what it deletes in the pod; an edit inside an emoji types its rest again", () => {
+    assert.deepEqual(edit("a👍🏽", "a"), { removed: 1, added: "" });
+    assert.deepEqual(edit("a👍🏽b", "ax👍🏽b"), { removed: 2, added: "x👍🏽b" });
+    assert.deepEqual(edit("a👍🏽", "a👍"), { removed: 1, added: "👍" });
+    assert.deepEqual(edit("cafe\u0301", "cafe"), { removed: 1, added: "" });
+    assert.deepEqual(edit("👨‍👩‍👧 hi", "👨‍👩‍👧"), { removed: 3, added: "" });
+  });
+
+  test("one Backspace deletes an emoji sequence or a flag whole, and combining marks one at a time", () => {
+    // Measured with Backspace in the pod's Chromium (141): what each Backspace deleted, from the end.
+    const vectors = {
+      "a👍🏽": [2, 1],
+      "ae\u0301": [1, 1, 1],
+      "a🇨🇦🇺🇸": [2, 2, 1],
+      "🇨🇦🇨": [1, 2],
+      "a👨‍👩‍👧": [5, 1],
+      "a👩🏽‍💻": [4, 1],
+      "a1️⃣": [3, 1],
+      "a#⃣": [2, 1],
+      "a❤️": [2, 1],
+      "a\ufe0f": [2],
+      "a\u0915\u094d\u0937": [1, 1, 1, 1],
+      "a🏽": [1, 1],
+      "a😀": [1, 1],
+      "": [],
+    };
+    for (const [s, expected] of Object.entries(vectors)) {
+      const units = [];
+      for (let rest = s; rest; rest = [...rest].slice(0, -units.at(-1)).join("")) units.push(backspaced(rest));
+      assert.deepEqual(units, expected, JSON.stringify(s));
+    }
   });
 
   test("the tail kept is counted in code points", () => {

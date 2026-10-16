@@ -77,15 +77,103 @@ export function dialogAnswer(input) {
 }
 
 /**
- * How `after` differs from `before`, as typing at the end of `before` would make it: how many code points to
- * delete, then what to insert. For an edit the browser made itself to text the viewer kept in the proxy.
+ * How `after` differs from `before`, as typing at the end of `before` in the pod's field would make it: how many
+ * Backspaces, then what to type. For an edit the browser made itself to text the viewer kept in the proxy. A
+ * Backspace deletes what the pod's Chromium deletes (backspaced()), so an edit that ends inside an emoji types the
+ * rest of it again.
  */
 export function edit(before, after) {
   const was = [...before];
   const now = [...after];
   let same = 0;
   while (same < was.length && same < now.length && was[same] === now[same]) same += 1;
-  return { removed: was.length - same, added: now.slice(same).join("") };
+  let kept = was.length;
+  let removed = 0;
+  for (; kept > same; removed += 1) kept -= deleted(was, kept);
+  return { removed, added: now.slice(kept).join("") };
+}
+
+/** How many code points at the end of `s` one Backspace deletes in the pod's field (see deleted()). */
+export function backspaced(s) {
+  const points = [...s];
+  return deleted(points, points.length);
+}
+
+const LINE_FEED = 0x0a;
+const CARRIAGE_RETURN = 0x0d;
+const ZERO_WIDTH_JOINER = 0x200d;
+const ENCLOSING_KEYCAP = 0x20e3;
+const has = (property) => (cp) => property.test(String.fromCodePoint(cp));
+const isEmoji = has(/\p{Emoji}/u);
+const isModifierBase = has(/\p{Emoji_Modifier_Base}/u);
+const isSelector = has(/\p{Variation_Selector}/u);
+const isCombining = has(/\p{Mn}/u); // for Chromium's "combining class other than 0", which JavaScript can't ask for
+const isModifier = (cp) => cp >= 0x1f3fb && cp <= 0x1f3ff;
+const isRegional = (cp) => cp >= 0x1f1e6 && cp <= 0x1f1ff;
+const isKeycapBase = (cp) => (cp >= 0x30 && cp <= 0x39) || cp === 0x23 || cp === 0x2a;
+
+/**
+ * How many of the code points `points[0..end)` ends with one Backspace deletes in the pod's field: Chromium's
+ * backspace state machine (core/editing/state_machines, as the pod's Chromium 141 has it). An emoji goes whole with
+ * its skin tone, variation selector, keycap or ZWJ sequence, a flag's two regional indicators and CR LF together;
+ * anything else one code point at a time, a letter's combining marks among them.
+ */
+function deleted(points, end) {
+  if (end <= 0) return 0;
+  const at = (i) => points[i].codePointAt(0);
+  const last = at(end - 1);
+  let state;
+  if (last === LINE_FEED) state = "lf";
+  else if (isSelector(last)) state = "vs";
+  else if (isRegional(last)) state = "oddRegional";
+  else if (isModifier(last)) state = "modifier";
+  else if (isEmoji(last)) state = "zwjEmoji";
+  else if (last === ENCLOSING_KEYCAP) state = "keycap";
+  else return 1;
+  let n = 1; // code points deleted (a variation selector met in a "vs…" state counts with what it follows)
+  for (let i = end - 2; i >= 0; i--) {
+    const cp = at(i);
+    if (state === "lf") return n + (cp === CARRIAGE_RETURN ? 1 : 0);
+    if (state === "keycap" || state === "modifier") {
+      if (isSelector(cp)) {
+        state = state === "keycap" ? "vsKeycap" : "vsModifier";
+        continue;
+      }
+      if (state === "keycap") return n + (isKeycapBase(cp) ? 1 : 0);
+      if (!isModifierBase(cp)) return n;
+      n += 1;
+      state = "zwjEmoji";
+    } else if (state === "vsKeycap") {
+      return n + (isKeycapBase(cp) ? 2 : 0);
+    } else if (state === "vsModifier") {
+      return n + (isModifierBase(cp) ? 2 : 0);
+    } else if (state === "vs") {
+      if (!isEmoji(cp)) return n + (!isSelector(cp) && !isCombining(cp) ? 1 : 0);
+      n += 1;
+      state = "zwjEmoji";
+    } else if (state === "zwjEmoji") {
+      if (cp !== ZERO_WIDTH_JOINER) return n;
+      state = "zwj";
+    } else if (state === "zwj") {
+      if (isEmoji(cp)) {
+        n += 2; // with the joiner
+        state = isModifier(cp) ? "modifier" : "zwjEmoji";
+      } else if (isSelector(cp)) {
+        state = "vsZwj";
+      } else {
+        return n;
+      }
+    } else if (state === "vsZwj") {
+      if (!isEmoji(cp)) return n;
+      n += 3; // with the joiner and the selector
+      state = "zwjEmoji";
+    } else {
+      if (!isRegional(cp)) return n;
+      n += state === "oddRegional" ? 1 : -1;
+      state = state === "oddRegional" ? "evenRegional" : "oddRegional";
+    }
+  }
+  return n;
 }
 
 /** The last `max` code points of `s`. */

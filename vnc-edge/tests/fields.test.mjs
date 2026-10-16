@@ -5,6 +5,7 @@ import { describe, test } from "node:test";
 import {
   fieldAt,
   findSelect,
+  keepsText,
   mapUsable,
   overlayFor,
   proxyAttributes,
@@ -121,6 +122,18 @@ describe("the keyboard proxy's attributes (§8.5)", () => {
     assert.ok(!typable(field({ ro: true })));
     assert.ok(!typable(field({ k: "select", type: "select" })));
     assert.ok(!typable(null));
+  });
+
+  test("the proxy keeps what is typed into any of them but a password", () => {
+    for (const type of ["text", "email", "tel", "url", "number", "search"]) assert.ok(keepsText(field({ type })), type);
+    assert.ok(keepsText(field({ im: "numeric", ac: "cc-number" })));
+    assert.ok(keepsText(field({ k: "area", type: "textarea" })));
+    assert.ok(!keepsText(field({ type: "password" })));
+    assert.ok(!keepsText(field({ type: "password", ac: "cc-number" })));
+    assert.ok(!keepsText(field({ ro: true })));
+    assert.ok(!keepsText(field({ k: "date", type: "date" })));
+    assert.ok(!keepsText(field({ k: "time", type: "time" })));
+    assert.ok(!keepsText(null));
   });
 });
 

@@ -72,6 +72,14 @@ export function overlayFor(field, image) {
 export const typable = (field) => Boolean(field) && !field.ro && (field.k === "text" || field.k === "area");
 
 /**
+ * Whether the keyboard proxy keeps what is typed into a field (§8.5), so that the phone's keyboard sees the word a
+ * suggestion, AutoFill or an autocorrection replaces: every field that takes typing but a password, which keeps
+ * nothing, so that no password is ever there for the keyboard to show or suggest. A date or a time keeps nothing
+ * either: its digits fill segments, not text.
+ */
+export const keepsText = (field) => typable(field) && field.type !== "password";
+
+/**
  * The keyboard proxy's attributes for a field (§8.5), every one of them, "" meaning absent. Never a password
  * input, and never a credential `autocomplete` token, whatever the agent sent: a password field gets exactly
  * what KasmVNC's own hidden input has.
