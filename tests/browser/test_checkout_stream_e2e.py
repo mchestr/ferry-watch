@@ -202,7 +202,11 @@ class Visit:
         await showing(self.viewer, pod)
         await self.hands.tap(middle(await frame_rect(pod, "#pop3ds", "#card")))
         bank = dataclasses.replace(pod, tab=await tab_with(pod, "/popup.html"))
-        listed = await until(lambda: front(self.viewer), lambda p: p.get("front") == 2)
+        # The popup is listed as soon as it opens, and its title once its page has loaded: wait for both.
+        listed = await until(
+            lambda: front(self.viewer),
+            lambda p: p.get("front") == 2 and all(page["title"] for page in p.get("pages", [])),
+        )
         assert [(p["id"], p["title"], p["origin"], p["main"]) for p in listed["pages"]] == [
             (1, "Checkout (stand-in for bcferries.com)", self.checkout.sites.shop, True),
             (2, "Your bank", self.checkout.sites.pay, False),
