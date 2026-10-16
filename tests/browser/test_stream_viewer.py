@@ -1315,6 +1315,68 @@ async def test_the_menus_paste_types_the_clipboard_into_the_checkout(phone: View
     assert await until(lambda: phone.page.is_hidden("#menu"), bool)
 
 
+async def test_the_menu_gives_the_keyboard_back_and_no_chip_takes_the_next_tap(phone: Viewer, checkout: Edge) -> None:
+    """The menu takes the focus from the keyboard proxy while it is open and gives it back as it closes, following
+    what the pod focused meanwhile. Found in CI: it never gave it back, so the focus report for the field the user was
+    pasting into brought up "Tap to type", and the chip took the user's next tap, on the field under it, for the old
+    field: no `tap` went, and the pod's focus stayed where it was."""
+    await phone.page.context.grant_permissions(["clipboard-read", "clipboard-write"], origin=checkout.url)
+    session, seq = await started(phone, checkout)
+    below = text_field(9, [20, 580, 350, 70], ac="postal-code")  # under the chip, bottom centre
+    fields = [*FIELDS[:4], below]
+    card = {k: v for k, v in FIELDS[3].items() if k != "id"}
+    focus = {"t": "focus", "page": 1, "seq": seq, "popup": False}
+    await send_map(session, fields, seq=seq)
+    await tap(phone, 195, 240)  # the card number
+    await session.wait_for("tap")
+    assert await phone.evaluate("document.activeElement.id") == "proxy"
+
+    # The card number's focus report comes while the menu is open, and again after the pasted text.
+    await phone.evaluate("navigator.clipboard.writeText('4242 4242 4242 4242')")
+    await phone.page.tap("#menu-handle")
+    await until(lambda: phone.evaluate("document.getElementById('menu').classList.contains('open')"), bool)
+    await session.send({**focus, "n": session.number, "f": card})
+    await asyncio.sleep(SETTLE_S)
+    await phone.page.tap("#menu-paste")
+    await session.wait_for("text")
+    assert await until(lambda: phone.page.is_hidden("#menu"), bool)
+    await session.send({**focus, "n": session.number, "f": card})
+    await asyncio.sleep(SETTLE_S)
+    assert await phone.evaluate("document.activeElement.id") == "proxy"
+    assert await phone.page.get_attribute("#proxy", "autocomplete") == "cc-number"
+    assert not await phone.page.is_visible("#type-chip")
+
+    # The next tap, on the field where the chip would be, goes to the pod and opens that field's keyboard.
+    await send_map(session, fields, seq=seq)
+    await tap(phone, 195, 620)
+    taps = await session.wait_for("tap", count=2)
+    assert (taps[1]["x"], taps[1]["y"]) == (195, 620)
+    assert await phone.evaluate("document.activeElement.id") == "proxy"
+    assert await phone.page.get_attribute("#proxy", "autocomplete") == "postal-code"
+
+    # The page moves the focus to the card number while the menu is open: closed, the proxy follows it.
+    await phone.page.tap("#menu-handle")
+    await until(lambda: phone.evaluate("document.getElementById('menu').classList.contains('open')"), bool)
+    await session.send({**focus, "n": session.number, "f": card})
+    await asyncio.sleep(SETTLE_S)
+    await phone.page.tap("#menu .close")
+    assert await until(lambda: phone.page.is_hidden("#menu"), bool)
+    assert await phone.evaluate("document.activeElement.id") == "proxy"
+    assert await phone.page.get_attribute("#proxy", "autocomplete") == "cc-number"
+    assert not await phone.page.is_visible("#type-chip")
+
+    # Nothing that takes typing has the focus by the time the menu closes: the keyboard stays away.
+    await phone.page.tap("#menu-handle")
+    await until(lambda: phone.evaluate("document.getElementById('menu').classList.contains('open')"), bool)
+    await session.send({**focus, "n": session.number, "f": None})
+    await asyncio.sleep(SETTLE_S)
+    await phone.page.tap("#menu .scrim", position={"x": 195, "y": 20})
+    assert await until(lambda: phone.page.is_hidden("#menu"), bool)
+    assert await phone.evaluate("document.activeElement.id") != "proxy"
+    assert not await phone.page.is_visible("#type-chip")
+    assert len(sent(session, "tap")) == 2
+
+
 async def test_what_the_checkouts_pages_say_is_shown_as_text(phone: Viewer, checkout: Edge) -> None:
     """Viewer test 12: a dialog's message and origin, a page's title and an option's label holding markup are
     shown as the text they are, under a policy that would refuse the markup's script anyway."""

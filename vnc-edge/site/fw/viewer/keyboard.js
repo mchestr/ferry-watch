@@ -60,6 +60,7 @@ export class Keyboard {
     proxy.addEventListener("compositionupdate", (event) => this.compose(event.data ?? ""));
     proxy.addEventListener("compositionend", (event) => this.composed(event.data ?? ""));
     proxy.addEventListener("keydown", (event) => this.screenKey(event));
+    proxy.addEventListener("focus", () => this.refocused());
     addEventListener("keydown", (event) => this.keydown(event));
     addEventListener("keyup", (event) => this.keyup(event));
     addEventListener("blur", () => this.releaseAll());
@@ -82,6 +83,17 @@ export class Keyboard {
     this.revealed = false;
     if (this.document.activeElement !== this.proxy) this.proxy.focus({ preventScroll: true });
     this.chip.hidden = true;
+  }
+
+  /**
+   * The proxy has the focus: in a tap (focusFor), or back from the menu, which gives back the focus it took. Either
+   * way the chip's job is done. Back from the menu, the proxy follows what the agent reported while the menu was
+   * open: the field the chip was offering, or no field that takes typing (the keyboard stays away).
+   */
+  refocused() {
+    if (!this.chip.hidden && this.reported) this.take(this.reported, true);
+    this.chip.hidden = true;
+    if (!this.field) this.proxy.blur();
   }
 
   /**

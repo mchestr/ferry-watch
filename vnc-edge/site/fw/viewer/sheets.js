@@ -140,7 +140,7 @@ export class Menu {
   constructor(document, { show, close, paste, classic }) {
     const $ = byId(document);
     this.document = document;
-    this.sheet = new Sheet($("menu"), () => this.stopClock());
+    this.sheet = new Sheet($("menu"), () => this.closed());
     this.handle = $("menu-handle");
     this.badge = $("menu-badge");
     this.clockLine = $("menu-clock");
@@ -154,7 +154,11 @@ export class Menu {
     this.pages = null;
     this.clock = null;
     this.ticking = 0;
+    this.returnTo = null; // what had the focus when the menu opened: the keyboard proxy, while the user types
 
+    // A tap or click on the handle leaves the keyboard proxy its focus, as one on the checkout does (input.js), so
+    // that the menu can give it back.
+    this.handle.addEventListener("mousedown", (event) => event.preventDefault());
     this.handle.addEventListener("click", () => this.open());
     $("menu-classic").addEventListener("click", () => classic());
     this.pasteButton.hidden = !navigator.clipboard?.readText;
@@ -166,6 +170,7 @@ export class Menu {
   }
 
   open() {
+    if (!this.isOpen) this.returnTo = this.document.activeElement;
     this.pasteNote.hidden = true;
     this.render();
     this.sheet.open();
@@ -178,8 +183,19 @@ export class Menu {
     this.sheet.close();
   }
 
-  stopClock() {
+  /**
+   * The sheet closed, whichever way. The clock stops, and the focus goes back where it was, unless something else
+   * (a dialog's sheet) has taken it since. While the user types that is the keyboard proxy: the phone's keyboard comes
+   * back for their field, and no "Tap to type" chip comes up over the checkout (keyboard.js) to take their next tap
+   * for the field they were in (found in CI: after the menu's Paste, a tap on the next field down hit the chip).
+   */
+  closed() {
     clearInterval(this.ticking);
+    const back = this.returnTo;
+    this.returnTo = null;
+    const active = this.document.activeElement;
+    const free = !active || active === this.document.body || this.sheet.root.contains(active);
+    if (back && back !== this.document.body && back.isConnected && free) back.focus({ preventScroll: true });
   }
 
   /** The agent's latest `pages` and `clock` (§5.2, §5.8); either may be null before they come. */
@@ -204,7 +220,10 @@ export class Menu {
       if (front) row.setAttribute("aria-current", "page");
       const show = row.querySelector(".page-show");
       show.addEventListener("click", () => {
-        if (!front) this.actions.show(page.id);
+        if (!front) {
+          this.actions.show(page.id);
+          this.returnTo = null; // another page: its own focus report says whether a keyboard is wanted there
+        }
         this.close();
       });
       const close = row.querySelector(".page-close");

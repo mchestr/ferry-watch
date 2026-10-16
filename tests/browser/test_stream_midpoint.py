@@ -360,6 +360,11 @@ async def test_a_tap_after_a_pinch_with_a_pan_lands_on_the_zoomed_field(browser:
 # ---- 3. a paste with a line break into an input and a textarea
 
 
+def reported_since_input(seen: dict[str, Any]) -> bool:
+    """The agent has sent a focus report since the viewer's latest input."""
+    return any(got["msg"]["t"] == "focus" and got["msg"]["n"] >= last_input(seen) for got in seen["got"])
+
+
 async def test_a_pasted_line_break_is_a_space_in_an_input_and_kept_in_a_textarea(
     browser: Browser, checkout: Checkout
 ) -> None:
@@ -378,8 +383,16 @@ async def test_a_pasted_line_break_is_a_space_in_an_input_and_kept_in_a_textarea
         postal = await until(lambda: checkout.pod.tab.input_value("#postal"), bool)
         assert postal == "123 Main St Victoria BC"
 
-        # The browser's own paste into the keyboard proxy, for the notes the user tapped.
+        # The menu gave the keyboard back: once the pod has reported its focus after the paste, no "Tap to type" chip
+        # is over the checkout to take the next tap for the postal code (found in CI, where the pod's fonts put the
+        # notes under the chip).
         await until(lambda: phone.page.is_hidden("#menu"), bool)
+        reported = await until(lambda: wire(phone), reported_since_input)
+        assert reported_since_input(reported), "no focus report after the paste"
+        assert await phone.evaluate("document.activeElement.id") == "proxy"
+        assert await phone.page.is_hidden("#type-chip")
+
+        # The browser's own paste into the keyboard proxy, for the notes the user tapped.
         await tap(phone, *middle((await field_for(phone, checkout.pod, "#notes"))["r"]))
         await focus_reaches(checkout, "notes")
         assert await phone.evaluate("document.activeElement.id") == "proxy"

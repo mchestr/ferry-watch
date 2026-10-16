@@ -889,6 +889,15 @@ read once per session in the main world must start with `en-US`, else `date` ans
 **Paste on touch devices.** The menu sheet's "Paste" reads `navigator.clipboard.readText()` inside its own tap and
 sends it as `text` (normalised) to the focused field.
 
+**The menu gives the keyboard back.** A tap on the menu's handle leaves the proxy its focus (as a tap on the
+checkout does); the open menu takes it, and gives it back as it closes (Paste, its close button, the scrim,
+Escape), unless something else, a dialog's sheet, has taken it since, or the user brought another page to the
+front. The proxy then follows what the agent reported while the menu was open: the field the "Tap to type" chip was
+offering, or, if nothing that takes typing has the focus, no keyboard at all. Whenever the proxy gets the focus, the
+chip goes. Found in CI: the menu never gave the focus back, so the focus report for the field being pasted into
+brought up the chip, which then took the user's next tap, on the field under it, for the old field (no `tap` was
+sent, and the pod's focus stayed put).
+
 ### 7.6 Pickers, dialogs, tabs, chrome (`overlays.js`, `sheets.js`)
 
 - **Overlays.**
