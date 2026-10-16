@@ -1,6 +1,7 @@
 # vnc-edge: the checkout host (docs/multi-tenant/design-reference.md §7.9). Static files, and one
-# WebSocket proxy to each browser pod's gate. No app code, no secrets. build.py fills in the two
-# placeholders: the checkout host and the hash of vnc.html's one inline script.
+# WebSocket proxy to each browser pod's gate. No app code, no secrets. build.py fills in the
+# placeholders: the classic viewer's policy (with the hash of vnc.html's one inline script) and the
+# streamed viewer's own.
 map $http_upgrade $connection_upgrade { default upgrade; '' close; }
 log_format noargs '$remote_addr [$time_local] "$request_method $uri" $status $body_bytes_sent $request_time';
 
@@ -17,6 +18,16 @@ server {
 
   location ~ "^/t/[a-f0-9]{16}/g/[0-9]{1,6}/$" { root /usr/share/fw-vnc; try_files /fw/landing.html =404; }
   location = /vnc.html { root /usr/share/fw-vnc; }
+  # The streamed viewer's page has a policy of its own (docs/multi-tenant/streamed-viewer/DESIGN.md §9, C38).
+  # This exact match takes it out of the /fw/ location below, and add_header here replaces the server's
+  # headers, so each of them is set again. Its modules and stylesheet are served by /fw/ with the rest.
+  location = /fw/viewer.html {
+    root /usr/share/fw-vnc;
+    add_header Content-Security-Policy "__FW_VIEWER_CSP__" always;
+    add_header Referrer-Policy no-referrer always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header Cache-Control no-store always;
+  }
   location ~ "^/(assets|app|core|fw)/" { root /usr/share/fw-vnc; }
 
   location ~ "^/t/(?<trip>[a-f0-9]{16})/g/(?<gen>[0-9]{1,6})/ws$" {

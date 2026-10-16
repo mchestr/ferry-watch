@@ -1,0 +1,250 @@
+{
+  "protocol": "fw.cast1",
+  "cases": [
+    {
+      "id": "occlusion-page", "sec": "8.3",
+      "map": {
+        "t": "fields", "page": 1, "rev": 3, "seq": 40, "n": 12, "sx": 0, "sy": 0, "scale": 1, "cw": 390, "ch": 1200,
+        "trunc": false,
+        "f": [
+          {"id": 1, "k": "select", "r": [20, 60, 300, 40], "c": [20, 60, 300, 40], "m": 511, "type": "select",
+           "im": "", "ac": "", "ekh": "", "cap": "", "max": null, "ro": false, "nopt": 4,
+           "opts": [["Pick a terminal", true], ["Victoria", false], ["Vancouver", false], ["Nanaimo", false]],
+           "sel": 0, "trunc": false},
+          {"id": 2, "k": "date", "r": [20, 120, 300, 40], "c": [20, 120, 300, 40], "m": 511, "type": "date",
+           "im": "", "ac": "", "ekh": "", "cap": "", "max": null, "ro": false, "v": ""},
+          {"id": 3, "k": "select", "r": [20, 180, 300, 40], "c": [20, 180, 300, 40], "m": 511, "type": "select",
+           "im": "", "ac": "", "ekh": "", "cap": "", "max": null, "ro": false, "nopt": 4,
+           "opts": [["Pick a terminal", true], ["Victoria", false], ["Vancouver", false], ["Nanaimo", false]],
+           "sel": 0, "trunc": false},
+          {"id": 4, "k": "select", "r": [20, 520, 150, 40], "c": [20, 520, 150, 40], "m": 63, "type": "select",
+           "im": "", "ac": "", "ekh": "", "cap": "", "max": null, "ro": false, "nopt": 4,
+           "opts": [["Pick a terminal", true], ["Victoria", false], ["Vancouver", false], ["Nanaimo", false]],
+           "sel": 0, "trunc": false},
+          {"id": 5, "k": "text", "r": [20, 451.5, 329, 34.5], "c": [20, 451.5, 329, 34.5], "m": 511, "type": "text",
+           "im": "numeric", "ac": "cc-number", "ekh": "", "cap": "", "max": null, "ro": false},
+          {
+            "id": 6, "k": "select", "r": [20, 509.5, 329, 34], "c": [20, 509.5, 329, 34], "m": 439, "type": "select",
+            "im": "", "ac": "", "ekh": "", "cap": "", "max": null, "ro": false, "nopt": 13,
+            "opts": [
+              ["MM", true], ["01", false], ["02", false], ["03", false], ["04", false], ["05", false], ["06", false],
+              ["07", false], ["08", false], ["09", false], ["10", false], ["11", false], ["12", false]
+            ],
+            "sel": 0, "trunc": false
+          }
+        ]
+      },
+      "oks": [], "image": {"page": 1, "seq": 40, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 0}, "last_input": 12,
+      "shifted": false,
+      "taps": [
+        {"x": 170, "y": 80, "field": 1},
+        {"x": 20, "y": 60, "field": 1, "note": "the top-left corner is inside"},
+        {"x": 319.9, "y": 99.9, "field": 1},
+        {"x": 320, "y": 80, "field": null, "note": "the right edge is outside: [x, x + w)"},
+        {"x": 120, "y": 80, "field": 1, "note": "on a cell boundary: the cell to its right"},
+        {"x": 170, "y": 140, "field": 2},
+        {"x": 45, "y": 525, "field": 4, "note": "inside expm's c too, but that cell of expm is covered"},
+        {"x": 150, "y": 525, "field": null, "note": "s2 and expm both claim it"},
+        {"x": 45, "y": 555, "field": null, "note": "s2's bottom row is under the footer"},
+        {"x": 300, "y": 530, "field": 6},
+        {"x": 45, "y": 512, "field": 6},
+        {"x": 100, "y": 460, "field": 5},
+        {"x": 200, "y": 10, "field": null}
+      ],
+      "overlays": [
+        {"field": 1, "overlay": "select"}, {"field": 2, "overlay": "date"}, {"field": 3, "overlay": "select"},
+        {"field": 4, "overlay": null}, {"field": 5, "overlay": null}, {"field": 6, "overlay": null}
+      ],
+      "note": "masks measured on occl.html (round2/out/s1-choose.json)"
+    },
+    {
+      "id": "overlay-rules", "sec": "8.3",
+      "map": {
+        "t": "fields", "page": 1, "rev": 3, "seq": 40, "n": 12, "sx": 0, "sy": 0, "scale": 1, "cw": 390, "ch": 1200,
+        "trunc": false,
+        "f": [
+          {"id": 1, "k": "select", "r": [20, 20, 300, 40], "c": [20, 20, 300, 40], "m": 511, "type": "select",
+           "im": "", "ac": "", "ekh": "", "cap": "", "max": null, "ro": false, "nopt": 1200, "sel": -1,
+           "trunc": true},
+          {"id": 2, "k": "select", "r": [20, 80, 300, 40], "c": [20, 80, 300, 40], "m": 511, "type": "select",
+           "im": "", "ac": "", "ekh": "", "cap": "", "max": null, "ro": true, "nopt": 4,
+           "opts": [["Pick a terminal", true], ["Victoria", false], ["Vancouver", false], ["Nanaimo", false]],
+           "sel": 1, "trunc": false},
+          {"id": 3, "k": "date", "r": [20, 640, 300, 40], "c": [20, 640, 300, 24], "m": 511, "type": "date",
+           "im": "", "ac": "", "ekh": "", "cap": "", "max": null, "ro": false, "v": ""},
+          {"id": 4, "k": "time", "r": [20, 300, 140, 40], "c": [20, 300, 140, 40], "m": 511, "type": "time",
+           "im": "", "ac": "", "ekh": "", "cap": "", "max": null, "ro": false, "v": ""},
+          {"id": 5, "k": "date", "r": [-10, 400, 200, 40], "c": [-10, 400, 200, 40], "m": 511, "type": "date",
+           "im": "", "ac": "", "ekh": "", "cap": "", "max": null, "ro": false, "v": ""},
+          {"id": 6, "k": "area", "r": [20, 460, 300, 80], "c": [20, 460, 300, 80], "m": 511, "type": "textarea",
+           "im": "", "ac": "", "ekh": "", "cap": "", "max": null, "ro": false},
+          {"id": 7, "k": "select", "r": [0, 560, 390, 40], "c": [0, 560, 390, 40], "m": 511, "type": "select",
+           "im": "", "ac": "", "ekh": "", "cap": "", "max": null, "ro": false, "nopt": 2,
+           "opts": [["No", false], ["Yes", false]], "sel": 0, "trunc": false},
+          {"id": 8, "k": "text", "r": [20, 140, 300, 40], "c": [20, 140, 300, 40], "m": 511, "type": "password",
+           "im": "", "ac": "", "ekh": "", "cap": "", "max": null, "ro": false}
+        ]
+      },
+      "oks": [], "image": {"page": 1, "seq": 40, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 0}, "last_input": 12,
+      "shifted": false,
+      "taps": [
+        {"x": 50, "y": 660, "field": 3, "note": "fields without an overlay can still be hit"},
+        {"x": 100, "y": 320, "field": 4},
+        {"x": 0, "y": 400, "field": 5},
+        {"x": 389.9, "y": 599.9, "field": 7},
+        {"x": 100, "y": 150, "field": 8}
+      ],
+      "overlays": [
+        {"field": 1, "overlay": null}, {"field": 2, "overlay": null}, {"field": 3, "overlay": null},
+        {"field": 4, "overlay": "time"}, {"field": 5, "overlay": null}, {"field": 6, "overlay": null},
+        {"field": 7, "overlay": "select"}, {"field": 8, "overlay": null}
+      ]
+    },
+    {
+      "id": "zoomed-iframe", "sec": "8.3",
+      "map": {
+        "t": "fields", "page": 1, "rev": 7, "seq": 341, "n": 30, "sx": 175, "sy": 770.5, "scale": 2, "cw": 390,
+        "ch": 1200, "trunc": false,
+        "f": [
+          {"id": 1, "k": "text", "r": [-306, 83, 670, 77], "c": [-306, 83, 670, 77], "m": 438, "type": "text",
+           "im": "numeric", "ac": "cc-number", "ekh": "", "cap": "", "max": null, "ro": false},
+          {"id": 2, "k": "text", "r": [43, 207, 321, 77], "c": [43, 207, 321, 77], "m": 511, "type": "text",
+           "im": "numeric", "ac": "cc-csc", "ekh": "", "cap": "", "max": null, "ro": false}
+        ]
+      },
+      "oks": [], "image": {"page": 1, "seq": 341, "w": 390, "h": 664, "scale": 2, "sx": 175, "sy": 770.5},
+      "last_input": 30, "shifted": false,
+      "taps": [
+        {"x": 29, "y": 121.5, "field": 1, "note": "the measured click point"},
+        {"x": 10, "y": 100, "field": 1},
+        {"x": 300, "y": 100, "field": 1},
+        {"x": 200, "y": 245, "field": 2},
+        {"x": 200, "y": 300, "field": null}
+      ],
+      "overlays": [{"field": 1, "overlay": null}, {"field": 2, "overlay": null}],
+      "note": "round2/out/s7-zoom.json; the mask's left column is outside the image"
+    },
+    {
+      "id": "unusable-by-n", "sec": "8.3",
+      "map": {
+        "t": "fields", "page": 1, "rev": 3, "seq": 40, "n": 12, "sx": 0, "sy": 0, "scale": 1, "cw": 390, "ch": 1200,
+        "trunc": false,
+        "f": [
+          {"id": 1, "k": "select", "r": [20, 60, 300, 40], "c": [20, 60, 300, 40], "m": 511, "type": "select",
+           "im": "", "ac": "", "ekh": "", "cap": "", "max": null, "ro": false, "nopt": 4,
+           "opts": [["Pick a terminal", true], ["Victoria", false], ["Vancouver", false], ["Nanaimo", false]],
+           "sel": 0, "trunc": false},
+          {"id": 2, "k": "date", "r": [20, 120, 300, 40], "c": [20, 120, 300, 40], "m": 511, "type": "date",
+           "im": "", "ac": "", "ekh": "", "cap": "", "max": null, "ro": false, "v": ""},
+          {"id": 3, "k": "select", "r": [20, 180, 300, 40], "c": [20, 180, 300, 40], "m": 511, "type": "select",
+           "im": "", "ac": "", "ekh": "", "cap": "", "max": null, "ro": false, "nopt": 4,
+           "opts": [["Pick a terminal", true], ["Victoria", false], ["Vancouver", false], ["Nanaimo", false]],
+           "sel": 0, "trunc": false},
+          {"id": 4, "k": "select", "r": [20, 520, 150, 40], "c": [20, 520, 150, 40], "m": 63, "type": "select",
+           "im": "", "ac": "", "ekh": "", "cap": "", "max": null, "ro": false, "nopt": 4,
+           "opts": [["Pick a terminal", true], ["Victoria", false], ["Vancouver", false], ["Nanaimo", false]],
+           "sel": 0, "trunc": false},
+          {"id": 5, "k": "text", "r": [20, 451.5, 329, 34.5], "c": [20, 451.5, 329, 34.5], "m": 511, "type": "text",
+           "im": "numeric", "ac": "cc-number", "ekh": "", "cap": "", "max": null, "ro": false},
+          {
+            "id": 6, "k": "select", "r": [20, 509.5, 329, 34], "c": [20, 509.5, 329, 34], "m": 439, "type": "select",
+            "im": "", "ac": "", "ekh": "", "cap": "", "max": null, "ro": false, "nopt": 13,
+            "opts": [
+              ["MM", true], ["01", false], ["02", false], ["03", false], ["04", false], ["05", false], ["06", false],
+              ["07", false], ["08", false], ["09", false], ["10", false], ["11", false], ["12", false]
+            ],
+            "sel": 0, "trunc": false
+          }
+        ]
+      },
+      "oks": [], "image": {"page": 1, "seq": 40, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 0}, "last_input": 13,
+      "shifted": false, "taps": [{"x": 170, "y": 80, "field": null}, {"x": 100, "y": 460, "field": null}],
+      "overlays": [
+        {"field": 1, "overlay": null}, {"field": 2, "overlay": null}, {"field": 3, "overlay": null},
+        {"field": 4, "overlay": null}, {"field": 5, "overlay": null}, {"field": 6, "overlay": null}
+      ],
+      "note": "the user did something after the map was taken"
+    },
+    {
+      "id": "unusable-while-shifted", "sec": "8.3",
+      "map": {
+        "t": "fields", "page": 1, "rev": 3, "seq": 40, "n": 12, "sx": 0, "sy": 0, "scale": 1, "cw": 390, "ch": 1200,
+        "trunc": false,
+        "f": [
+          {"id": 1, "k": "select", "r": [20, 60, 300, 40], "c": [20, 60, 300, 40], "m": 511, "type": "select",
+           "im": "", "ac": "", "ekh": "", "cap": "", "max": null, "ro": false, "nopt": 4,
+           "opts": [["Pick a terminal", true], ["Victoria", false], ["Vancouver", false], ["Nanaimo", false]],
+           "sel": 0, "trunc": false},
+          {"id": 2, "k": "date", "r": [20, 120, 300, 40], "c": [20, 120, 300, 40], "m": 511, "type": "date",
+           "im": "", "ac": "", "ekh": "", "cap": "", "max": null, "ro": false, "v": ""},
+          {"id": 3, "k": "select", "r": [20, 180, 300, 40], "c": [20, 180, 300, 40], "m": 511, "type": "select",
+           "im": "", "ac": "", "ekh": "", "cap": "", "max": null, "ro": false, "nopt": 4,
+           "opts": [["Pick a terminal", true], ["Victoria", false], ["Vancouver", false], ["Nanaimo", false]],
+           "sel": 0, "trunc": false},
+          {"id": 4, "k": "select", "r": [20, 520, 150, 40], "c": [20, 520, 150, 40], "m": 63, "type": "select",
+           "im": "", "ac": "", "ekh": "", "cap": "", "max": null, "ro": false, "nopt": 4,
+           "opts": [["Pick a terminal", true], ["Victoria", false], ["Vancouver", false], ["Nanaimo", false]],
+           "sel": 0, "trunc": false},
+          {"id": 5, "k": "text", "r": [20, 451.5, 329, 34.5], "c": [20, 451.5, 329, 34.5], "m": 511, "type": "text",
+           "im": "numeric", "ac": "cc-number", "ekh": "", "cap": "", "max": null, "ro": false},
+          {
+            "id": 6, "k": "select", "r": [20, 509.5, 329, 34], "c": [20, 509.5, 329, 34], "m": 439, "type": "select",
+            "im": "", "ac": "", "ekh": "", "cap": "", "max": null, "ro": false, "nopt": 13,
+            "opts": [
+              ["MM", true], ["01", false], ["02", false], ["03", false], ["04", false], ["05", false], ["06", false],
+              ["07", false], ["08", false], ["09", false], ["10", false], ["11", false], ["12", false]
+            ],
+            "sel": 0, "trunc": false
+          }
+        ]
+      },
+      "oks": [], "image": {"page": 1, "seq": 40, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 0}, "last_input": 12,
+      "shifted": true, "taps": [{"x": 170, "y": 80, "field": null}],
+      "overlays": [
+        {"field": 1, "overlay": null}, {"field": 2, "overlay": null}, {"field": 3, "overlay": null},
+        {"field": 4, "overlay": null}, {"field": 5, "overlay": null}, {"field": 6, "overlay": null}
+      ]
+    },
+    {
+      "id": "usable-after-fields-ok", "sec": "8.3",
+      "map": {
+        "t": "fields", "page": 1, "rev": 3, "seq": 40, "n": 12, "sx": 0, "sy": 0, "scale": 1, "cw": 390, "ch": 1200,
+        "trunc": false,
+        "f": [
+          {"id": 1, "k": "select", "r": [20, 60, 300, 40], "c": [20, 60, 300, 40], "m": 511, "type": "select",
+           "im": "", "ac": "", "ekh": "", "cap": "", "max": null, "ro": false, "nopt": 4,
+           "opts": [["Pick a terminal", true], ["Victoria", false], ["Vancouver", false], ["Nanaimo", false]],
+           "sel": 0, "trunc": false},
+          {"id": 2, "k": "date", "r": [20, 120, 300, 40], "c": [20, 120, 300, 40], "m": 511, "type": "date",
+           "im": "", "ac": "", "ekh": "", "cap": "", "max": null, "ro": false, "v": ""},
+          {"id": 3, "k": "select", "r": [20, 180, 300, 40], "c": [20, 180, 300, 40], "m": 511, "type": "select",
+           "im": "", "ac": "", "ekh": "", "cap": "", "max": null, "ro": false, "nopt": 4,
+           "opts": [["Pick a terminal", true], ["Victoria", false], ["Vancouver", false], ["Nanaimo", false]],
+           "sel": 0, "trunc": false},
+          {"id": 4, "k": "select", "r": [20, 520, 150, 40], "c": [20, 520, 150, 40], "m": 63, "type": "select",
+           "im": "", "ac": "", "ekh": "", "cap": "", "max": null, "ro": false, "nopt": 4,
+           "opts": [["Pick a terminal", true], ["Victoria", false], ["Vancouver", false], ["Nanaimo", false]],
+           "sel": 0, "trunc": false},
+          {"id": 5, "k": "text", "r": [20, 451.5, 329, 34.5], "c": [20, 451.5, 329, 34.5], "m": 511, "type": "text",
+           "im": "numeric", "ac": "cc-number", "ekh": "", "cap": "", "max": null, "ro": false},
+          {
+            "id": 6, "k": "select", "r": [20, 509.5, 329, 34], "c": [20, 509.5, 329, 34], "m": 439, "type": "select",
+            "im": "", "ac": "", "ekh": "", "cap": "", "max": null, "ro": false, "nopt": 13,
+            "opts": [
+              ["MM", true], ["01", false], ["02", false], ["03", false], ["04", false], ["05", false], ["06", false],
+              ["07", false], ["08", false], ["09", false], ["10", false], ["11", false], ["12", false]
+            ],
+            "sel": 0, "trunc": false
+          }
+        ]
+      },
+      "oks": [{"t": "fields_ok", "page": 1, "rev": 3, "seq": 50, "n": 15}],
+      "image": {"page": 1, "seq": 52, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 0}, "last_input": 15,
+      "shifted": false, "taps": [{"x": 170, "y": 80, "field": 1}],
+      "overlays": [
+        {"field": 1, "overlay": "select"}, {"field": 2, "overlay": "date"}, {"field": 3, "overlay": "select"},
+        {"field": 4, "overlay": null}, {"field": 5, "overlay": null}, {"field": 6, "overlay": null}
+      ]
+    }
+  ]
+}

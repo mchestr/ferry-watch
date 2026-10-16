@@ -45,7 +45,8 @@ FROM mcr.microsoft.com/playwright/python:v1.56.0-noble@sha256:a7f6cf3ae520c9d670
 
 # KasmVNC is the virtual display: an X server with a built-in web viewer that resizes the
 # screen to fit whoever is looking (phone or desktop). matchbox keeps the browser window
-# full-screen at that size. tini forwards signals so the app can shut down cleanly.
+# full-screen at that size. tini forwards signals so the app can shut down cleanly. xrandr
+# (x11-xserver-utils) and xsettingsd size the screen and set its scale for a streamed viewer.
 ARG TARGETARCH
 ARG KASMVNC_VERSION=1.5.0
 RUN set -eux; \
@@ -55,7 +56,7 @@ RUN set -eux; \
       *) echo "unsupported architecture ${TARGETARCH}"; exit 1 ;; \
     esac; \
     apt-get update; \
-    apt-get install -y --no-install-recommends ca-certificates curl matchbox-window-manager tini; \
+    apt-get install -y --no-install-recommends ca-certificates curl matchbox-window-manager tini xsettingsd x11-xserver-utils; \
     curl -fsSL -o /tmp/kasmvnc.deb \
       "https://github.com/kasmtech/KasmVNC/releases/download/v${KASMVNC_VERSION}/kasmvncserver_noble_${KASMVNC_VERSION}_${TARGETARCH}.deb"; \
     echo "${sum}  /tmp/kasmvnc.deb" | sha256sum -c -; \

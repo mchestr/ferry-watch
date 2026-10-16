@@ -159,7 +159,7 @@ k8s-native. The review then:
 |---|---|---|---|
 | 1 | Operator plus one headed pod per watched route; the operator can't get secrets out | One pinned bare pod per trip being checked (warm or short check), created only by `ferry-control`, admitted by a VAP that forbids every secret-bearing field. The agent dials out, and its typed protocol has no page-content operations. No control-plane process is in the VNC data path. The VNC data path does cross Cloudflare, Envoy and vnc-edge in plaintext; see §4.3. | About 1-1.5 GiB per trip (§8.4). Every pod start is a fresh form walk and a possible Queue-it wait. The VAP and RBAC must stay correct forever; CI enforces this. |
 | 2 | Alerts link to the trip's VNC | Cart alerts link to `https://ferry.chestr.dev/c/<trip>`. That page shows the held sailing and two choices: "Check out on this device" (mints a ticket and opens VNC) or "I'll use my computer". | One extra tap, because a bearer VNC URL in a notification would hand VNC power to whoever sends the notification, and an automatic open would lock checkout to whichever device opened the link first. |
-| 3 | VNC only while a cart is held | Enforced in the pod (authoritative), by ferry-web (won't mint a ticket), by ferry-control (deletes the pod at hold cap + 5 min on its own clock), by Xvnc `-MaxConnectionTime`, and by `activeDeadlineSeconds`. | No "watch my browser" view. No pre-cart sign-in window in v1 (owner, round 2: first-list Q1, "No"); adding one later needs the owner's explicit decision and real work (§15). |
+| 3 | VNC only while a cart is held | Enforced in the pod (authoritative), by ferry-web (won't mint a ticket), by ferry-control (deletes the pod at hold cap + 5 min on its own clock), by Xvnc `-MaxConnectionTime` and the gate's connection cap (both 6000 s), and by `activeDeadlineSeconds`. The streamed viewer (0.7.0) re-checks the hold before every input and output (C35). | No "watch my browser" view. No pre-cart sign-in window in v1 (owner, round 2: first-list Q1, "No"); adding one later needs the owner's explicit decision and real work (§15). |
 | 4 | Invite-only; an admin approves each account | Three gates: Authelia issues sign-in codes for the `ferry-watch` client only to lldap groups `ferry-watch` and `admin` (an OIDC authorization policy, default deny); the app admits only people the admin invited on the Users page (§6.2.7); suspension revokes every session at once. Authelia checks the group when it issues a code, so the app re-verifies every session with it at least every 24 h (§6.2.2). | lldap users are still created by hand on a LAN-only UI, with no remote password reset [R:cluster-identity-security "lldap"]. The `ferry-watch` client is `one_factor` (owner, round 3): invitees sign in with the password the owner gives them, so no second-factor enrolment; each invitee's email must still be deliverable through SES for the invitation and alerts (§2.3). Removing someone in lldap reaches the app within 24 h, not at once, so the removal runbook suspends them in the app first (R20, §12.5). |
 | 5 | Operator-only | `entrypoint.sh` and the standalone image are retired. Local dev uses docker compose; chart work uses kind. | The owner's `config.json`/`alerted.json` need a one-time import (§12.5). |
 | 6 | Ko-fi link, no payments | A `kofiUrl` Helm value validated as `https://ko-fi.com/<name>`, rendered as a plain `<a>`. The CSP (`server.py:232-251`) is unchanged. | None worth noting. |
@@ -413,7 +413,8 @@ Numbers below are the defaults from the canonical table in §8.2.
    - **Check out on this device** POSTs `/api/trips/<trip>/vnc`. ferry-web checks that the user owns the
      trip, that `trip_state` shows a READY cart with this `cart_id` in the current pod, and that the user
      has made fewer than 10 mints this minute. It mints a ticket (§5.5), writes `vnc_mints` and audit rows,
-     and returns `https://ferry-checkout.chestr.dev/t/<trip>/g/<gen>/#t=<ticket>`. The page navigates there.
+     and returns `https://ferry-checkout.chestr.dev/t/<trip>/g/<gen>/#<ticket>` (`…/#v=s1&t=<ticket>` when it
+     opens in the streamed viewer beta, 0.7.0: streamed-viewer/DESIGN.md §8.3). The page navigates there.
    - **I'll use my computer** emails the user a fresh `/c/<trip>` link (no ticket) and shows "Open Ferry
      Watch on your computer".
    - **Release and book it myself** releases the cart (warning that the space returns to the public pool),
@@ -539,7 +540,9 @@ once TLS ends; tenants are told (R4).
 
 ### 4.4 Controls
 
-"From" is the milestone where the control first ships (§12.2).
+"From" is the milestone where the control first ships (§12.2). C33-C42 come with the streamed checkout viewer
+(0.7.0 beta; `streamed-viewer/DESIGN.md` §5, wire protocol `streamed-viewer/PROTOCOL.md`), and their "From" is that
+release.
 
 | # | Control | Threat it stops | Where enforced | From |
 |---|---|---|---|---|
@@ -559,7 +562,7 @@ once TLS ends; tenants are told (R4).
 | C14 | Pods never serve HTML. vnc-edge serves the stock client with a build-computed CSP (`connect-src 'self' wss://ferry-checkout.chestr.dev`, hashed inline script, `frame-ancestors 'none'`, `base-uri 'none'`, `form-action 'none'`), `Referrer-Policy: no-referrer` and `no-store`. nginx proxies only WS upgrades. vnc-edge stays a stock, logic-free nginx plus static files. | Tenant-compromisable script on a chestr.dev origin; a page pointing the client at a keystroke relay | vnc-edge image and config | M1 |
 | C15 | Ticket only in the URL fragment, resume nonce only in `Sec-WebSocket-Protocol`, the OIDC code only in the URL fragment (`response_mode=fragment`) and then a JSON body, the app session token only in `Authorization` and the dashboard WebSocket's first message; none appears in a path or query that Envoy, nginx or VictoriaLogs records | Tickets, nonces, codes and session tokens leaking into access logs, which VictoriaLogs and `openclaw` can read | landing page + shim + gate; SPA + ferry-web | M1 |
 | C16 | Every Cookie header removed on both routes. Authorization removed on the VNC route; kept on the dashboard route, where it carries only the app's own bearer token. The dashboard route also removes `Remote-User`, `Remote-Groups`, `Remote-Email` and `Remote-Name` (defence in depth for the dev header adapter). ferry-web sets no cookie. | A pod or a compromised ferry-web replaying the owner's Authelia session from the server into Immich, Windmill or internal apps. (Script served from the ferry host can still make same-site requests that carry the cookie; R12.) | HTTPRoute RequestHeaderModifier; post-deploy echo test; a CI test that ferry-web never sends `Set-Cookie` | M1 |
-| C17 | "Cart held" enforced five times: agent (authoritative); web won't mint; ferry-control deletes at `hold_ready_at + hard cap + 5 min` by its own clock; Xvnc `-MaxConnectionTime 6000`; `activeDeadlineSeconds 93600` | VNC kept open outside a hold, by a buggy or lying agent | agent, web, control, Xvnc, kubelet | M1 |
+| C17 | "Cart held" enforced five times: agent (authoritative; for the streamed viewer C35 re-checks it before every input and every output, and every second); web won't mint; ferry-control deletes at `hold_ready_at + hard cap + 5 min` by its own clock; the gate's 6000 s connection cap for both viewer kinds (C36), with Xvnc `-MaxConnectionTime 6000` kept for the classic one; `activeDeadlineSeconds 93600` | VNC kept open outside a hold, by a buggy or lying agent | agent, web, control, gate, Xvnc, kubelet | M1 (gate cap and C35: 0.7.0) |
 | C18 | Compiled agent maxima: interval ≥ 30 s (the same floor as `polling.py:21`), unclaimed ≤ 45 min, session ≤ 45 min, hard ≤ 90 min, viewer-gone ≤ 15 min, ≤ 6 cart attempts per pod, no cart without a granted claim; a short-check pod checks once; no "0 = forever" | A compromised control plane making holds endless or polling unbounded (not A3, see R13) | agent code (not configurable) | M1 |
 | C19 | Gate revocation: the socket closes on release, expiry, session cap, viewer-gone, `vnc_revoke`, drain or suspend; a viewed hold always ends with the pod exiting | Gateways check only the upgrade [R:map-k8s-research §e] | agent gate; pod delete as the final kill | M1 |
 | C20 | Egress: outside holds, Cilium `toFQDNs` on TCP 443 to bcferries.com and Queue-it plus a DNS L7 rule that resolves only those names (and the control FQDN); while a cart is held (`ferry-watch.io/egress: hold`, set and cleared only by ferry-control), additionally any public IPv4 address on TCP 443 and DNS for any name (owner, round 3). Always denied: private, CGNAT, link-local (metadata) and loopback ranges, LAN, nodes, kube-apiserver, other pods, smtp-relay and observability | Outside holds: the browser used as a proxy, DNS exfiltration, unauthorised sites. Always: lateral movement into the cluster or LAN | Two CiliumNetworkPolicies (GitOps values); the label flip (§6.6); C5 | M1 |
@@ -575,13 +578,23 @@ once TLS ends; tenants are told (R4).
 | C30 | The termination message (`/dev/termination-log`, readable by the operator through `pods get`) carries only a fixed enum reason and error class | A pod-to-operator channel for tenant data | agent + image test | M1 |
 | C31 | The operator holds no PDB, ConfigMap, Service, route or workload-controller verbs; holds are protected by the agent's drain, not by objects the operator writes | Operator-written objects becoming a lever (the draft's anchor GC hazard) | RBAC; `can-i` negatives | M1 |
 | C32 | One hold per user at a time (owner, round 3): an agent carts only after ferry-control grants a `cart_claim`, which it does in one SQL statement only if the user has no hold and no live claim | Two pods of one user (the warm pod and a short-check pod) holding carts at once | ferry-control (`hold_claims`); agent (compiled: no cart without a granted claim) | M1 |
+| C33 | Viewer protocol: exactly one of `binary` (KasmVNC's client) or `fw.cast1` (the streamed viewer) offered per upgrade, else 400; 4 KiB inbound frames for `fw.cast1`; two-step decoding: structural errors close 4400, value errors drop the message with `error invalid` and count toward a drop limit that closes 4429; typed-text rules (no controls but TAB and LF); a fixed key table with no Ctrl, Alt or Meta shortcuts | Parser abuse; smuggled shortcuts; control characters into fields; a viewer bug turning into reconnect loops | gate, agent (`cast_protocol.py`) | 0.7.0 |
+| C34 | CDP allowlist: the stream session reaches Chromium only through a wrapper that refuses, before sending, every method and parameter shape outside a fixed list: screencast and screenshots, layout metrics, the frame tree and isolated worlds; mouse, key, text, IME and pinch input with no right or middle button and no modifier but Shift (and Ctrl for word-wise keys); `Runtime.evaluate` of the seven fixed scripts only, in worlds it created, with `returnByValue` and a 100 ms timeout; storing a resolved owner iframe; `Target.getTargetInfo`. No `Page.enable`, no Emulation domain. Every call is bounded to 2 s. No viewer string is ever a method name, a script or a script argument | Raw CDP or script injection reaching a viewer; a stuck call (a page with an open dialog answers almost nothing) holding up a session or its teardown | agent (`cast_cdp.py`, `cast_scripts.py`) | 0.7.0 |
+| C35 | Every streamed input and output authorized: the watcher's verdict before carrying out any message but `ack` and `visible`, before sending any image or JSON message, and every second. It reads `release_due` on the clock, `vnc_allowed`, `cast_allowed`, lockdown and drain directly, not through the watch loop | Input or images after a release, an expiry, a revocation or the kill switch, even with the watch loop stuck (C17's "buggy or lying agent") | agent (`stream.py`, `watch.py`) | 0.7.0 |
+| C36 | Connection cap of 6000 s for both viewer kinds (4004); session pacing: at most one stream session starts a second (a later upgrade waits, it isn't refused) | A stream outliving any hold; reconnect loops driving screen and CDP work | gate | 0.7.0 |
+| C37 | Typed text is never logged or stored: the agent logs only a message's type, never its content (not even for a refused message); nothing typed goes into `state`, events, alerts or the termination log; the viewer keeps nothing typed in storage, URLs or logs (§7.9) | Card data in logs (C26's intent) | agent, viewer; a caplog test | 0.7.0 |
+| C38 | Viewer page hardening: its own CSP with no inline code, Trusted Types with no policy, and a socket only to the checkout host; page-derived strings as text only (§7.9) | XSS from page-derived strings; exfiltration | vnc-edge | 0.7.0 |
+| C39 | Page data bounded inside the page: every isolated-world script caps counts, string lengths, time (30 ms) and serialized size (48 KiB) before it returns, under the 100 ms evaluation timeout; at most 8 frames, 3 deep, per field map; worlds and CDP sessions of detached frames dropped; page titles from `Target.getTargetInfo`, which Chromium caps | A page (or any third party on it) pushing hundreds of MB into the agent and OOM-killing the pod mid-hold (an OOM skips the drain, R8) | agent (`cast_scripts.py`, `cast_cdp.py`, `cast_fields.py`) | 0.7.0 |
+| C40 | Click safety: for the viewer's native pickers (`choose`, `date`) the agent clicks only a point hit-tested to the field through every ancestor frame and inside the visible viewport, presses no key until the field (and each iframe leading to it) has focus, and presses Escape when a step fails; a tap or pinch aimed at an image from before the page scrolled or zoomed is refused, with nothing sent | Clicks and Enter reaching a covering "Pay" button the user never touched | agent (`cast_input.py`) | 0.7.0 |
+| C41 | Credential isolation: the viewer's keyboard proxy and prompt input are never `type=password` and never carry credential `autocomplete` tokens (the agent strips them, and the viewer again); dialogs carry and show the origin of the frame that opened them, and only the page's main frame is headed as the page; the escape hatch to the classic viewer can't be hidden by page content | The user's saved `auth.chestr.dev` login offered into a pod page; a page impersonating Ferry Watch's UI | agent, viewer | 0.7.0 |
+| C42 | Pod-side kill switch: `cast_allowed` in the operator's `configure` (default false, sent only to agents ≥ 0.7.0); the gate refuses `fw.cast1` without it and closes a live stream with 4005, which moves the viewer to the classic one | A bug in the stream surface staying reachable on running pods for up to 26 h after `checkout.streamViewer` is turned off or the release is rolled back | gate, agent (`watch.py`), ferry-control | 0.7.0 |
 
 ### 4.5 Blast radius if each component is compromised
 
 | Compromised | Can | Cannot |
 |---|---|---|
 | ferry-web (A1) | Phish from the dashboard origin and its service worker. Read every tenant's itineraries and email. Create, edit or delete trips. Release carts. Raise limits up to the GitOps ceilings. Send any text to tenants' push and email (it holds the VAPID key and SMTP access). Act as any user (it is the session authority) and read the session tokens of users who load its pages. Serve script that makes blind same-site requests to other `chestr.dev` apps carrying the owner's Authelia cookie (R12). **Mint VNC tickets for holding carts**, so it can win the race to a hold's *first* connection (the user then sees "opened on another device", before any card entry), and can pass a ticket out through a push message it sends. | Create, alter or exec into pods. Reach pods. Learn `N`, so it cannot join a session the user already opened (C11) or co-view (C12). Erase audit. Write `trip_state`, pod bindings or alert memory (role grants). Get tokens for any other OIDC client of Authelia (its secret is for the `ferry-watch` client only) or see the owner's Authelia cookie (removed at the route). |
-| vnc-edge (A1) | **Fully inside the VNC confidentiality and integrity boundary**: read keystrokes and screens of sessions passing through it, inject key and pointer events (`-AcceptCutText=1` included), observe tickets and `N`, and use an observed `N` to reconnect (and, with preemption, displace the user's socket) for the rest of that hold. Hold sockets open. | Mint tickets. Reach any pod path other than `:6080/ws`. Reach ferry-web, ferry-control or Postgres. Mitigation: vnc-edge is a stock nginx image with static files and a short config, no secrets and no app code. Envoy and Cloudflare sit in the same boundary (R4). |
+| vnc-edge (A1) | **Fully inside the VNC confidentiality and integrity boundary**: read keystrokes and screens of sessions passing through it (RFB, or the streamed viewer's images and messages), inject key and pointer events (`-AcceptCutText=1` included; the streamed viewer's input messages likewise), observe tickets and `N`, and use an observed `N` to reconnect (and, with preemption, displace the user's socket) for the rest of that hold. Hold sockets open. | Mint tickets. Reach any pod path other than `:6080/ws`. Reach ferry-web, ferry-control or Postgres. Mitigation: vnc-edge is a stock nginx image with static files and a short config, no secrets and no app code. Envoy and Cloudflare sit in the same boundary (R4). |
 | ferry-control (A4, through A3) | Forge any trip's status. Send `release`, `drain` or `vnc_revoke` to any agent. Write typed agent alerts for any user. Grant cart claims freely (several holds per user at once; each pod is still capped at 6 cart attempts). **Create and delete pinned browser pods** for any trip and owner, up to the ResourceQuota (availability, and IP-budget abuse through the pods it starts). **Set the hold-egress label on any browser pod**, letting code running in that pod reach any public HTTPS host (R22). Read tenants' itineraries and emails (its DB grants include them). | Mint VNC tickets (no key). Change image, env, volumes, commands, deadline or any field other than that one label (VAP). Read Secrets, exec, read logs, proxy. Get page content. Touch any other namespace. Write `users`, limits or audit updates (role grants). |
 | A browser pod (A3) | Its own tenant's current session and card entry. Lie about its own trip, within the operator's clock and the deadline. Attack ferry-control's parser. **Send unbounded requests from the home IP to the hosts its policy allows** (bcferries.com and Queue-it; during a hold, any public HTTPS host and any DNS name), bypassing the agent's budget; bounded only by the egress bandwidth annotation, if S-CIL shows it works (R13, R22). | Reach other pods, the API server, the LAN, nodes, smtp-relay, observability or metadata at any time, or the public internet outside a hold. Use its token anywhere but ferry-control. Affect another tenant's trip. |
 | A malicious tenant (A2) | Browse any public HTTPS site from the home IP during their own holds, through links (kiosk mode has no address bar; owner accepted, round 3, R22). Card-test at BC Ferries checkout from the home IP (bounded by holds per day). | Get another tenant's trips or VNC (404s, ticket binding). Exceed the ceilings. Persist anything across pods. Reach private or cluster addresses. |
@@ -637,11 +650,12 @@ once TLS ends; tenants are told (R4).
 - **R3 A compromised ferry-web can race a hold's first VNC connection** (visible, before card entry), and can
   phish through the dashboard and alerts. Closing the race needs an IdP-asserted principal verified by the
   pod (S-VNCID), which stays in the M4 backlog. Accepted for invite-only (owner, round 3).
-- **R4 Plaintext keystrokes on infrastructure.** Cloudflare's edge, cloudflared, Envoy, vnc-edge and the pod
-  see checkout keystrokes (RFB is plaintext after TLS ends), including a BC Ferries password if a user
-  chooses to sign in during checkout (§5.7). vnc-edge, Envoy and Cloudflare can also inject input and
-  reuse `N`. Whether relaying a cardholder's own keystrokes puts the owner in PCI scope is a grey
-  area. Tenants are told, naming Cloudflare.
+- **R4 Plaintext screens and keystrokes on infrastructure.** Cloudflare's edge, cloudflared, Envoy, vnc-edge
+  and the pod see the checkout's screen images and typed text (RFB, and the streamed viewer's JPEG images and
+  JSON messages, are plaintext after TLS ends), including a BC Ferries password if a user chooses to sign in
+  during checkout (§5.7). vnc-edge, Envoy and Cloudflare can also inject input and reuse `N`. Whether relaying
+  a cardholder's own keystrokes puts the owner in PCI scope is a grey area. Tenants are told, naming
+  Cloudflare.
 - **R5 BC Ferries' own page supply chain.** Third-party scripts on bcferries.com or the payment pages can skim
   cards, exactly as in a normal browser. During a hold, third-party scripts that the allowlist blocks the
   rest of the time (analytics, tag managers) load too, as they would in the user's own browser.
@@ -847,16 +861,17 @@ dedupes on `(pod_uid, boot, seq)`.
 | A→C | `bye` | `reason` enum (hold_ended, drained, deadline, recycle, startup_failed, lockdown_failed, fatal, smoke_done, short_check_done), `outcome` enum (booked, released, expired, expired_by_site, payment_left_to_site, none), `cart_emptied`, `release_check` enum (cart_empty, landing_url, none), `viewer_was_connected` |
 | C→A | `hello_ack` | `server_time`, `accepted_proto`, `resend_from` |
 | C→A | `cart_claim_result` | `claim` (the claim's `seq`), `granted`, `reason` enum (ok, holding_elsewhere, no_holds_left, quiet_hours, carting_paused, limit). A granted claim lapses after 2 min without `cart_held` or `cart_failed` (the agent must start carting within 30 s of the grant, and `add_to_cart` takes at most 40 s). |
-| C→A | `configure` | `rev`, `trip` (`Trip.to_json`; the agent re-validates with `Trip.from_json` and requires `id == FW_TRIP_ID`), `active`, `mode` enum (warm, short_check; round 3), `interval_s`, `auto_cart`, `checkout_mode` enum (v1 defines only `guest`; reserved so an account mode is a protocol addition, not a change of meaning), `hold{unclaimed_s, session_s, viewer_gone_s, hard_s}`, `alerted[]`, `offered[]`, `vnc_allowed`, `brake{multiplier, paused}`, `breaker` (closed/open) |
+| C→A | `configure` | `rev`, `trip` (`Trip.to_json`; the agent re-validates with `Trip.from_json` and requires `id == FW_TRIP_ID`), `active`, `mode` enum (warm, short_check; round 3), `interval_s`, `auto_cart`, `checkout_mode` enum (v1 defines only `guest`; reserved so an account mode is a protocol addition, not a change of meaning), `hold{unclaimed_s, session_s, viewer_gone_s, hard_s}`, `alerted[]`, `offered[]`, `vnc_allowed`, `brake{multiplier, paused}`, `breaker` (closed/open), `cast_allowed` (0.7.0: whether the gate may serve the streamed viewer, from `checkout.streamViewer` and the owner's `is_admin`; absent is false, and ferry-control leaves it out for agents before 0.7.0, which refuse unknown fields) |
 | C→A | `command` | `id`, `op`: `check_now` \| `release{cart_id}` \| `dismiss{cart_id}` \| `drain{reason}` \| `vnc_revoke{reason}` |
 | C→A | `ack` | `seq` |
 
 **Deliberately absent:** navigate, URL, base_url, eval, selector, screenshot, cookies, storage_state,
 credentials, log level, tracing, Chromium flags, file transfer, "extend hold", and anything that grants VNC.
-ferry-control can only *revoke* VNC (`vnc_allowed=false`, `vnc_revoke`). The agent fetches the terminal list
-itself (`terminals.py`), so labels from the control plane never feed navigation. The draft's `reauth`
-message and 5-minute re-review are dropped: the token is checked at connect, and in one process the fleet
-loop closes a pod's socket itself when it deletes the pod.
+ferry-control can only *revoke* VNC (`vnc_allowed=false`, `vnc_revoke`); `cast_allowed` only narrows which
+viewer a ticket may open. The agent fetches the terminal list itself (`terminals.py`), so labels from the
+control plane never feed navigation. The draft's `reauth` message and 5-minute re-review are dropped: the
+token is checked at connect, and in one process the fleet loop closes a pod's socket itself when it deletes
+the pod.
 
 `src/ferry_watch/protocol.py` implements this table, including the round-3 additions (`mode`,
 `short_check_done` and the `cart_claim` pair). Two field names differ from the
@@ -901,9 +916,14 @@ and its step-2 condition below is a READY cart. The gate rejects every other aud
 as a sign-in window before any cart (§15), would be a new audience with its own condition and no `cart_id`
 (`vnc_mints.cart_id` is nullable for that reason): an addition, not a change to the checkout path.
 
-`disp` is decoded but not trusted by the landing page, which shows it with `textContent` only. At first
-connect the landing page stores `session deadline = now + session_s` with `N` and shows "Checkout closes at
-hh:mm (paused while you're on the payment page)" and the hard deadline.
+`disp` is for whatever holds the pod's keys; the landing page can't check the signature, so since 0.7.0 it shows
+nothing from the ticket at all (found in review: anyone could make a link that put their own words on the checkout
+host, and 0.6.4's page showed `disp` there). Of the claims it reads only `trip` and `exp` (where this tab goes) and
+`disp.hard_deadline`, which it keeps with `N` only as far as any real hold could have it: after now and at most
+`MAX_HARD_S` (plus 10 minutes for clock skew) away, else as if the ticket hadn't said, and never earlier than a
+deadline the device already keeps for that checkout. Records with a deadline no hold could have are forgotten. So a
+made-up link can neither end a checkout on this device early (and with it the nonce, and the cart) nor leave a
+record that never goes.
 
 **Upgrade checks, all required, in order:**
 1. `Origin == FW_VNC_ORIGIN` (`https://ferry-checkout.chestr.dev`). Page JS in the pod's own Chromium cannot pass
@@ -920,10 +940,20 @@ hh:mm (paused while you're on the payment page)" and the hard deadline.
    - **reconnect:** the lock is set and `sha256(N) == lock`. If a viewer socket is still open (a stale socket
      after a network change), the gate closes it and its Xvnc connection first. Tickets are ignored once the
      lock is set.
-4. The response selects subprotocol `binary`. The gate opens `/tmp/kasm/rfb.sock` and bridges WebSocket
-   binary frames to raw RFB bytes in both directions. If S-KIOSK shows the unix-socket path is unworkable,
-   the fallback is Xvnc's WebSocket on `127.0.0.1:6081` behind a per-boot BasicAuth credential that only the
-   gate knows, with self-tests 2-3 (§5.6) as blocking checks.
+4. The viewer offers exactly one kind of viewer, and the response selects it; both or neither is refused with 400
+   (C33).
+   - **`binary`** (KasmVNC's client): the gate opens `/tmp/kasm/rfb.sock` and bridges WebSocket binary frames to
+     raw RFB bytes in both directions. If S-KIOSK shows the unix-socket path is unworkable, the fallback is
+     Xvnc's WebSocket on `127.0.0.1:6081` behind a per-boot BasicAuth credential that only the gate knows, with
+     self-tests 2-3 (§5.6) as blocking checks.
+   - **`fw.cast1`** (the streamed viewer, 0.7.0 beta, for users who opted in): only while the operator's
+     `configure` says `cast_allowed` (C42; otherwise 400, not counted as a failed attempt, and neither spending the
+     ticket nor taking the lock). The gate refuses an offer of neither or both kinds (400) before step 3, but asks
+     the kill switch only after step 3 has let the caller in: anyone else gets step 3's 403 whatever the switch
+     says, so it can't be read from outside, nor (under `admins`) whether the owner is an admin. Nothing is bridged:
+     the agent runs a stream session on the socket itself, sending JPEG images of the checkout page and taking a
+     narrow, validated input protocol (4 KiB frames, C33; `streamed-viewer/PROTOCOL.md`), which it carries out
+     through an allowlisted CDP wrapper (C34) and authorizes again before every input and every output (C35).
 
 **Liveness:** the gate sends a WebSocket ping every 20 s; a missed pong closes the viewer socket and starts
 the viewer-gone clock. This also keeps Cloudflare's idle timer (reportedly about 100 s for WebSockets on
@@ -939,8 +969,38 @@ non-Enterprise plans; medium confidence) from closing a socket while the user re
   on a computer, and the question is revisited with that data.
 - Moving checkout to another device ("continue on another device" QR code) is M4.
 
-**Revocation:** the gate closes the socket on release, any clock expiring, `vnc_revoke`, suspend or drain.
-After a viewed hold the pod exits.
+**Revocation:** the gate closes the socket on release, any clock expiring, `vnc_revoke`, suspend or drain, and a
+stream also when `cast_allowed` turns false. After a viewed hold the pod exits.
+
+**Both kinds** (0.7.0; `streamed-viewer/DESIGN.md` §6.2):
+- One viewer at a time across kinds: a reconnect by `N`, of either kind, replaces the open socket (a replaced
+  stream is closed with 4001).
+- **Connection cap** (C36): 6000 s for either kind, closed with 4004; Xvnc's `-MaxConnectionTime 6000` stays for
+  the classic one. **Session pacing:** at most one stream session starts a second; a later upgrade waits for its
+  turn instead of being refused.
+- **Close codes** of a stream: 4000 the checkout is over, 4001 replaced, 4002 access revoked, 4003 draining, 4004
+  the connection cap, 4005 the streamed viewer withdrawn (the kill switch; the viewer moves to the classic one),
+  4400 a protocol violation, 4408 no `hello` within 5 s, 4429 a rate or queue limit, 4500 the agent couldn't run
+  the session. A classic viewer's socket closes with 1000 whatever the reason, as in 0.6.4.
+- A stream's teardown (screencast stopped, held keys and a pressed button released, its CDP sessions detached)
+  is bounded and can't be cancelled halfway: the gate waits for it before admitting the next viewer.
+- **The screen.** A stream sets the pod's X screen to the viewer's size and scale (a RandR mode, and Xft/DPI
+  through `xsettingsd`), and leaves it in place at teardown so that a reconnect from the same device changes
+  nothing. Before any `binary` viewer is bridged after a stream, the gate pinches any page the stream zoomed back
+  to page scale 1, restores 1280x1000 at scale 1, removes the modes and stops `xsettingsd`, so the classic viewer
+  sees 0.6.4's screen.
+- **Dialogs** (a change to the classic path too, owner decision for 0.7.0). Before 0.7.0 Playwright dismissed
+  every JavaScript dialog the moment it opened, so a `confirm()` in the checkout returned false and an `alert()`
+  vanished, unseen by the classic viewer. From the gate's first admission of a viewer of either kind in a pod's
+  life, dialogs are kept open for the viewer: a stream viewer answers them in its own sheet, headed with the
+  opening frame's origin, and as the page itself only when the page's main frame opened it (C41); a classic viewer
+  answers them on the pod's screen, where Chromium draws them. On a classic viewer narrower than Chromium's 500 px
+  minimum window (a phone), the screen is 500 px wide while a dialog is open, so the whole dialog is on it, and the
+  viewer's own size again once it is answered. They stay open across reconnects and switches between kinds. When
+  the gate closes with 4000, 4002 or 4003 they are dismissed (all at once, bounded by one browser call however many
+  pages there are) and no longer kept, so the agent's own browsing afterwards (emptying the cart) can't wait on
+  one. A hold that ends stops being offered to viewers before its viewer is closed, so none is let in again (and
+  none keeps dialogs again) while the cart is emptied.
 
 **Rate and usage:** viewer seconds are reported in `state` and charged to `vncMinutesPerDay`. The gate
 refuses more than 5 *failed* upgrade attempts per minute; successful reconnects are not counted.
@@ -1010,6 +1070,19 @@ is harmless: nothing can cart or open the gate before a check has launched Chrom
    `new WebSocket("ws://127.0.0.1:6081/websockify")`, `new WebSocket("ws://127.0.0.1:6080/ws")` and
    `fetch("https://example.com/")`. None may complete an RFB handshake or load content. The LNA check only
    warns; the listener and egress checks are fatal.
+
+**The streamed viewer (0.7.0) adds no listener and changes no launch argument.** Its sessions run on the gate's
+existing socket (:6080), and it reaches Chromium only through Playwright's existing pipe, with CDP sessions
+opened per page and the C34 allowlist in front of them; there is no remote-debugging port. Chromium's arguments,
+the managed policy, Xvnc's flags and the self-tests are unchanged, and check 2's "nothing else" still holds. It
+adds two programs, which the agent starts without a shell, with arguments built from validated integers only:
+- `xrandr`, which adds, selects and deletes the screen modes of a stream's size, and of a dialog's room on a
+  classic viewer's phone-sized screen (each call bounded to 2 s, a restore to 3 s in all, and a hung one killed);
+- `xsettingsd`, which serves the stream's Xft/DPI (192 at 2x) to Chromium through the X server; it is an X client
+  of the pod's own display with no socket of its own, its config is written atomically with mode 0600 in a 0700
+  directory under `/tmp`, and it is stopped before a classic viewer is bridged (§5.5).
+The browser image's smoke test applies a phone's screen and restores it on the real image
+(`docker/browser/selftest.py`).
 
 **Xvnc flags** replace `entrypoint.sh:20-26`:
 `:99 -geometry 1280x1000 -depth 24 -rfbunixpath /tmp/kasm/rfb.sock -rfbunixmode 0600 -SecurityTypes None
@@ -1539,15 +1612,15 @@ the cluster admin can technically see everything (R1).
 | `POST /auth/logout` | **New.** Revokes the current session and closes its sockets. |
 | `POST /auth/start`, `POST /auth/redeem` | **Only if S-IOS fails:** the handoff-code fallback (§6.2.4). |
 | `GET /api/me/sessions`, `DELETE /api/me/sessions` | **New.** List my sessions; "sign out everywhere". |
-| `GET /api/state` | Per-user snapshot: `me` (`paused` is kept for one release and is always false), `limits` (effective value plus source), `usage`, `trips[].browser{phase, mode (warm, short_check, off), reason, queue_position, next_check_at, last_check_at, effective_interval, next_due, heartbeat_at, cart, viewer, lockdown_ok}`, `trips[].quiet` (in the user's quiet hours and not lifted: not checked; `next_check_at` is then when they end), `capacity{can_add, reason}`, `settings{quiet_hours: {start, end}}` (always set: a user who never changed them gets 22:00-05:00), `quiet_hours{start, end, now}` (the same hours, and whether it's quiet now: the dashboard's "quiet until"), `links{kofi}`, events. Drops the global `checkout_url`, `login_configured`, `alerts_configured` and `max_trips` (`views.py:118-143`). |
+| `GET /api/state` | Per-user snapshot: `me` (`paused` is kept for one release and is always false), `limits` (effective value plus source), `usage`, `trips[].browser{phase, mode (warm, short_check, off), reason, queue_position, next_check_at, last_check_at, effective_interval, next_due, heartbeat_at, cart, viewer, lockdown_ok}`, `trips[].quiet` (in the user's quiet hours and not lifted: not checked; `next_check_at` is then when they end), `capacity{can_add, reason}`, `settings{quiet_hours: {start, end}, checkout_viewer, stream_viewer_offered}` (quiet hours always set: a user who never changed them gets 22:00-05:00; `checkout_viewer` is `classic` or `stream`, the user's choice; `stream_viewer_offered` says whether `checkout.streamViewer` offers them the streamed viewer beta, and with it the Settings switch, since 0.7.0), `quiet_hours{start, end, now}` (the same hours, and whether it's quiet now: the dashboard's "quiet until"), `links{kofi}`, events. Drops the global `checkout_url`, `login_configured`, `alerts_configured` and `max_trips` (`views.py:118-143`). |
 | `POST/PATCH/DELETE /api/trips[/{id}]` | Scoped to the user, with transactional limits (§9.2): `maxTrips` and the 30-day horizon. Enabling never fails for `maxActiveBrowsers`; the fleet loop picks the warm trip (§6.6). DELETE archives the trip at once, and the fleet loop drains its pod within a pass, even one holding a cart (0.6.4): the drain lets the cart go (one being added too) and frees the user's one hold, and since the trip is gone, ferry-control asks no "Did you book it?". A hold mid-payment is left to the site, as any drain does. |
 | `POST /api/trips/{id}/check` | Replaces `POST /api/check` (`server.py:403-407`). On the warm trip it sends `check_now`; on another trip it makes a short check due now (a pod start). Lifts the user's quiet hours for the trip for 10 minutes (`trip_runtime.quiet_lifted_until`). 6/h per user. |
 | `POST /api/trips/{id}/hold` | "Hold it for me": a bookable sailing in the trip's times that nothing holds. Sets `trip_runtime.hold_requested_until` (now + 10 min) and checks now (counted as a manual check). While it lasts, ferry-control's gate skips quiet hours and the trip's auto-cart off for that trip; nothing else. 409 with the reason when there's nothing to hold, the trip is paused, every bookable departure was held once already (`alert_memory.alerted`: the pod never carts those again), or a limit stands in the way (a claim that lapsed doesn't count as holding elsewhere). Each trip in `GET /api/state` and the live socket's state carries `hold{reason, can_request, holdable, requested_at, requested_until}` and `booking_url`. |
 | `POST /api/trips/{id}/cart/release` and `/dismiss` | Scoped. Inserts an `agent_commands` row. |
 | `POST /api/trips/{id}/cart/self-book` | **New.** Release, then return `search_url` for the user to book directly. |
-| `POST /api/trips/{id}/vnc` | **New.** Ticket mint (§3.6 step 4). A bearer-authenticated JSON POST; the existing Origin and JSON checks still apply. |
+| `POST /api/trips/{id}/vnc` | **New.** Ticket mint (§3.6 step 4). A bearer-authenticated JSON POST; the existing Origin and JSON checks still apply. Answers `{url, ttl, nonce_key, viewer}`. Since 0.7.0 `viewer` is `stream` only when the user chose it, `checkout.streamViewer` offers it to them, and the pod's `agent_version` is 0.7.0 or later (null or unreadable: `classic`); the link is then `<checkout origin>/t/<trip>/g/<gen>/#v=s1&t=<ticket>`. Otherwise it is `classic` and the link is 0.6.4's, byte for byte: `…/#<ticket>`. The ticket is the same either way (streamed-viewer/DESIGN.md §8.3). |
 | `POST /api/trips/{id}/booked` `{booked: bool, reason?: enum, stop?: bool}` | **New.** The "Did you book it?" answer; until it arrives the trip stays paused (round 3). `true` archives; `false` clears the pause; `{booked: false, stop: true}` ("No, cancel") archives it as DELETE does and records the answer `cancelled` (`stop` with `booked: true` is a 400). `reason` is one of `needed_account`, `tried_sign_in`, `payment_failed`, `checkout_broke`, `ran_out_of_time`, `changed_mind` (§5.7). |
-| `PATCH /api/me` | `{quiet_hours: {start: "HH:MM", end: "HH:MM"}}`, exactly: the user's own quiet hours (Pacific; `start` ≠ `end`), in `user_settings`. Everyone has quiet hours (22:00-05:00 until they change them), so both times are required: null or a missing time is a 400 ("Quiet hours need a start and an end"), as are the same time twice and anything else. It replaced `{paused}` ("pause all my trips") in 0.6.3: trips are paused one at a time with `PATCH /api/trips/{id} {enabled}`. The per-user interval preference is gone: the poll curve is fleet-wide policy (`polling.py`, round 3). |
+| `PATCH /api/me` | `{quiet_hours?: {start: "HH:MM", end: "HH:MM"}, checkout_viewer?: "classic" \| "stream"}`, at least one, each in `user_settings` and set only when given; everything is checked before anything is stored. `quiet_hours`: the user's own quiet hours (Pacific; `start` ≠ `end`). Everyone has quiet hours (22:00-05:00 until they change them), so both times are required: null or a missing time is a 400 ("Quiet hours need a start and an end"), as are the same time twice, `{}` and unknown keys (all with field `quiet_hours`). `checkout_viewer` (0.7.0): another value is a 400 with field `checkout_viewer`; `stream` while `checkout.streamViewer` doesn't offer the beta to the user is a 403; `classic` is always allowed. It replaced `{paused}` ("pause all my trips") in 0.6.3: trips are paused one at a time with `PATCH /api/trips/{id} {enabled}`. The per-user interval preference is gone: the poll curve is fleet-wide policy (`polling.py`, round 3). |
 | `DELETE /api/me` | **New.** Delete my data: drain pods, delete trips, push subscriptions, alert memory, sessions and `identities` rows; strip user and trip ids from `hold_outcomes`; redact audit payloads to ids. |
 | `POST/DELETE /api/me/push-subscriptions` | **New.** Web Push. |
 | `POST /api/alerts/test` | Per-user cooldown (6/h) instead of the global 30 s (`server.py:46`, `:410-423`). |
@@ -1573,7 +1646,7 @@ the cluster admin can technically see everything (R1).
 | Table | Key columns | Writer(s) |
 |---|---|---|
 | `users` | `id text pk (uid)`, state (active/suspended), username, email, display, is_admin, paused (0004 moved it onto each trip; for 0.6.3 only, while a 0.6.2 ferry-web may still set it, ferry-control pauses all the user's trips on it and ferry-web moves it onto each trip on the next state read; a later release drops it), created_at, last_seen_at | web |
-| `user_settings` | user_id pk, quiet_start, quiet_end (Pacific `time`s, both or neither, different; default 22:00 and 05:00, which a user without a row has too: `DEFAULT_QUIET_HOURS` in `polling.py`), updated_at. 0005 set the nulls 0.6.3 allowed ("off"), and the 23:00-06:00 that 0.6.3 filled in when someone turned them on, to the default; other chosen times stay. The times stay nullable for a release, since a 0.6.3 ferry-web still running during the rollout stores nulls for "off"; no times read as the default, and a later release makes them NOT NULL. | web; control (read) |
+| `user_settings` | user_id pk, quiet_start, quiet_end (Pacific `time`s, both or neither, different; default 22:00 and 05:00, which a user without a row has too: `DEFAULT_QUIET_HOURS` in `polling.py`), updated_at. 0005 set the nulls 0.6.3 allowed ("off"), and the 23:00-06:00 that 0.6.3 filled in when someone turned them on, to the default; other chosen times stay. The times stay nullable for a release, since a 0.6.3 ferry-web still running during the rollout stores nulls for "off"; no times read as the default, and a later release makes them NOT NULL. `checkout_viewer` (0006, 0.7.0): `classic` (KasmVNC, the default, which a user without a row has too) or `stream` (the streamed viewer beta, used only while `checkout.streamViewer` offers it to the user; streamed-viewer/DESIGN.md §8). | web; control (read) |
 | `identities` | (iss, sub) pk, uid (a cache of the derived uid; must equal it, C23), username, email, last_groups, first/last_seen | web |
 | `unmatched_identities` | (iss, sub) pk, preferred_username, email, first_seen, last_seen | web |
 | `invites` | id, match_claim, match_value, email, limit overrides jsonb, reason, created_by, created_at, expires_at, used_by_uid, used_at | web |
@@ -2065,12 +2138,13 @@ before the query (`initSetting("path","websockify")`, `reconnect`, `reconnect_de
 opens its socket with one `new WebSocket(url, protocols)` call. The shim wraps `window.WebSocket` for URLs
 matching `^wss://ferry-checkout\.chestr\.dev/t/[a-f0-9]{16}/g/[0-9]{1,6}/ws$` only and sets the protocols to
 `["binary", "fw.n1.<N>"]`, plus `fw.t1.<ticket>` while a ticket is pending; it drops the ticket after the
-first successful open. If the client gives up reconnecting before the hold deadline it knows from `disp`, the
+first successful open. If the client gives up reconnecting before the hold deadline the device keeps (§5.5), the
 shim reloads `vnc.html` with back-off (1, 2, 5, 10 s), so retries are effectively uncapped until the deadline.
 The landing page sets
 `#path=t/<trip>/g/<gen>/ws&autoconnect=1&reconnect=1&reconnect_delay=1000&idle_disconnect=120&anti_aliasing=1`,
-plus `&virtual_keyboard_visible=1` on a touch screen (*As built, on a phone*), and shows the sailing and deadlines
-with `textContent` (its note advising guest checkout went after 0.6.3, §5.7). If the fragment's ticket has
+plus `&virtual_keyboard_visible=1` on a touch screen (*As built, on a phone*). It shows only its own text, nothing
+from the ticket, whose signature it can't check (0.6.4's page showed the sailing and deadlines from `disp`; its note
+advising guest checkout went after 0.6.3, §5.7). If the fragment's ticket has
 already expired (a slow load) and this device holds no lock yet, it sends the user back to
 `https://ferry.chestr.dev/c/<trip>` to mint again; with no ticket and no stored `N` it shows only a link back to
 the dashboard. A CI test drives the stock client in headless Chromium against a fake gate and asserts the path
@@ -2087,6 +2161,12 @@ server {
   add_header Cache-Control no-store always;
   location ~ "^/t/[a-f0-9]{16}/g/[0-9]{1,6}/$" { root /usr/share/fw-vnc; try_files /fw/landing.html =404; }
   location = /vnc.html { root /usr/share/fw-vnc; }
+  location = /fw/viewer.html {   # the streamed viewer (0.7.0), under its own policy: below
+    root /usr/share/fw-vnc;
+    add_header Content-Security-Policy "<C38, below>" always;
+    add_header Referrer-Policy no-referrer always; add_header X-Content-Type-Options nosniff always;
+    add_header Cache-Control no-store always;
+  }
   location ~ "^/(assets|app|core|fw)/" { root /usr/share/fw-vnc; }
   location ~ "^/t/(?<trip>[a-f0-9]{16})/g/(?<gen>[0-9]{1,6})/ws$" {
     if ($http_upgrade != "websocket") { return 400; }
@@ -2182,6 +2262,61 @@ Still janky on a phone:
 - Every scroll is a round trip: the page moves when the pod's next frame arrives, so it trails the finger by the
   network's latency, and there's no rubber-banding at the ends of the page.
 
+*As built, the streamed viewer* (0.7.0 beta; `docs/multi-tenant/streamed-viewer/DESIGN.md` §7-§9, wire protocol
+`PROTOCOL.md`; tested by `tests/browser/test_stream_viewer.py`, `vnc-edge/tests/*.test.mjs`,
+`tests/test_vnc_edge_build.py` and the image's smoke test). For users who opted in, the checkout opens in a viewer
+of our own instead of KasmVNC's client. It is a static page with ES modules, as logic-free on the server as the rest
+of vnc-edge: the pod's agent streams JPEG images over the same gate socket (subprotocol `fw.cast1`) and takes a
+narrow, validated input protocol.
+- **Files.** `fw/viewer.html` (markup only), `fw/viewer.css`, and modules under `fw/viewer/`: `core/*.js`
+  (protocol, text, layout, fields, gestures, prediction, reconnect: DOM-free, checked by `node --test` against the
+  shared conformance pack `tests/fixtures/cast1/`) and the DOM glue (`main`, `socket`, `frames`, `input`,
+  `keyboard`, `overlays`, `sheets`). `fw/session.js` is a classic script shared with the classic viewer: the
+  device record, the nonce, the subprotocol offer, both viewers' URLs and the escape hatch. `build.py` serves it
+  on its own and as the first part of the served `fw/shim.js`, so vnc.html still has its one inserted line, and its
+  page, patch and policy are byte-identical to 0.6.4's (a test pins the policy string). The landing page's
+  `fw/landing.js` carries it the same way: while replicas of two versions serve, a page and its script can come
+  from different ones.
+- **Landing routing.** The landing page takes the 0.6.4 fragment (`#fw1.…`, the ticket alone: classic) and
+  `#v=s1&t=<ticket>` (stream). A fresh ticket stores `record.viewer` in the device record; the page opens
+  `/fw/viewer.html#t=<trip>&g=<gen>` when it says stream and `record.viewer_fallback` is unset, else 0.6.4's
+  `vnc.html` URL. The fallback, set by "Use the classic viewer", is sticky for that checkout on that device.
+- **Its own policy (C38).** `location = /fw/viewer.html` takes the page out of the `/fw/` location, and sets every
+  header again (an `add_header` in a location replaces the server's): `default-src 'none'; script-src 'self';
+  style-src 'self'; img-src 'self'; connect-src wss://ferry-checkout.chestr.dev; base-uri 'none'; form-action
+  'none'; frame-ancestors 'none'; require-trusted-types-for 'script'; trusted-types 'none'`, `Referrer-Policy:
+  no-referrer`, `nosniff`, `no-store`. No inline script or style at all, no `data:` or `blob:`, a socket only to
+  the checkout host, and Trusted Types with no policy, so no string can reach an HTML sink. The modules and the
+  stylesheet are ordinary `/fw/` files under the server's `no-store`, so a deploy can't mix old modules with a new
+  page. `build.py` fails if `viewer.html` has an inline `<script>` or `<style>`, a `style=` or `on…=` attribute, a
+  `javascript:` URL, or lacks the escape bar or `fw/session.js` as a classic script.
+- **Page-derived text** (titles, origins, option labels, dialog messages, prompt defaults) is set with
+  `textContent` or as the value of the viewer's own controls, never as markup; the policy would refuse the rest.
+  The checkout itself is only ever pixels on a canvas, so nothing a checkout page does can cover the viewer's
+  controls.
+- **Credentials (C41).** The keyboard proxy, the hidden input the phone's keyboard types into, is never
+  `type=password` and never carries a credential `autocomplete` token (the agent strips them, and the viewer strips
+  them again): a password field gets exactly what KasmVNC's own hidden input has. A password-typed input on
+  `ferry-checkout.chestr.dev` would invite the browser to offer the user's saved `auth.chestr.dev` login. The
+  checkout's JavaScript dialogs are headed with the origin of the frame that opened them, as Chrome words it, and
+  only a dialog from the page's main frame is ever headed as the page ("This page says:"): a frame inside it, such
+  as a third party's or a child it made at about:srcdoc, blob: or data:, can't pass its prompt off as the checkout's
+  own. They are drawn like the browser's own dialogs, never like Ferry Watch's controls, so a page can't pass a
+  prompt off as ours either; the prompt's input follows the password rules.
+- **Nothing typed is kept** (C37): no storage, URL or log ever holds what is typed. In a name, an address or a
+  sentence the proxy holds the last 64 characters typed since the field was tapped, because the phone's keyboard
+  decides capitals from the text before the caret; it is emptied whenever the pod's caret may have moved.
+- **The escape hatch** (`PROTOCOL.md` §8.10). `viewer.html`'s static markup holds a hidden "Use the classic
+  viewer" bar; `fw/session.js` shows it 3 s after load unless the viewer reached its first `ready`, and at once on
+  an uncaught error, an unhandled rejection or a script that failed to load, and wires its button itself. So it
+  works however broken the modules are. The button sets the sticky fallback, and replaces the page with 0.6.4's
+  `vnc.html` URL; leaving closes the stream's socket, and the shim connects KasmVNC by the device's nonce, no
+  ticket needed. The viewer's menu and its status screens offer the same, and the agent's close code 4005 (the
+  streamed viewer withdrawn: the kill switch) takes it automatically.
+- **What it adds to the attack surface:** a page and modules served as static files, under a stricter policy than
+  vnc.html's. vnc-edge still parses nothing on the socket and holds no secrets. A compromised vnc-edge could serve
+  a different viewer, as it could serve a different KasmVNC client today (R4).
+
 ### 7.10 Deployment layout and the home-cluster split
 
 There is no Ferry Watch chart (owner, after M1's build: "use app-template to deploy, not a custom chart").
@@ -2215,8 +2350,16 @@ kubernetes/apps/ferry-watch/                   namespace ferry-watch, components
   admission policy's parameters are templated from the same values. The browser quota and the LimitRange's
   memory maximum are computed from `podMemory`, `cpuRequest` and `maxBrowsersTotal`, so there is no separate
   budget to keep in step. `tests/apiserver/test_render.py` checks the parameters against the config.
-- **The render refuses** any of the three images without a digest, an empty `vncPubkeys`, a `podMemory` not in Mi
-  and a `cpuRequest` not in millicores. home-cluster's flux-local therefore fails until a release fills them in.
+  `ferry.checkout.streamViewer` (0.7.0: `"off"`, `"admins"` or `"everyone"`, who is offered the streamed checkout
+  viewer beta; streamed-viewer/DESIGN.md §8.3) goes into both configs as `checkout.streamViewer`, unless it is
+  `"off"`, which both default to: with `"off"` the configs are 0.6.4's, so the images can be rolled back to 0.6.4
+  with these values. This repo's copy says `"off"`; it is the one line a deployment's copy may change
+  (`tests/test_deploy.py`).
+- **The render refuses** any of the three images without a digest, an empty `vncPubkeys`, a `podMemory` not in Mi,
+  a `cpuRequest` not in millicores, a `streamViewer` other than the three (a bare YAML `off` is false), and a copy
+  of it under `ferry.control.checkout` or `ferry.web.checkout`: since `"off"` renders no key, such a copy filled the
+  gap (found in review), and pods kept `cast_allowed` while ferry-web showed the beta as off.
+  home-cluster's flux-local therefore fails until a release fills them in.
 - **One HelmRelease, two namespaces.** `rawResources` keep `metadata.namespace`, so the browser namespace's
   objects come from the release in `ferry-watch`. Flux's `targetNamespace` rewrites only the HelmRelease
   itself. The browser namespace gets no `components/common`: its object quota allows no Secret. It is kept
@@ -2378,6 +2521,7 @@ This is the only place numbers are defined; other sections refer here. "Compiled
 | orphan sweep | 60 s (after 2 min grace) | — | fleet loop |
 | failed-pod retention (never held, never viewed) | 30 min | — | fleet loop |
 | Xvnc `-MaxConnectionTime` (backstop; exits Xvnc) | 6000 s | > compiled hold | Xvnc |
+| gate connection cap, either viewer kind (0.7.0; closes 4004) / stream session starts | 6000 s / at most 1 a second | > compiled hold | gate |
 | gate WebSocket ping / missed pong | 20 s / drop the viewer | — | gate |
 | client reconnect | stock client every 1 s; shim reload back-off 1, 2, 5, 10 s until the hold deadline | — | vnc-edge client |
 | failed VNC upgrades | 5/min | — | gate |
@@ -3293,6 +3437,8 @@ exec into or screenshot a pod that holds a cart.
 | A compromised web races a first VNC connection (R3) | Low / medium | First-viewer lock (visible, before card entry); accepted for invite-only (round 3); S-VNCID in M4. |
 | A Chromium exploit in an unsandboxed browser, or a side channel on `mitigations=off` nodes (R2) | Low / high for that tenant's checkout; critical if chained with a kernel bug (every node is a control-plane node) or a ferry-control parser bug | Per-pod isolation, no secrets, no token and the egress allowlist contain an exploit to one tenant's pod while the kernel and the parser hold. Recommended (pending the owner, Q1): accept for now, with the optional sandbox hardening (M4, about 4 days) before inviting people the owner doesn't know well. |
 | The self-hosted runner is reachable from fork PRs (R1) | Unknown / critical | Left as is (owner, round 3); tenants are told the cluster admin and its automation can see everything. |
+| A page's `prompt()` default text is unbounded (pre-existing in 0.6.4; 20 M characters measured) | Low / low | It reaches Playwright's Node driver whole, and once dialogs are kept (0.7.0, §5.5) the Python agent too, which cuts it to 256 characters before any viewer sees it. Nothing above Playwright can bound it on receipt; a real fix needs a size cap upstream. The pod's memory limit and the exit after any viewed hold (C22) confine the damage to that one hold. |
+| The streamed viewer (0.7.0 beta) misbehaves on real phones: the keyboard, AutoFill, password managers | Medium / medium | Opt-in per user, default classic; `checkout.streamViewer` can keep it to admins until the device checks pass, and turning it off closes live streams with 4005, which move to the classic viewer (C42); the escape hatch on the viewer's page (§7.9); the classic viewer unchanged but for dialogs (§5.5). |
 | The effort runs over | Medium / medium | Bottom-up estimate with ranges; explicit cut line (§12.4); M4 holds everything not needed for the owner's guarantees. |
 
 ---

@@ -28,3 +28,9 @@ The booking-flow pages the browser contract tests walk through, captured the sam
 Scripts, external stylesheets, modals, navigation and the footer were removed. A small `<style>`
 re-adds the few Bootstrap rules that hide things (`.modal`, `.hidden`, collapsed sections), so
 what's visible matches the real site.
+
+## `vnc-edge-0.6.4/`
+
+The checkout landing page and its script exactly as vnc-edge 0.6.4 served them (release commit 1fd4302).
+During a rolling update of vnc-edge, or a rollback, a page and its script can come from different versions:
+`tests/browser/test_checkout_edge.py` opens the checkout with each pairing.

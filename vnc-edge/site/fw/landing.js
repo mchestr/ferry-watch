@@ -1,40 +1,36 @@
-// The checkout landing page, /t/<trip>/g/<gen>/#<ticket> (docs/multi-tenant/design-reference.md §7.9).
+// The checkout landing page, /t/<trip>/g/<gen>/#<fragment> (docs/multi-tenant/design-reference.md §7.9;
+// docs/multi-tenant/streamed-viewer/DESIGN.md §8.4).
 //
 // It turns the ticket Ferry Watch put in the fragment into a pending ticket for this tab, and gives
-// the device a nonce N it keeps in localStorage, keyed by (trip, gen); then it opens vnc.html, whose
-// shim offers both to the pod's gate. Once a connect succeeds the gate locks the cart to sha256(N),
+// the device a nonce N it keeps in localStorage, keyed by (trip, gen); then it opens the viewer, which
+// offers both to the pod's gate. Once a connect succeeds the gate locks the cart to sha256(N),
 // so only this device can come back, and it comes back with N alone.
 //
-// The ticket's display fields are signed but not checked here: they are shown as text, never markup.
+// The fragment is `#<ticket>` (0.6.4's form: KasmVNC, the classic viewer) or `#v=s1&t=<ticket>` (the
+// streamed viewer). The device remembers which, per checkout, and opens that viewer from then on, unless
+// the streamed viewer has given way to the classic one for this checkout on this device.
+//
+// The ticket's signature isn't checked here (only the pod's gate has its keys), so anyone can make a link that
+// reaches this page with claims of their own. So nothing the ticket says is shown: every word on the page is the
+// page's own. Its trip and expiry decide only where this tab goes, and its hold's hard deadline is kept only as far
+// as any real hold could have it (after now, at most MAX_HOLD_S off) and never brings forward a deadline the device
+// already keeps: a made-up link can't put its words on the checkout host, nor end a checkout on this device early,
+// nor leave a record that never goes (found in review; the same was true of 0.6.4's page).
 (() => {
   "use strict";
+  const session = window.FwSession; // fw/session.js, served in front of this file (build.py)
   const app = document.querySelector('meta[name="fw-app"]').content;
-  const where = /^\/t\/([a-f0-9]{16})\/g\/([0-9]{1,6})\/$/.exec(location.pathname);
-  if (!where) return;
-  const [, trip, gen] = where;
-  const key = `fw:${trip}:${gen}`;
+  const at = session.where(location.pathname);
+  if (!at) return;
+  const { trip, gen } = at;
+  const key = session.key(trip, gen);
   const now = Date.now();
+  const nowS = Math.floor(now / 1000);
   const TICKET = /^fw1\.[a-z0-9]{1,16}\.([A-Za-z0-9_-]+)\.[A-Za-z0-9_-]+$/;
   const MAX_TICKET_LENGTH = 1024;
   const OPEN_AFTER_MS = 2000;
-  const MAX_HOLD_MS = 90 * 60 * 1000; // protocol.MAX_HARD_S, for a ticket that doesn't say
-  const PACIFIC = "America/Vancouver";
-
-  const read = (store, name) => {
-    try {
-      return JSON.parse(store.getItem(name));
-    } catch {
-      return null;
-    }
-  };
-  const write = (store, name, value) => {
-    try {
-      store.setItem(name, JSON.stringify(value));
-      return true;
-    } catch {
-      return false;
-    }
-  };
+  const MAX_HOLD_S = 90 * 60; // protocol.MAX_HARD_S: no hold ends further off than this
+  const SKEW_S = 10 * 60; // this device's clock may be behind Ferry Watch's
 
   /** The ticket's claims, if the fragment holds a well-formed ticket for this trip. */
   function claimsOf(ticket) {
@@ -50,29 +46,33 @@
     }
   }
 
-  function nonce() {
-    const bytes = crypto.getRandomValues(new Uint8Array(32));
-    return btoa(String.fromCharCode(...bytes))
-      .replace(/\+/g, "-")
-      .replace(/\//g, "_")
-      .replace(/=+$/, "");
+  /** A hold's hard deadline (epoch s) that a real hold could have now: after now, and no further off than any. */
+  function plausible(deadline) {
+    return Number.isFinite(deadline) && deadline > nowS && deadline <= nowS + MAX_HOLD_S + SKEW_S;
   }
 
-  // Forget checkouts whose holds are over (and anything unreadable).
+  /** The ticket in the fragment and the viewer it opens in. */
+  function fromFragment(fragment) {
+    if (fragment.startsWith("fw1.")) return { ticket: fragment, viewer: "classic" };
+    const params = new URLSearchParams(fragment);
+    return { ticket: params.get("t") || "", viewer: params.get("v") === "s1" ? "stream" : "classic" };
+  }
+
+  // Forget checkouts whose holds are over (and anything unreadable, or with a deadline no hold could have).
   try {
     for (const name of Object.keys(localStorage)) {
       if (!name.startsWith("fw:")) continue;
-      const old = read(localStorage, name);
-      if (!old || !(old.hard_deadline * 1000 > now)) localStorage.removeItem(name);
+      const old = session.read(localStorage, name);
+      if (!old || !plausible(old.hard_deadline)) localStorage.removeItem(name);
     }
   } catch {
     // storage is blocked; the write below says so
   }
 
-  const ticket = location.hash.slice(1);
+  const { ticket, viewer } = fromFragment(location.hash.slice(1));
   history.replaceState(null, "", location.pathname); // the ticket stays out of history
   const claims = ticket ? claimsOf(ticket) : null;
-  let record = read(localStorage, key);
+  let record = session.record(key);
   const opened = Boolean(record && record.opened);
 
   if (claims && claims.exp * 1000 <= now && !opened) {
@@ -80,15 +80,19 @@
     return;
   }
   if (claims && claims.exp * 1000 > now) {
-    const disp = claims.disp && typeof claims.disp === "object" ? claims.disp : {};
+    const claimed = claims.disp && typeof claims.disp === "object" ? claims.disp.hard_deadline : undefined;
+    const kept = record && plausible(record.hard_deadline) ? record.hard_deadline : 0;
     record = {
-      n: record && typeof record.n === "string" ? record.n : nonce(),
+      n: record && typeof record.n === "string" ? record.n : session.nonce(),
       opened,
-      disp,
-      hard_deadline: Number(disp.hard_deadline) || Math.floor((now + MAX_HOLD_MS) / 1000),
-      session_deadline: Number.isFinite(disp.session_s) ? now + disp.session_s * 1000 : null,
+      // The later of the deadline kept and the ticket's, if the ticket's is one a hold could have: a hold that ends
+      // later in the same pod moves it on, and no link brings it forward.
+      hard_deadline: Math.max(kept, plausible(claimed) ? claimed : 0) || nowS + MAX_HOLD_S,
+      viewer,
+      viewer_fallback: Boolean(record && record.viewer_fallback), // sticky for this checkout on this device
     };
-    if (!write(localStorage, key, record) || !write(sessionStorage, `${key}:ticket`, { ticket, exp: claims.exp })) {
+    const stored = session.write(localStorage, key, record);
+    if (!stored || !session.write(sessionStorage, `${key}:ticket`, { ticket, exp: claims.exp })) {
       fail(
         "Can't open the checkout in this window",
         "This browser isn't letting the page save the checkout's key. Try a regular (not private) window.",
@@ -96,7 +100,7 @@
       return;
     }
   }
-  const pending = read(sessionStorage, `${key}:ticket`);
+  const pending = session.pendingTicket(key);
   if (!opened && !(pending && pending.exp * 1000 > now)) {
     fail(
       "No checkout here",
@@ -105,67 +109,18 @@
     return;
   }
 
-  ready(record && record.disp);
-  const go = () => location.replace(viewerUrl());
+  const streamed = Boolean(record && record.viewer === "stream" && !record.viewer_fallback);
+  document.getElementById("details").hidden = false;
+  const beta = document.getElementById("beta"); // not on a page from a 0.6.4 replica, mid-rollout
+  if (beta) beta.hidden = !streamed;
+  const go = () => location.replace(streamed ? session.streamUrl(trip, gen) : session.classicUrl(trip, gen));
   document.getElementById("open").addEventListener("click", go);
   setTimeout(go, OPEN_AFTER_MS);
-
-  /** vnc.html, with the client's settings in the fragment, where it reads them first. */
-  function viewerUrl() {
-    const settings = [
-      `path=t/${trip}/g/${gen}/ws`,
-      "autoconnect=1",
-      "reconnect=1",
-      "reconnect_delay=1000",
-      "idle_disconnect=120",
-      // Smoothing on, which also turns off the client's auto-scaling on small high-DPI screens. That makes the
-      // screen about 1.5x a phone's viewport (585 px wide on an iPhone's 390), so the checkout shows at two
-      // thirds of its size. Without it the screen is the phone's viewport, and the checkout lays out for a phone.
-      "anti_aliasing=1",
-    ];
-    // A touch screen has no keyboard until a text field on this page has focus: the client's floating
-    // keyboard button gives it one. A tap on a field in the checkout focuses only the pod's field.
-    if (navigator.maxTouchPoints > 0) settings.push("virtual_keyboard_visible=1");
-    return `/vnc.html#${settings.join("&")}`;
-  }
 
   function fail(title, text) {
     document.getElementById("title").textContent = title;
     const nothing = document.getElementById("nothing");
     nothing.textContent = text;
     nothing.hidden = false;
-  }
-
-  function ready(disp) {
-    document.getElementById("details").hidden = false;
-    if (!disp) return;
-    const sailing = [disp.route, dateLabel(disp.date), timeLabel(disp.depart), disp.fare].filter(Boolean);
-    document.getElementById("sailing").textContent = sailing.map(String).join(" · ");
-    const closes = record.session_deadline
-      ? `Checkout closes at ${clock(record.session_deadline)} (paused while you're on the payment page).`
-      : "";
-    const latest = record.hard_deadline ? ` At the latest ${clock(record.hard_deadline * 1000)}.` : "";
-    document.getElementById("deadline").textContent = closes + latest;
-  }
-
-  function clock(epochMs) {
-    return new Intl.DateTimeFormat("en-CA", { hour: "numeric", minute: "2-digit", timeZone: PACIFIC })
-      .format(epochMs)
-      .replace(/\./g, "");
-  }
-
-  function timeLabel(hhmm) {
-    const match = /^(\d{2}):(\d{2})$/.exec(String(hhmm));
-    if (!match) return null;
-    const hour = Number(match[1]);
-    return `${hour % 12 || 12}:${match[2]} ${hour < 12 ? "am" : "pm"}`;
-  }
-
-  function dateLabel(iso) {
-    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso));
-    if (!match) return null;
-    const day = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
-    const format = { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" };
-    return new Intl.DateTimeFormat("en-CA", format).format(day);
   }
 })();

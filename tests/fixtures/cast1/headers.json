@@ -1,0 +1,78 @@
+{
+  "protocol": "fw.cast1",
+  "cases": [
+    {
+      "id": "vector-image", "sec": "4.4",
+      "fields": {"kind": 1, "slot": 0, "page": 1, "seq": 7, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 530.5,
+       "top": 0, "dsf": 2, "flags": 1},
+      "header": "0100010007000000860198020000803f0000000000a004440000000002010000", "jpeg": "ffd8ffd9", "first": true,
+      "note": "§4.4's first vector, with a stand-in JPEG"
+    },
+    {
+      "id": "vector-repeat", "sec": "4.4",
+      "fields": {"kind": 2, "slot": 1, "page": 2, "seq": 8, "w": 390, "h": 664, "scale": 2, "sx": 97.5, "sy": 200,
+       "top": 0, "dsf": 2, "flags": 0},
+      "header": "020102000800000086019802000000400000c342000048430000000002000000", "jpeg": "", "first": false,
+      "note": "§4.4's second vector"
+    },
+    {
+      "id": "image-slot-1", "sec": "4.1",
+      "fields": {"kind": 1, "slot": 1, "page": 3, "seq": 9, "w": 390, "h": 600, "scale": 1, "sx": 0, "sy": 0,
+       "top": 0, "dsf": 2, "flags": 0},
+      "header": "0101030009000000860158020000803f00000000000000000000000002000000", "jpeg": "ffd8ffd9",
+      "first": false, "note": "a pop-up's shorter page"
+    },
+    {
+      "id": "limits", "sec": "4.1",
+      "fields": {"kind": 1, "slot": 0, "page": 65535, "seq": 4294967295, "w": 1920, "h": 1600, "scale": 4,
+       "sx": 13546.25, "sy": 0.125, "top": 0, "dsf": 1, "flags": 1},
+      "header": "0100ffffffffffff800740060000804000a953460000003e0000000001010000", "jpeg": "ffd8ffd9", "first": true
+    },
+    {
+      "id": "measured-scale", "sec": "4.1",
+      "fields": {"kind": 1, "slot": 0, "page": 1, "seq": 341, "w": 390, "h": 664, "scale": 2.000000238418579,
+       "sx": 175, "sy": 770.5, "top": 0, "dsf": 2, "flags": 0},
+      "header": "0100010055010000860198020100004000002f4300a040440000000002000000", "jpeg": "ffd8ffd9",
+      "first": false, "note": "the pinch scale Chromium reported (round2/out/s7-zoom.json)"
+    },
+    {
+      "id": "unknown-flag-bits", "sec": "4.1",
+      "fields": {"kind": 2, "slot": 0, "page": 1, "seq": 12, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 0,
+       "top": 0, "dsf": 2, "flags": 129},
+      "header": "020001000c000000860198020000803f00000000000000000000000002810000", "jpeg": "", "first": true,
+      "note": "viewers ignore bits other than bit 0"
+    },
+    {
+      "id": "unknown-flag-bits-no-first", "sec": "4.1",
+      "fields": {"kind": 2, "slot": 0, "page": 1, "seq": 13, "w": 390, "h": 664, "scale": 1, "sx": 0, "sy": 0,
+       "top": 0, "dsf": 2, "flags": 6},
+      "header": "020001000d000000860198020000803f00000000000000000000000002060000", "jpeg": "", "first": false
+    }
+  ],
+  "malformed": [
+    {"id": "empty", "sec": "4.2", "hex": "", "only": "viewer"},
+    {"id": "short", "sec": "4.2", "hex": "0100010007000000860198020000803f0000000000a0044400000000020100",
+     "only": "viewer", "note": "31 bytes"},
+    {"id": "kind-0", "sec": "4.2", "hex": "0000010007000000860198020000803f0000000000a004440000000002010000ffd8ffd9",
+     "only": "viewer"},
+    {"id": "kind-3", "sec": "4.2", "hex": "0300010007000000860198020000803f0000000000a004440000000002010000ffd8ffd9",
+     "only": "viewer"},
+    {"id": "slot-2", "sec": "4.2", "hex": "0102010007000000860198020000803f0000000000a004440000000002010000ffd8ffd9",
+     "only": "viewer"},
+    {"id": "repeat-with-payload", "sec": "4.2",
+     "hex": "020102000800000086019802000000400000c34200004843000000000200000000", "only": "viewer",
+     "note": "a kind 2 is exactly 32 bytes"},
+    {"id": "image-without-jpeg", "sec": "4.2",
+     "hex": "0100010007000000860198020000803f0000000000a004440000000002010000", "only": "viewer",
+     "note": "a kind 1 has 1 or more bytes of JPEG"},
+    {"id": "width-0", "sec": "4.2",
+     "hex": "0100010007000000000098020000803f0000000000a004440000000002010000ffd8ffd9", "only": "viewer",
+     "note": "an image of no width can't be drawn"},
+    {"id": "scale-nan", "sec": "4.2", "hex": "0200010007000000860198020000c07f00000000000000000000000002000000",
+     "only": "viewer"},
+    {"id": "scale-0", "sec": "4.2", "hex": "0200010007000000860198020000000000000000000000000000000002000000",
+     "only": "viewer"},
+    {"id": "sy-infinite", "sec": "4.2",
+     "hex": "0100010007000000860198020000803f000000000000807f0000000002000000ffd8ffd9", "only": "viewer"}
+  ]
+}

@@ -1,0 +1,18 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Breakpoint swap</title>
+<style>body{font-family:system-ui;margin:0;padding:12px}input{font-size:16px;padding:8px;width:100%;box-sizing:border-box}</style></head>
+<body><div id="app"></div>
+<script>
+// The common SPA pattern (Angular CDK BreakpointObserver, React useMediaQuery): a different component tree
+// for phones and for desktops, chosen in script at a breakpoint.
+const mq = matchMedia('(max-width: 767px)');
+window.__renders = [];
+function render() {
+  const mobile = mq.matches;
+  window.__renders.push([mobile ? 'mobile' : 'desktop', innerWidth, devicePixelRatio]);
+  document.getElementById('app').innerHTML = mobile
+    ? '<h2>Passenger (mobile)</h2><label>Name <input id="name" autocomplete="name"></label><label>Card <input id="cc" inputmode="numeric"></label>'
+    : '<h2>Passenger (desktop)</h2><table><tr><td>Name</td><td><input id="name" autocomplete="name"></td><td>Card</td><td><input id="cc" inputmode="numeric"></td></tr></table>';
+}
+mq.addEventListener('change', render); render();
+</script></body></html>

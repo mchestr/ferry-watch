@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
@@ -12,12 +13,13 @@ from typing import Any
 
 import aiohttp
 import asyncpg
+import msgspec
 import pytest
 from aiohttp.test_utils import TestServer
 
 from ferry_watch.agent.hub import HubClient, Identity
 from ferry_watch.agent.store import OneTripStore
-from ferry_watch.control.configure import HubSettings
+from ferry_watch.control.configure import HubSettings, StreamViewer
 from ferry_watch.control.hub import CLOSE_NOT_YET_RECORDED, CLOSE_VIOLATION, PATH, HubEndpoint
 from ferry_watch.control.kube import ObservedPod, PodIdentity
 from ferry_watch.control.store import CLAIM_LAPSE_SECONDS, ControlStore
@@ -34,6 +36,7 @@ from ferry_watch.protocol import (
     Hello,
     State,
     ViewerInfo,
+    decode_control_message,
     encode,
 )
 from tests.postgres import ROLES, Database
@@ -109,12 +112,14 @@ class Rig:
 
 
 @pytest.fixture
-async def rig(db: Database, aiohttp_server: Callable[..., Any]) -> AsyncIterator[Rig]:
+async def rig(db: Database, aiohttp_server: Callable[..., Any], request: pytest.FixtureRequest) -> AsyncIterator[Rig]:
+    """The hub, with `checkout.streamViewer` "off" unless a test passes it as the rig's param."""
+    stream_viewer: StreamViewer = getattr(request, "param", "off")
     await seed(db)
     pool = await asyncpg.create_pool(db.dsn(ROLES.control), min_size=1, max_size=4)
     cluster = FakeCluster({"token-1": PodIdentity(UID, POD)})
     clock = [NOON]
-    hub = HubEndpoint(ControlStore(pool), cluster, HubSettings(), clock=lambda: clock[0])
+    hub = HubEndpoint(ControlStore(pool), cluster, HubSettings(stream_viewer=stream_viewer), clock=lambda: clock[0])
     server: TestServer = await aiohttp_server(hub.app())
     try:
         yield Rig(hub, server, cluster, db, clock)
@@ -571,3 +576,166 @@ async def test_the_fleet_loop_can_drain_a_pod(rig: Rig, agent: Agent) -> None:
     assert await rig.hub.command(POD, "drain", "superseded")
     await until(lambda: any(isinstance(m, Command) and m.op == "drain" for m in agent.received))
     assert not await rig.hub.command("fw-ffffffffffffffff-g1", "drain", "past")
+
+
+# ---- the streamed checkout viewer's kill switch (cast_allowed)
+
+# Configure as a 0.6.4 agent decodes it: these fields and no others (it refuses unknown ones, as every agent does).
+CONFIGURE_064 = frozenset(
+    {"v", "seq", "trip", "boot", "rev", "trip_spec", "active", "mode", "interval_s", "auto_cart", "checkout_mode"}
+    | {"hold", "alerted", "offered", "vnc_allowed", "brake", "breaker"}
+)
+
+
+def _as_064() -> msgspec.json.Decoder[Any]:
+    def field(info: msgspec.structs.FieldInfo) -> tuple[Any, ...]:
+        if info.default is not msgspec.NODEFAULT:
+            return (info.name, info.type, info.default)
+        if info.default_factory is not msgspec.NODEFAULT:
+            return (info.name, info.type, msgspec.field(default_factory=info.default_factory))
+        return (info.name, info.type)
+
+    fields = [field(f) for f in msgspec.structs.fields(Configure) if f.name in CONFIGURE_064]
+    old = msgspec.defstruct(
+        "Configure064", fields, kw_only=True, forbid_unknown_fields=True, tag_field="type", tag="configure"
+    )
+    return msgspec.json.Decoder(old)
+
+
+AS_064 = _as_064()
+
+
+@dataclass
+class RawAgent:
+    """An agent of any version, seen frame by frame: what the hub sends it, before any decoding."""
+
+    ws: aiohttp.ClientWebSocketResponse
+
+    async def configure(self) -> bytes:
+        async with asyncio.timeout(5):
+            while True:
+                frame = await self.ws.receive()
+                assert frame.type == aiohttp.WSMsgType.BINARY, frame
+                if json.loads(frame.data)["type"] == "configure":
+                    return bytes(frame.data)
+
+    async def nothing_more(self) -> None:
+        with pytest.raises(TimeoutError):
+            await self.ws.receive(timeout=0.3)
+
+
+@contextlib.asynccontextmanager
+async def raw_agent(server: TestServer, version: str) -> AsyncIterator[RawAgent]:
+    boot = "0" * 16
+    hello = Hello(
+        seq=1,
+        trip=TRIP.id,
+        boot=boot,
+        rev=0,
+        proto=[1],
+        agent_version=version,
+        pod_name=POD,
+        gen=1,
+        applied_rev=0,
+        snapshot=State(seq=1, trip=TRIP.id, boot=boot, rev=0, phase="watching"),
+    )
+    async with (
+        aiohttp.ClientSession() as http,
+        http.ws_connect(server.make_url(PATH), headers={"Authorization": "Bearer token-1"}) as ws,
+    ):
+        await ws.send_bytes(encode(hello))
+        yield RawAgent(ws)
+
+
+async def owner(rig: Rig, sql: str, *args: Any) -> None:
+    conn = await rig.db.connect()
+    try:
+        await conn.execute(sql, *args)
+    finally:
+        await conn.close()
+
+
+def cast_allowed(frame: bytes) -> bool:
+    configure = decode_control_message(frame)
+    assert isinstance(configure, Configure)
+    return configure.cast_allowed
+
+
+def test_the_064_schema_is_todays_without_cast_allowed() -> None:
+    """When a release adds another configure field, older agents need it left out too (see _encode_for)."""
+    assert {f.name for f in msgspec.structs.fields(Configure)} == CONFIGURE_064 | {"cast_allowed"}
+
+
+@pytest.mark.parametrize(
+    ("rig", "admin", "allowed"),
+    [
+        ("off", True, False),
+        ("admins", False, False),
+        ("admins", True, True),
+        ("everyone", False, True),
+    ],
+    indirect=["rig"],
+)
+async def test_a_070_agent_may_stream_as_the_deployment_says(rig: Rig, admin: bool, allowed: bool) -> None:
+    await owner(rig, "UPDATE users SET is_admin = $1", admin)
+    async with raw_agent(rig.server, "0.7.0") as agent:
+        frame = await agent.configure()
+    assert json.loads(frame)["cast_allowed"] is allowed  # always sent to 0.7.0, so false withdraws a live stream
+    assert cast_allowed(frame) is allowed
+
+
+@pytest.mark.parametrize("rig", ["everyone"], indirect=True)
+async def test_a_suspended_owner_may_not_stream(rig: Rig) -> None:
+    await owner(rig, "UPDATE users SET state = 'suspended'")
+    async with raw_agent(rig.server, "0.7.0") as agent:
+        configure = decode_control_message(await agent.configure())
+    assert isinstance(configure, Configure)
+    assert (configure.vnc_allowed, configure.cast_allowed) == (False, False)
+
+
+@pytest.mark.parametrize("version", ["0.6.4", "0.6.0", "0.7.0rc1", "garbage"])
+@pytest.mark.parametrize("rig", ["everyone"], indirect=True)
+async def test_an_older_agent_is_never_sent_cast_allowed(rig: Rig, version: str) -> None:
+    """0.6.x agents refuse a configure with a field they don't know (and close the socket): they get 0.6.4's."""
+    await owner(rig, "UPDATE users SET is_admin = true")
+    async with raw_agent(rig.server, version) as agent:
+        frame = await agent.configure()
+        assert "cast_allowed" not in json.loads(frame)
+        old = AS_064.decode(frame)
+        assert (old.vnc_allowed, old.active, old.interval_s) == (True, True, 60)
+        # A change only in what it's never sent isn't pushed to it.
+        await owner(rig, "UPDATE users SET is_admin = false")
+        await rig.hub.refresh()
+        await agent.nothing_more()
+    with pytest.raises(msgspec.ValidationError, match="cast_allowed"):  # what the hub must never send it
+        AS_064.decode(encode(msgspec.convert(json.loads(frame) | {"cast_allowed": False}, Configure)))
+
+
+@pytest.mark.parametrize("rig", ["admins"], indirect=True)
+async def test_a_change_in_who_may_stream_is_pushed(rig: Rig) -> None:
+    async with raw_agent(rig.server, "0.7.0") as agent:
+        assert cast_allowed(await agent.configure()) is False
+        await owner(rig, "UPDATE users SET is_admin = true")
+        await rig.hub.refresh()
+        assert cast_allowed(await agent.configure()) is True
+        await rig.hub.refresh()
+        await agent.nothing_more()  # nothing else changed
+
+
+@pytest.mark.parametrize("rig", ["everyone"], indirect=True)
+async def test_turning_the_beta_off_withdraws_it_from_running_pods(
+    rig: Rig, aiohttp_server: Callable[..., Any]
+) -> None:
+    """Changing checkout.streamViewer rolls ferry-control; each agent dials the new one, whose first configure
+    withdraws the streamed viewer (the pod's gate then closes a live stream with 4005)."""
+    async with raw_agent(rig.server, "0.7.0") as agent:
+        assert cast_allowed(await agent.configure()) is True
+    pool = await asyncpg.create_pool(rig.db.dsn(ROLES.control), min_size=1, max_size=2)
+    try:
+        hub = HubEndpoint(ControlStore(pool), rig.cluster, HubSettings(stream_viewer="off"), clock=lambda: NOON)
+        server: TestServer = await aiohttp_server(hub.app())
+        async with raw_agent(server, "0.7.0") as agent:
+            assert cast_allowed(await agent.configure()) is False
+        await server.close()
+    finally:
+        await pool.close()

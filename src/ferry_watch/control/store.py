@@ -88,8 +88,8 @@ class ControlStore:
     async def trip_row(self, trip_id: str) -> tuple[TripRow, bool] | None:
         """The trip as configured, and whether its owner is active."""
         row = await self._pool.fetchrow(
-            "SELECT t.spec, t.rev, t.enabled, t.paused_reason, t.archived_at, u.state, m.alerted, m.offered,"
-            " r.hold_requested_until, r.quiet_lifted_until"
+            "SELECT t.spec, t.rev, t.enabled, t.paused_reason, t.archived_at, u.state, u.is_admin, m.alerted,"
+            " m.offered, r.hold_requested_until, r.quiet_lifted_until"
             " FROM trips t JOIN users u ON u.id = t.user_id LEFT JOIN alert_memory m ON m.trip_id = t.id"
             " LEFT JOIN trip_runtime r ON r.trip_id = t.id"
             " WHERE t.id = $1",
@@ -111,6 +111,7 @@ class ControlStore:
             offered=tuple(row["offered"] or ()),
             hold_requested_until=_epoch(row["hold_requested_until"]),
             quiet_lifted_until=_epoch(row["quiet_lifted_until"]),
+            owner_is_admin=row["is_admin"],
         )
         return trip_row, row["state"] == "active"
 

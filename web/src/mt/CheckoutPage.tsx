@@ -37,6 +37,10 @@ export function CheckoutPage({
     mutationFn: () => myApi.checkout(tripId),
     onSuccess: ({ url }) => location.assign(url),
   });
+  // Which viewer the link opens, once there is one. Until then, the user's choice: ferry-web overrules it only for
+  // a browser pod from before the beta, which opens in the classic viewer.
+  const { checkout_viewer, stream_viewer_offered } = state.settings;
+  const streamed = (open.data?.viewer ?? (stream_viewer_offered ? checkout_viewer : "classic")) === "stream";
   // Stays here: once the cart is let go, this page offers bcferries.com for the sailing.
   const { release, releasing } = useRelease(tripId, cart);
 
@@ -133,6 +137,9 @@ export function CheckoutPage({
             <Laptop aria-hidden /> I'll use my computer
           </Button>
         </div>
+        {streamed && (
+          <p className="text-center text-xs text-muted-foreground">Opens in the new checkout viewer (beta).</p>
+        )}
         {elsewhere && (
           <p className="rounded-xl bg-muted p-3 text-sm">
             Open Ferry Watch on your computer, sign in, and choose this trip's <strong>Open checkout</strong>. A

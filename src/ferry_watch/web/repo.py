@@ -13,7 +13,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from datetime import time as clock_time
-from typing import Any
+from typing import Any, Literal
 
 import asyncpg
 
@@ -27,6 +27,8 @@ from .http import ApiError
 from .push import Subscription
 
 AFTER_CHECKOUT = "after_checkout"
+# Which viewer opens the user's checkouts (`user_settings.checkout_viewer`): KasmVNC, or the streamed viewer beta.
+CheckoutViewer = Literal["classic", "stream"]
 BOOKED_REASONS = frozenset(
     {"needed_account", "tried_sign_in", "payment_failed", "checkout_broke", "ran_out_of_time", "changed_mind"}
 )
@@ -172,6 +174,7 @@ class HeldCart:
     fare: str | None
     hard_deadline: float
     session_s: int
+    agent_version: str | None  # what the pod's agent said hello with; None until it has
 
 
 class WebStore:
@@ -435,15 +438,29 @@ class WebStore:
         row = await self._pool.fetchrow("SELECT quiet_start, quiet_end FROM user_settings WHERE user_id = $1", uid)
         return quiet_hours(row["quiet_start"], row["quiet_end"]) if row else DEFAULT_QUIET_HOURS
 
-    async def set_settings(self, uid: str, *, quiet: QuietHours) -> None:
-        """The user's own settings: their quiet hours."""
-        await self._pool.execute(
-            "INSERT INTO user_settings (user_id, quiet_start, quiet_end) VALUES ($1, $2, $3) ON CONFLICT (user_id)"
-            " DO UPDATE SET quiet_start = $2, quiet_end = $3, updated_at = now()",
-            uid,
-            quiet.start,
-            quiet.end,
-        )
+    async def checkout_viewer(self, uid: str) -> CheckoutViewer:
+        """The viewer the user chose for their checkouts: classic until they turn the beta on."""
+        viewer = await self._pool.fetchval("SELECT checkout_viewer FROM user_settings WHERE user_id = $1", uid)
+        return "stream" if viewer == "stream" else "classic"
+
+    async def set_settings(
+        self, uid: str, *, quiet: QuietHours | None = None, viewer: CheckoutViewer | None = None
+    ) -> None:
+        """The user's own settings: their quiet hours and their checkout viewer, each only when given. A new row
+        starts at the defaults for the rest."""
+        async with self._pool.acquire() as conn, conn.transaction():
+            await conn.execute("INSERT INTO user_settings (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING", uid)
+            if quiet is not None:
+                await conn.execute(
+                    "UPDATE user_settings SET quiet_start = $2, quiet_end = $3, updated_at = now() WHERE user_id = $1",
+                    uid,
+                    quiet.start,
+                    quiet.end,
+                )
+            if viewer is not None:
+                await conn.execute(
+                    "UPDATE user_settings SET checkout_viewer = $2, updated_at = now() WHERE user_id = $1", uid, viewer
+                )
 
     # ---- alerts
 
@@ -484,7 +501,7 @@ class WebStore:
         """The user's held cart on this trip, if a checkout may be opened for it now."""
         trip, _ = await self.trip(uid, trip_id)
         row = await self._pool.fetchrow(
-            "SELECT s.cart, s.pod, p.gen FROM trip_state s JOIN browser_pods p ON p.name = s.pod"
+            "SELECT s.cart, s.pod, p.gen, p.agent_version FROM trip_state s JOIN browser_pods p ON p.name = s.pod"
             " WHERE s.trip_id = $1 AND p.ended_at IS NULL AND p.user_id = $2",
             trip_id,
             uid,
@@ -505,6 +522,7 @@ class WebStore:
             fare=cart.get("fare"),
             hard_deadline=hard_deadline,
             session_s=int(session_deadline - self._clock()) if session_deadline else 0,
+            agent_version=row["agent_version"],
         )
 
     async def record_mint(self, uid: str, held: HeldCart, jti: str) -> None:
@@ -645,7 +663,8 @@ class WebStore:
                 "can_add": len(trips) < max_trips,
                 "reason": None if len(trips) < max_trips else f"You can watch up to {max_trips} trips",
             },
-            "settings": {"quiet_hours": quiet_json},
+            # ferry-web adds whether the streamed viewer is offered to the user (api.user_state).
+            "settings": {"quiet_hours": quiet_json, "checkout_viewer": await self.checkout_viewer(uid)},
             # The same quiet hours, and whether it's quiet now.
             "quiet_hours": quiet_json | {"now": context.allowance.quiet_now(context.at)},
             "devices": await self.devices(uid),

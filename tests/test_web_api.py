@@ -19,12 +19,13 @@ from aiohttp.test_utils import TestClient
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from ferry_watch import __version__
+from ferry_watch.control.configure import StreamViewer
 from ferry_watch.control.limits import Limits
 from ferry_watch.models import PACIFIC
 from ferry_watch.polling import PollPolicy
 from ferry_watch.tickets import verify
 from ferry_watch.web.accounts import Accounts, IdentityPolicy
-from ferry_watch.web.api import CheckoutSigner
+from ferry_watch.web.api import CheckoutSigner, checkout_url
 from ferry_watch.web.app import build
 from ferry_watch.web.identity import OidcClient, OidcSettings, Principal
 from ferry_watch.web.repo import WebStore
@@ -73,7 +74,9 @@ class Rig:
 
 
 @pytest.fixture
-async def rig(db: Database, aiohttp_client: Callable[..., Any]) -> AsyncIterator[Rig]:
+async def rig(db: Database, aiohttp_client: Callable[..., Any], request: pytest.FixtureRequest) -> AsyncIterator[Rig]:
+    """ferry-web for Ann and Bob. `checkout.streamViewer` is "off" unless a test passes it as the rig's param."""
+    stream_viewer: StreamViewer = getattr(request, "param", "off")
     owner = await db.connect()
     try:
         for uid in (ANN, BOB):
@@ -90,7 +93,7 @@ async def rig(db: Database, aiohttp_client: Callable[..., Any]) -> AsyncIterator
             accounts,
             oidc,
             WebStore(pool, Limits(), PollPolicy(), clock=lambda: clock[0] or time.time()),
-            CheckoutSigner(KEY, "k1", ORIGIN),
+            CheckoutSigner(KEY, "k1", ORIGIN, stream_viewer=stream_viewer),
             pool=pool,
             limits=Limits(),
             public={"links": {"kofi": None}, "push": {"key": "BPushKey"}},
@@ -445,13 +448,13 @@ DEFAULT = {"start": "22:00", "end": "05:00"}  # everyone's, until they change th
 async def test_quiet_hours_are_each_users_own(rig: Rig) -> None:
     rig.clock[0] = today_at(12)
     state = await (await rig.call("GET", "/api/state")).json()
-    assert (state["settings"], state["quiet_hours"]) == ({"quiet_hours": DEFAULT}, DEFAULT | {"now": False})
+    assert (state["settings"]["quiet_hours"], state["quiet_hours"]) == (DEFAULT, DEFAULT | {"now": False})
     assert await rig.sql("SELECT * FROM user_settings") == []  # the default needs no row
     night = {"start": "23:00", "end": "06:30"}
     response = await rig.call("PATCH", "/api/me", json={"quiet_hours": night})
     assert response.status == 200, await response.text()
     state = await response.json()
-    assert (state["settings"], state["quiet_hours"]) == ({"quiet_hours": night}, night | {"now": False})
+    assert (state["settings"]["quiet_hours"], state["quiet_hours"]) == (night, night | {"now": False})
     rows = await rig.sql("SELECT user_id, quiet_start, quiet_end FROM user_settings")
     assert [tuple(r) for r in rows] == [(ANN, dt_time(23, 0), dt_time(6, 30))]
 
@@ -459,7 +462,7 @@ async def test_quiet_hours_are_each_users_own(rig: Rig) -> None:
     bobs = await rig.add(BOB)
     await rig.sql("UPDATE trip_runtime SET next_check_at = to_timestamp($1)", today_at(22, 45))
     bob = await (await rig.call("GET", "/api/state", BOB)).json()
-    assert (bob["settings"], bob["quiet_hours"]) == ({"quiet_hours": DEFAULT}, DEFAULT | {"now": True})
+    assert (bob["settings"]["quiet_hours"], bob["quiet_hours"]) == (DEFAULT, DEFAULT | {"now": True})
     (trip,) = bob["trips"]
     five = datetime.combine(datetime.now(PACIFIC).date() + timedelta(days=1), dt_time(5), PACIFIC).timestamp()
     assert (trip["trip"]["id"], trip["quiet"], trip["browser"]["next_check_at"]) == (bobs, True, five)
@@ -472,7 +475,7 @@ async def test_quiet_hours_a_063_ferry_web_turned_off_are_the_default(rig: Rig) 
     await rig.sql("INSERT INTO user_settings (user_id, quiet_start, quiet_end) VALUES ($1, NULL, NULL)", ANN)
     rig.clock[0] = today_at(23)
     state = await (await rig.call("GET", "/api/state")).json()
-    assert (state["settings"], state["quiet_hours"]) == ({"quiet_hours": DEFAULT}, DEFAULT | {"now": True})
+    assert (state["settings"]["quiet_hours"], state["quiet_hours"]) == (DEFAULT, DEFAULT | {"now": True})
 
 
 async def test_quiet_hours_cant_be_turned_off(rig: Rig) -> None:
@@ -549,15 +552,17 @@ async def test_in_quiet_hours_a_trip_isnt_checked_until_lifted(rig: Rig) -> None
 # ---- checkout
 
 
-async def hold(rig: Rig, trip_id: str, *, gen: int = 2) -> None:
+async def hold(rig: Rig, trip_id: str, *, gen: int = 2, agent_version: str | None = "0.6.4") -> None:
+    """Ann's cart held by the trip's pod, whose agent said hello with `agent_version` (None: not yet)."""
     pod = f"fw-{trip_id}-g{gen}"
     await rig.sql(
-        "INSERT INTO browser_pods (name, trip_id, user_id, gen, mode, deadline_at) VALUES ($1, $2, $3, $4, 'warm',"
-        " now() + interval '1 day')",
+        "INSERT INTO browser_pods (name, trip_id, user_id, gen, mode, deadline_at, agent_version)"
+        " VALUES ($1, $2, $3, $4, 'warm', now() + interval '1 day', $5)",
         pod,
         trip_id,
         ANN,
         gen,
+        agent_version,
     )
     cart = {
         "id": "abc123",
@@ -579,6 +584,7 @@ async def test_a_checkout_ticket_opens_only_the_owners_pod(rig: Rig) -> None:
     body = await response.json()
     prefix = f"{ORIGIN}/t/{trip_id}/g/2/#"
     assert body["url"].startswith(prefix)
+    assert (body["viewer"], body["nonce_key"]) == ("classic", f"{trip_id}:2")
     claims = verify(body["url"].removeprefix(prefix), {"k1": KEY.public_key()})
     assert (claims.sub, claims.trip, claims.pod, claims.cart_id) == (ANN, trip_id, f"fw-{trip_id}-g2", "abc123")
     assert claims.disp is not None
@@ -603,6 +609,162 @@ async def test_no_ticket_once_todays_checkout_time_is_used(rig: Rig) -> None:
         ANN,
     )
     assert (await rig.call("POST", f"/api/trips/{trip_id}/vnc")).status == 409
+
+
+# ---- the checkout viewer (beta)
+
+
+@pytest.mark.parametrize(
+    ("rig", "admin", "offered"),
+    [
+        ("off", False, False),
+        ("off", True, False),  # the kill switch: nobody, the admins included
+        ("admins", False, False),
+        ("admins", True, True),
+        ("everyone", False, True),
+        ("everyone", True, True),
+    ],
+    indirect=["rig"],
+)
+async def test_the_beta_is_offered_as_the_deployment_says(rig: Rig, admin: bool, offered: bool) -> None:
+    if admin:
+        await make_admin(rig)
+    state = await (await rig.call("GET", "/api/state")).json()
+    assert state["settings"] == {
+        "quiet_hours": DEFAULT,
+        "checkout_viewer": "classic",  # until they turn it on
+        "stream_viewer_offered": offered,
+    }
+    response = await rig.call("PATCH", "/api/me", json={"checkout_viewer": "stream"})
+    if not offered:
+        assert (response.status, (await response.json())["field"]) == (403, "checkout_viewer")
+        assert await rig.sql("SELECT * FROM user_settings") == []
+    else:
+        assert response.status == 200, await response.text()
+        assert (await response.json())["settings"]["checkout_viewer"] == "stream"
+    # Turning it off is always allowed.
+    response = await rig.call("PATCH", "/api/me", json={"checkout_viewer": "classic"})
+    assert response.status == 200
+    assert (await response.json())["settings"] == state["settings"]
+    ann = await live(rig)
+    assert (await next_state(ann))["settings"] == state["settings"]  # the live socket says the same
+    await ann.close()
+
+
+@pytest.mark.parametrize("rig", ["everyone"], indirect=True)
+async def test_the_viewer_and_quiet_hours_are_set_apart_or_together(rig: Rig) -> None:
+    response = await rig.call("PATCH", "/api/me", json={"checkout_viewer": "stream"})
+    assert response.status == 200
+    rows = await rig.sql("SELECT quiet_start, quiet_end, checkout_viewer FROM user_settings")
+    assert [tuple(r) for r in rows] == [(dt_time(22), dt_time(5), "stream")]  # the quiet hours stay the default
+    night = {"start": "23:00", "end": "06:30"}
+    assert (await rig.call("PATCH", "/api/me", json={"quiet_hours": night})).status == 200
+    rows = await rig.sql("SELECT quiet_start, quiet_end, checkout_viewer FROM user_settings")
+    assert [tuple(r) for r in rows] == [(dt_time(23), dt_time(6, 30), "stream")]  # and the viewer stays
+    both = {"quiet_hours": DEFAULT, "checkout_viewer": "classic"}
+    state = await (await rig.call("PATCH", "/api/me", json=both)).json()
+    assert state["settings"] == both | {"stream_viewer_offered": True}
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"checkout_viewer": "kasm"},
+        {"checkout_viewer": "STREAM"},
+        {"checkout_viewer": None},
+        {"checkout_viewer": True},
+        {"checkout_viewer": ["stream"]},
+        {"checkout_viewer": {"viewer": "stream"}},
+    ],
+)
+@pytest.mark.parametrize("rig", ["everyone"], indirect=True)
+async def test_the_checkout_viewer_is_classic_or_stream(rig: Rig, body: dict[str, Any]) -> None:
+    response = await rig.call("PATCH", "/api/me", json=body)
+    assert (response.status, (await response.json())["field"]) == (400, "checkout_viewer")
+    assert await rig.sql("SELECT * FROM user_settings") == []
+
+
+@pytest.mark.parametrize("rig", ["admins"], indirect=True)
+async def test_nothing_is_stored_when_one_setting_is_refused(rig: Rig) -> None:
+    night = {"start": "23:00", "end": "06:30"}
+    response = await rig.call("PATCH", "/api/me", json={"quiet_hours": night, "checkout_viewer": "stream"})
+    assert response.status == 403  # Ann isn't an admin
+    response = await rig.call(
+        "PATCH", "/api/me", json={"quiet_hours": {"start": "23:00"}, "checkout_viewer": "classic"}
+    )
+    assert (response.status, (await response.json())["field"]) == (400, "quiet_hours")
+    response = await rig.call("PATCH", "/api/me", json={"checkout_viewer": "classic", "paused": True})
+    assert (response.status, (await response.json())["field"]) == (400, "quiet_hours")  # unknown keys, as before
+    assert await rig.sql("SELECT * FROM user_settings") == []
+
+
+async def opened(rig: Rig, trip_id: str) -> tuple[str, str]:
+    """Open the trip's checkout: the response's viewer and its link's fragment, checked to carry a good ticket."""
+    response = await rig.call("POST", f"/api/trips/{trip_id}/vnc")
+    assert response.status == 200, await response.text()
+    body = await response.json()
+    prefix = f"{ORIGIN}/t/{trip_id}/g/2/#"
+    assert body["url"].startswith(prefix)
+    fragment = body["url"].removeprefix(prefix)
+    ticket = fragment.removeprefix("v=s1&t=") if body["viewer"] == "stream" else fragment
+    claims = verify(ticket, {"k1": KEY.public_key()})
+    assert (claims.sub, claims.trip, claims.cart_id) == (ANN, trip_id, "abc123")  # the same ticket either way
+    await rig.sql("DELETE FROM vnc_mints")  # not up against the 10 a minute
+    return body["viewer"], fragment
+
+
+@pytest.mark.parametrize("rig", ["everyone"], indirect=True)
+async def test_the_stream_link_needs_the_opt_in_and_an_agent_that_streams(rig: Rig) -> None:
+    trip_id = await rig.add()
+    await hold(rig, trip_id, agent_version="0.7.0")
+    viewer, fragment = await opened(rig, trip_id)
+    assert viewer == "classic"  # offered, but not turned on: 0.6.4's link
+    assert fragment.startswith("fw1.")
+    assert "&" not in fragment
+    assert (await rig.call("PATCH", "/api/me", json={"checkout_viewer": "stream"})).status == 200
+    viewer, fragment = await opened(rig, trip_id)
+    assert viewer == "stream"
+    assert fragment.startswith("v=s1&t=fw1.")
+    for newer in ("0.7.1", "0.8.0", "1.0.0", "0.7.0.post1", "0.7.1rc1", "0.7.0+local"):
+        await rig.sql("UPDATE browser_pods SET agent_version = $1", newer)
+        assert (await opened(rig, trip_id))[0] == "stream", newer
+    # A pod from before the upgrade, or one whose version can't be read: KasmVNC, which every pod has.
+    for older in ("0.6.4", "0.6.10", "0.7.0rc1", "0.7.0.dev3", "0.0.0", None, "", "garbage", "v0.7.0", "0.7.0 "):
+        await rig.sql("UPDATE browser_pods SET agent_version = $1", older)
+        assert (await opened(rig, trip_id))[0] == "classic", older
+
+
+@pytest.mark.parametrize("rig", ["admins"], indirect=True)
+async def test_a_withdrawn_beta_opens_classic_whatever_was_chosen(rig: Rig) -> None:
+    """Turned on while it was offered (or stored by hand), then withdrawn: classic links until it's offered again."""
+    trip_id = await rig.add()
+    await hold(rig, trip_id, agent_version="0.7.0")
+    await rig.sql("INSERT INTO user_settings (user_id, checkout_viewer) VALUES ($1, 'stream')", ANN)
+    assert (await opened(rig, trip_id))[0] == "classic"  # Ann isn't an admin
+    state = await (await rig.call("GET", "/api/state")).json()
+    assert (state["settings"]["checkout_viewer"], state["settings"]["stream_viewer_offered"]) == ("stream", False)
+    await make_admin(rig)
+    assert (await opened(rig, trip_id))[0] == "stream"
+
+
+async def test_the_classic_link_is_064s(rig: Rig) -> None:
+    """Everyone not on the beta gets exactly the link 0.6.4 made: the ticket alone in the fragment."""
+    trip_id = await rig.add()
+    await hold(rig, trip_id, agent_version="0.7.0")
+    await rig.sql("INSERT INTO user_settings (user_id, checkout_viewer) VALUES ($1, 'stream')", ANN)  # "off" wins
+    response = await rig.call("POST", f"/api/trips/{trip_id}/vnc")
+    body = await response.json()
+    (row,) = await rig.sql("SELECT jti FROM vnc_mints")
+    ticket = body["url"].rpartition("#")[2]
+    assert verify(ticket, {"k1": KEY.public_key()}).jti == row["jti"]
+    assert body == {
+        "url": f"{ORIGIN}/t/{trip_id}/g/2/#{ticket}",
+        "ttl": 60,
+        "nonce_key": f"{trip_id}:2",
+        "viewer": "classic",
+    }
+    assert checkout_url(ORIGIN, trip_id, 2, ticket, "classic") == f"{ORIGIN}/t/{trip_id}/g/2/#{ticket}"
+    assert checkout_url(ORIGIN, trip_id, 2, ticket, "stream") == f"{ORIGIN}/t/{trip_id}/g/2/#v=s1&t={ticket}"
 
 
 # ---- the plumbing

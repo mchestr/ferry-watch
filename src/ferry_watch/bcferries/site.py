@@ -273,6 +273,16 @@ class SiteSession:
         page.on("close", lambda _: self._mark_closed())
         page.on("crash", lambda _: self.mark_lost())
 
+    @property
+    def context(self) -> BrowserContext:
+        """The browser context: what a checkout viewer's dialogs and pages live in."""
+        return self._context
+
+    @property
+    def page(self) -> Page:
+        """The window the cart is held in."""
+        return self._page
+
     def _mark_closed(self) -> None:
         self._closed = True
 

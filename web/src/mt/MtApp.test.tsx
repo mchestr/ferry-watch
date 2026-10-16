@@ -6,7 +6,7 @@ import { jsonResponse, mockFetch, renderWithProviders } from "@/test/render";
 import type { QueryClient } from "@tanstack/react-query";
 import { MY_STATE_KEY } from "./api";
 import { MtApp } from "./MtApp";
-import type { MyState } from "./schema";
+import type { CheckoutViewer, MyState } from "./schema";
 
 const TRIP_ID = "3f9c0a1b2c3d4e5f";
 
@@ -53,7 +53,11 @@ function myState(overrides: Partial<MyState> = {}): MyState {
       },
     ],
     capacity: { can_add: true, reason: null },
-    settings: { quiet_hours: { start: "22:00", end: "05:00" } },
+    settings: {
+      quiet_hours: { start: "22:00", end: "05:00" },
+      checkout_viewer: "classic",
+      stream_viewer_offered: false,
+    },
     quiet_hours: { start: "22:00", end: "05:00", now: false },
     devices: 0,
     events: [],
@@ -600,7 +604,8 @@ describe("quiet hours", () => {
   /** ferry-web as the contract has it: PATCH /api/me {quiet_hours} answers with the whole state. */
   function api(initial: { start: string; end: string }) {
     let quiet = initial;
-    const state = () => myState({ settings: { quiet_hours: quiet }, quiet_hours: { ...quiet, now: false } });
+    const state = () =>
+      myState({ settings: { ...myState().settings, quiet_hours: quiet }, quiet_hours: { ...quiet, now: false } });
     return mockFetch((r) => {
       if (r.url === "/api/me" && r.method === "PATCH") quiet = (r.body as { quiet_hours: typeof quiet }).quiet_hours;
       if (r.url === "/api/state" || r.url === "/api/me") return jsonResponse(state());
@@ -681,7 +686,7 @@ describe("quiet hours", () => {
     const base = myState().trips[0];
     if (!base) throw new Error("no trip");
     const state = myState({
-      settings: { quiet_hours: DEFAULT },
+      settings: { ...myState().settings, quiet_hours: DEFAULT },
       quiet_hours: { ...DEFAULT, now: true },
       trips: [{ ...base, quiet: true, browser: { ...base.browser, phase: "off", mode: "off", cart: null } }],
     });
@@ -697,7 +702,7 @@ describe("quiet hours", () => {
     const base = myState().trips[0];
     if (!base) throw new Error("no trip");
     const state = myState({
-      settings: { quiet_hours: DEFAULT },
+      settings: { ...myState().settings, quiet_hours: DEFAULT },
       quiet_hours: { ...DEFAULT, now: true },
       trips: [{ ...base, quiet: true, browser: { ...base.browser, phase: "off", mode: "off", cart: null } }],
     });
@@ -707,6 +712,118 @@ describe("quiet hours", () => {
       await screen.findByText("It's your quiet hours, so this trip isn't checked until 5:00 am PT."),
     ).toBeVisible();
     expect(screen.getByText("Quiet hours")).toBeInTheDocument();
+  });
+});
+
+describe("the new checkout viewer (beta)", () => {
+  beforeEach(() => {
+    localStorage.setItem("fw.token", "t-1");
+    history.replaceState(null, "", "/settings");
+  });
+
+  const NAME = "New checkout viewer (beta)";
+  const offered = (viewer: CheckoutViewer = "classic") =>
+    myState({ settings: { ...myState().settings, checkout_viewer: viewer, stream_viewer_offered: true } });
+  const beta = () => screen.findByRole("switch", { name: NAME });
+
+  /** ferry-web as the contract has it: PATCH /api/me {checkout_viewer} answers with the whole state, or a 403. */
+  function api(initial: MyState, { refuse = false } = {}) {
+    let state = initial;
+    return mockFetch((r) => {
+      if (r.url === "/api/me" && r.method === "PATCH") {
+        if (refuse) return jsonResponse({ error: "The new checkout viewer isn't available to you" }, 403);
+        const viewer = (r.body as { checkout_viewer: CheckoutViewer }).checkout_viewer;
+        state = { ...state, settings: { ...state.settings, checkout_viewer: viewer } };
+      }
+      if (r.url === "/api/state" || r.url === "/api/me") return jsonResponse(state);
+      return jsonResponse({ terminals: [] });
+    });
+  }
+
+  it("isn't in settings unless the deployment offers it to the user", async () => {
+    api(myState({ settings: { ...myState().settings, checkout_viewer: "stream" } }));
+    renderWithProviders(<MtApp />);
+    expect(await screen.findByRole("heading", { name: "Your account" })).toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: NAME })).toBeNull();
+    expect(screen.queryByText(/classic viewer/)).toBeNull();
+  });
+
+  it("is off until the user turns it on, and says what it is", async () => {
+    api(offered());
+    renderWithProviders(<MtApp />);
+    const toggle = await beta();
+    expect(toggle).not.toBeChecked();
+    expect(toggle).toHaveAccessibleDescription(
+      "Checkout looks and scrolls like a normal page on your phone. If anything goes wrong, the checkout has a Use the classic viewer button.",
+    );
+  });
+
+  it("saves at once, on and off", async () => {
+    const { requests } = api(offered());
+    const { user } = renderWithProviders(<MtApp />);
+    await user.click(await beta());
+    expect(await screen.findByText("Checkouts open in the new viewer")).toBeInTheDocument();
+    await waitFor(async () => expect(await beta()).toBeChecked());
+    await waitFor(async () => expect(await beta()).toBeEnabled());
+    await user.click(await beta());
+    expect(await screen.findByText("Checkouts open in the classic viewer")).toBeInTheDocument();
+    await waitFor(async () => expect(await beta()).not.toBeChecked());
+    expect(requests.filter((r) => r.method === "PATCH")).toMatchObject([
+      { url: "/api/me", body: { checkout_viewer: "stream" } },
+      { url: "/api/me", body: { checkout_viewer: "classic" } },
+    ]);
+  });
+
+  it("shows what's saved when the server refuses", async () => {
+    api(offered(), { refuse: true });
+    const { user } = renderWithProviders(<MtApp />);
+    await user.click(await beta());
+    expect(await screen.findByText("The new checkout viewer isn't available to you")).toBeInTheDocument();
+    await waitFor(async () => expect(await beta()).toBeEnabled());
+    expect(await beta()).not.toBeChecked();
+  });
+
+  describe("on the checkout page", () => {
+    const LINE = "Opens in the new checkout viewer (beta).";
+
+    function open(state: MyState, viewer?: CheckoutViewer) {
+      history.replaceState(null, "", `/c/${TRIP_ID}`);
+      const assign = vi.fn();
+      vi.stubGlobal("location", { ...window.location, assign, pathname: `/c/${TRIP_ID}`, search: "" });
+      const url = `https://ferry-checkout.chestr.dev/t/${TRIP_ID}/g/2/#${viewer === "stream" ? "v=s1&t=" : ""}ticket`;
+      mockFetch((r) => {
+        if (r.url === "/api/state") return jsonResponse(state);
+        if (r.url.endsWith("/vnc")) return jsonResponse({ url, ttl: 60, ...(viewer ? { viewer } : {}) });
+        return jsonResponse({ terminals: [] });
+      });
+      return { assign, url, ...renderWithProviders(<MtApp />) };
+    }
+
+    it("says so under the buttons for a user who turned it on", async () => {
+      const { assign, url, user } = open(offered("stream"), "stream");
+      const button = await screen.findByRole("button", { name: /Check out on this device/ });
+      expect(screen.getByText(LINE)).toBeVisible();
+      await user.click(button);
+      await waitFor(() => expect(assign).toHaveBeenCalledWith(url));
+      expect(screen.getByText(LINE)).toBeVisible();
+    });
+
+    it("says what the link opens: classic from a browser pod from before the beta", async () => {
+      const { assign, url, user } = open(offered("stream"), "classic");
+      await user.click(await screen.findByRole("button", { name: /Check out on this device/ }));
+      await waitFor(() => expect(assign).toHaveBeenCalledWith(url));
+      expect(screen.queryByText(LINE)).toBeNull();
+    });
+
+    it.each([
+      ["a user who didn't turn it on", offered("classic")],
+      ["a user it isn't offered to", myState({ settings: { ...myState().settings, checkout_viewer: "stream" } })],
+    ])("says nothing for %s, and an older server's link opens as before", async (_who, state) => {
+      const { assign, url, user } = open(state);
+      await user.click(await screen.findByRole("button", { name: /Check out on this device/ }));
+      await waitFor(() => expect(assign).toHaveBeenCalledWith(url));
+      expect(screen.queryByText(LINE)).toBeNull();
+    });
   });
 });
 

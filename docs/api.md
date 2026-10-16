@@ -3,6 +3,11 @@
 The web UI is the only client. The service is meant to run behind an authenticating
 reverse proxy (Authelia); it has no auth of its own.
 
+This is the single-container app's API (`ferry_watch.server`). The multi-tenant ferry-web's API, including
+the checkout link and the streamed viewer setting (`PATCH /api/me {checkout_viewer}`), is described in
+[`multi-tenant/design-reference.md` §6.3](multi-tenant/design-reference.md) and
+[`multi-tenant/streamed-viewer/DESIGN.md` §8](multi-tenant/streamed-viewer/DESIGN.md).
+
 ## Conventions
 
 - Timestamps are epoch seconds (`number`). Times of day are `"HH:MM"` (24-hour). Dates are
