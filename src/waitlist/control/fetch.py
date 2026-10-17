@@ -5,6 +5,11 @@ out; the provider's typed inventory, or an error kind, comes back. The fetcher's
 bounded and strictly decoded. Every way a fetch can fail ends as a `CheckFailed` whose kind says whose trouble it
 was: the site's (the fetcher's FetchFailed kinds) or ours (`fetcher_unavailable`, `bad_reply`), which never count
 against a watch (I11).
+
+Replies arrive as sent (auto_decompress=False on every request, whatever the session says): aiohttp would inflate
+each read whole before any cap saw it, so a fetcher compromised by the content it parses (I6) could answer with a
+small gzip body that inflates past waitlist-control's memory limit. The fetcher never compresses its replies, so
+any Content-Encoding but identity is a bad reply, refused before its body is read.
 """
 
 from __future__ import annotations
@@ -54,11 +59,14 @@ class FetchClient:
             async with self._http.post(
                 self._url,
                 data=encode(request),
-                headers={"Content-Type": "application/json"},
+                headers={"Content-Type": "application/json", "Accept-Encoding": "identity"},
                 timeout=self._timeout,
                 allow_redirects=False,
+                auto_decompress=False,
             ) as resp:
                 if resp.status != 200:
+                    raise CheckFailed("bad_reply")
+                if resp.headers.get("Content-Encoding", "").strip().lower() not in ("", "identity"):
                     raise CheckFailed("bad_reply")
                 if resp.content_length is not None and resp.content_length > MAX_REPLY_BYTES:
                     raise CheckFailed("bad_reply")

@@ -4,8 +4,10 @@ fetch ends, and whose trouble each is."""
 from __future__ import annotations
 
 import asyncio
+import gzip
 import json
 import socket
+import zlib
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -34,7 +36,13 @@ class FakeFetcher:
     async def handle(self, request: web.Request) -> web.StreamResponse:
         body = await request.read()
         decoded = decode_request(body)
-        self.seen.append({"content_type": request.content_type, "body": json.loads(body)})
+        self.seen.append(
+            {
+                "content_type": request.content_type,
+                "accept_encoding": request.headers.get("Accept-Encoding"),
+                "body": json.loads(body),
+            }
+        )
         return await self.answer(request, decoded.id)
 
 
@@ -55,6 +63,7 @@ async def rig(aiohttp_server: Callable[..., Awaitable[TestServer]]) -> AsyncIter
     app = web.Application()
     app.router.add_post("/v1/fetch", fetcher.handle)
     server = await aiohttp_server(app)
+    # aiohttp's default auto_decompress=True on purpose: FetchClient must keep replies as sent whatever the session.
     async with aiohttp.ClientSession(trust_env=False, cookie_jar=aiohttp.DummyCookieJar()) as http:
         yield Rig(fetcher, FetchClient(http, str(server.make_url("/")), timeout_s=0.5))
 
@@ -70,6 +79,7 @@ async def test_an_inventory_comes_back_as_the_providers_type(rig: Rig) -> None:
     assert inventory == FakeInventory(date="2027-07-01", part="a", status="open")
     (seen,) = rig.fetcher.seen
     assert seen["content_type"] == "application/json"
+    assert seen["accept_encoding"] == "identity"  # the fetcher never compresses, and we ask it not to
     assert seen["body"]["provider"] == "buntzen"
     assert seen["body"]["query"] == {"date": "2027-07-01", "part": "a"}
     assert set(seen["body"]) == {"v", "id", "provider", "query"}  # nothing about who is watching
@@ -120,6 +130,48 @@ async def test_an_answer_that_isnt_a_reply_is_a_bad_reply(rig: Rig, handler: Han
     rig.fetcher.answer = handler
     e = await failure(rig)
     assert (e.kind, e.replied) == ("bad_reply", False)
+
+
+def encoded(encoding: str, compress: Callable[[bytes], bytes]) -> Handler:
+    """A valid reply, compressed and labelled `encoding`: it would decode if anything inflated it."""
+
+    async def handler(_: web.Request, request_id: str) -> web.StreamResponse:
+        inventory = {"date": "2027-07-01", "part": "a", "status": "open"}
+        body = compress(encode(FetchOk(id=request_id, inventory=inventory, elapsed_ms=1)))
+        return web.Response(body=body, headers={"Content-Encoding": encoding})
+
+    return handler
+
+
+@pytest.mark.parametrize(
+    "handler",
+    [
+        encoded("gzip", gzip.compress),
+        encoded("deflate", zlib.compress),
+        encoded("br", lambda body: body),  # whatever the label, the fetcher never sends one
+    ],
+    ids=["gzip", "deflate", "br"],
+)
+async def test_a_compressed_reply_is_a_bad_reply_and_never_inflated(
+    rig: Rig, handler: Handler, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    inflaters: list[object] = []
+    real = zlib.decompressobj
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        inflaters.append(args or kwargs)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(zlib, "decompressobj", spy)  # what aiohttp inflates a gzip or deflate body with
+    rig.fetcher.answer = handler
+    e = await failure(rig)
+    assert (e.kind, e.replied) == ("bad_reply", False)
+    assert inflaters == []
+
+
+async def test_a_reply_labelled_identity_is_read(rig: Rig) -> None:
+    rig.fetcher.answer = encoded("identity", lambda body: body)
+    assert await rig.client.fetch(PROVIDER, QUERY) == FakeInventory(date="2027-07-01", part="a", status="open")
 
 
 async def test_an_inventory_that_isnt_the_providers_is_a_bad_reply(rig: Rig) -> None:

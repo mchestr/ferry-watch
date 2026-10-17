@@ -113,9 +113,10 @@ async def _serve(
     tasks = [asyncio.create_task(hub.run(), name="hub"), asyncio.create_task(fleet.run(), name="fleet")]
     async with contextlib.AsyncExitStack() as stack:
         if config.fetcher is not None:
-            # Its own session, never the kube one: no proxy from the environment, no cookies kept.
+            # Its own session, never the kube one: no proxy from the environment, no cookies kept, and replies left
+            # as sent (FetchClient refuses a compressed one rather than let aiohttp inflate it unbounded).
             fetcher_http = await stack.enter_async_context(
-                aiohttp.ClientSession(trust_env=False, cookie_jar=aiohttp.DummyCookieJar())
+                aiohttp.ClientSession(trust_env=False, cookie_jar=aiohttp.DummyCookieJar(), auto_decompress=False)
             )
             client = FetchClient(fetcher_http, config.fetcher.url, timeout_s=config.fetcher.timeout_seconds)
             checks = HttpChecks(pool, client, rates=config.http_rates())
