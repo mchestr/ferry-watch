@@ -84,6 +84,12 @@ def test_duplicates_collapse_and_the_order_is_canonical() -> None:
         ({"date": "2027-07-01", "passes": ["evening"]}, ("passes", "Passes are full_day, morning or afternoon")),
         ({"date": "2027-07-01", "passes": ["morning", 1]}, ("passes", "Passes are full_day, morning or afternoon")),
         ({"date": "2027-07-01", "passes": ["Morning"]}, ("passes", "Passes are full_day, morning or afternoon")),
+        # passes is checked before release_reminder
+        ({"date": "2027-07-01", "release_reminder": "yes"}, ("passes", "Pick at least one pass")),
+        (
+            {"date": "2027-07-01", "passes": ["evening"], "release_reminder": "yes"},
+            ("passes", "Passes are full_day, morning or afternoon"),
+        ),
         (
             {"date": "2020-01-01", "passes": ["morning"], "release_reminder": "yes"},
             ("release_reminder", "Must be true or false"),

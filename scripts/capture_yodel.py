@@ -115,13 +115,12 @@ def record(
     while (out_dir / f"{stem}.meta.json").exists():  # never overwrite an earlier capture
         n += 1
         stem = f"captured-{name}-{query.date}-{at.strftime('%Y%m%dT%H%M%SZ')}-{n}"
-    try:
-        pretty = json.dumps(json.loads(response.body), indent=2, ensure_ascii=False) + "\n"
+    try:  # encoded before any file is made, so a body utf-8 can't hold (a lone surrogate) leaves no empty .json
+        data = (json.dumps(json.loads(response.body), indent=2, ensure_ascii=False) + "\n").encode()
         body_path = out_dir / f"{stem}.json"
-        body_path.write_text(pretty)
     except ValueError:
-        body_path = out_dir / f"{stem}.txt"
-        body_path.write_bytes(response.body)
+        data, body_path = response.body, out_dir / f"{stem}.txt"
+    body_path.write_bytes(data)
     meta = {
         "captured_at": at.isoformat(),
         "status": response.status,

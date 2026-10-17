@@ -369,14 +369,66 @@ def _has_list_key(root: dict[str, Any]) -> bool:
     return LIST in root or any(isinstance(root.get(w), dict) and LIST in root[w] for w in ("content", "data"))
 
 
+STATUS_WORDS: Final = [
+    "Sold Out",
+    "SOLD-OUT",
+    "Morning",
+    "Afternoon",
+    "All Day",
+    "Available",
+    "Limited",
+    "Full",
+    "Coming Soon",
+    "",
+    "Waitlist",
+    "é\x00<",
+    "x" * 80,
+]
+LABEL_WORDS: Final = [
+    "Morning Pass",
+    "Afternoon Pass",
+    "Full Day Pass",
+    "All Day",
+    "Half Day Pass",
+    "Morning and Afternoon",
+    "8 am - 12 pm",
+    "Parking",
+]
+
+
+def _random_entry(rng: random.Random) -> object:
+    """Mostly what a catalog entry plausibly looks like, with now and then one field corrupted."""
+    entry: dict[str, object] = {"catalogItemStatus": rng.choice(STATUS_WORDS)}
+    for name in ("catalogItemCategory", "catalogItemName"):
+        if rng.random() < 0.6:
+            entry[name] = rng.choice(LABEL_WORDS)
+    if rng.random() < 0.3:
+        entry["availableQuantity"] = rng.choice([0, 3, -1, True, "5"])
+    if rng.random() < 0.04:
+        entry[rng.choice(list(entry))] = _random_value(rng, 3)
+    return entry
+
+
+def _random_root(rng: random.Random) -> object:
+    """Any JSON value; often a plausible catalog, at the top level or in one of the two wrappers."""
+    root = _random_value(rng, 0)
+    if isinstance(root, dict) and rng.random() < 0.4:
+        return root  # rarely carries the list key at all: site_changed
+    entries = _random_value(rng, 1) if rng.random() < 0.2 else [_random_entry(rng) for _ in range(rng.randrange(0, 7))]
+    holder: dict[str, object] = {LIST: entries}
+    wrapper = rng.choice([None, None, "content", "data"])
+    built: dict[str, object] = holder if wrapper is None else {wrapper: holder}
+    if rng.random() < 0.3:  # a sibling that may hide, or be mistaken for, the catalog
+        built.setdefault(rng.choice(["content", "data", "isSuccess"]), _random_value(rng, 1))
+    return built
+
+
 def test_random_objects_raise_only_fetch_errors_and_never_invent_an_inventory() -> None:
     rng = random.Random(20270701)  # noqa: S311 - seeded test data: the same cases every run
-    outcomes = {"ok": 0, "changed": 0}
+    outcomes = {"ok": 0, "ok_with_items": 0, "half_ok_with_items": 0, "changed": 0}
     kinds: set[str] = set()
     for _ in range(3000):
-        root = _random_value(rng, 0)
-        if not isinstance(root, dict) or rng.random() < 0.5:
-            root = {LIST: _random_value(rng, 1), **({} if rng.random() < 0.5 else {"content": _random_value(rng, 1)})}
+        root = _random_root(rng)
         places: tuple[PlaceId, ...] = (FULL, HALF)
         for place in places:
             try:
@@ -385,18 +437,30 @@ def test_random_objects_raise_only_fetch_errors_and_never_invent_an_inventory() 
                 kinds.add(e.kind)
                 outcomes["changed"] += 1
                 continue
+            # Any inventory at all, an empty one above all, needs the list key: "nothing open" is Yodel's word.
+            assert isinstance(root, dict)
+            assert _has_list_key(root)
             outcomes["ok"] += 1
+            if inventory.items:
+                outcomes["ok_with_items"] += 1
+                outcomes["half_ok_with_items"] += place == HALF
             assert len(inventory.items) <= 20
             assert (inventory.place_id, inventory.date) == (place, DATE)
-            if inventory.items:
-                assert _has_list_key(root)
             for item in inventory.items:
                 assert DETAIL.fullmatch(item.status)
                 assert len(item.status) <= 32
+                if place == FULL:
+                    assert item.period == "full_day"  # step 6: every item on the full-day place
+                else:
+                    assert item.period != "full_day"
+                    # step 8: nothing that may be bookable without saying which pass
+                    assert not (item.period == "unknown" and item.availability in ("open", "unknown"))
             msgspec.convert(msgspec.to_builtins(inventory), BuntzenInventory, strict=True)  # the wire accepts it
     assert kinds == {"site_changed"}
-    assert outcomes["ok"] > 100
-    assert outcomes["changed"] > 100
+    assert outcomes["ok"] > 1000, outcomes
+    assert outcomes["ok_with_items"] > 500, outcomes
+    assert outcomes["half_ok_with_items"] > 100, outcomes
+    assert outcomes["changed"] > 1000, outcomes
 
 
 def test_captured_responses_still_parse_as_they_did() -> None:
