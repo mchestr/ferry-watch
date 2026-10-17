@@ -45,7 +45,9 @@ async def seed(db: Database) -> None:
     owner = await db.connect()
     try:
         await owner.execute("INSERT INTO users (id, username) VALUES ($1, 'ann')", USER)
-        await owner.execute("INSERT INTO trips (id, user_id, spec) VALUES ($1, $2, '{}')", TRIP, USER)
+        await owner.execute(
+            "INSERT INTO trips (id, user_id, provider, spec) VALUES ($1, $2, 'bcferries', '{}')", TRIP, USER
+        )
     finally:
         await owner.close()
 
@@ -90,6 +92,13 @@ async def test_one_live_pod_per_trip(db: Database) -> None:
 
 async def test_one_hold_per_user(db: Database) -> None:
     await seed(db)
+    owner = await db.connect()
+    try:  # the user's second BC Ferries trip (only those have cart claims)
+        await owner.execute(
+            "INSERT INTO trips (id, user_id, provider, spec) VALUES ('ffffffffffffffff', $1, 'bcferries', '{}')", USER
+        )
+    finally:
+        await owner.close()
     control = await db.connect(ROLES.control)
     try:
         claim = (

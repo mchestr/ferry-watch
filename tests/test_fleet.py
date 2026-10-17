@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, time
@@ -109,7 +110,10 @@ class Rig:
     async def add_trip(self, trip: Trip, *, user: str = ANN) -> None:
         await self.run("INSERT INTO users (id, username) VALUES ($1, $1) ON CONFLICT DO NOTHING", user)
         await self.run(
-            "INSERT INTO trips (id, user_id, spec) VALUES ($1, $2, $3)", trip.id, user, json.dumps(trip.to_json())
+            "INSERT INTO trips (id, user_id, provider, spec) VALUES ($1, $2, 'bcferries', $3)",
+            trip.id,
+            user,
+            json.dumps(trip.to_json()),
         )
 
     async def pods(self) -> list[asyncpg.Record]:
@@ -426,3 +430,27 @@ async def test_short_checks_waiting_for_room_are_overdue(rig: Rig) -> None:
     report = await rig.fleet.reconcile()
     assert len(report.started) == 2  # at most two starting at once
     assert report.summary["short_checks"] == {"due": 3, "overdue": 1}
+
+
+# ---- other providers
+
+
+async def test_another_providers_watch_never_reaches_the_fleet(rig: Rig, caplog: pytest.LogCaptureFixture) -> None:
+    """The parenthesisation guard (docs/waitlist/design.md §2.4): a live Buntzen watch, due now, is never one of the
+    fleet's trips, while a removed BC Ferries trip whose pod still lives still is."""
+    await rig.add_trip(NEAR)
+    assert (await rig.fleet.reconcile()).started == [f"wl-{NEAR.id}-g1"]
+    await rig.run("UPDATE trips SET archived_at = now() WHERE id = $1", NEAR.id)
+    watch = "b" * 16
+    spec = {"date": "2026-10-13", "passes": ["morning"], "release_reminder": True}
+    await rig.run(
+        "INSERT INTO trips (id, user_id, provider, spec) VALUES ($1, $2, 'buntzen', $3)", watch, ANN, json.dumps(spec)
+    )
+    await rig.run("INSERT INTO trip_runtime (trip_id) VALUES ($1)", watch)  # due as soon as anything looks
+    with caplog.at_level(logging.DEBUG, logger="waitlist.control.fleet"):
+        _, trips, _, _ = await rig.fleet._inputs(NOW)
+        report = await rig.fleet.reconcile()
+    assert [(t.trip.id, t.archived) for t in trips] == [(NEAR.id, True)]
+    assert not [r for r in caplog.records if r.exc_info or r.levelno >= logging.ERROR]
+    assert report.started == []
+    assert [r["trip_id"] for r in await rig.pods()] == [NEAR.id]

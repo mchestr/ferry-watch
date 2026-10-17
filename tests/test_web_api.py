@@ -197,6 +197,17 @@ def sailing(depart: str, status: str = "available") -> dict[str, Any]:
     return {"depart": depart, "arrive": "10:35", "vessel": "Queen of Oak Bay", "status": status, "fares": []}
 
 
+async def removed_trip(rig: Rig, trip_id: str, user: str = ANN) -> None:
+    """A BC Ferries trip of the user's that was removed: what an old pod or cart claim belongs to. (Only BC
+    Ferries trips have pods and claims, so each one's trip is a row; docs/waitlist/design.md §3.1.)"""
+    await rig.sql(
+        "INSERT INTO trips (id, user_id, provider, spec, enabled, archived_at)"
+        " VALUES ($1, $2, 'bcferries', '{}', false, now())",
+        trip_id,
+        user,
+    )
+
+
 async def seen(rig: Rig, trip_id: str, *sailings: dict[str, Any], cart: dict[str, Any] | None = None) -> None:
     """What the trip's pod last reported."""
     await rig.sql(
@@ -238,6 +249,7 @@ async def test_hold_it_for_me_needs_something_to_hold(rig: Rig) -> None:
 async def test_hold_it_for_me_keeps_the_other_limits(rig: Rig) -> None:
     trip_id = await rig.add()
     await seen(rig, trip_id, sailing("09:00"))
+    await removed_trip(rig, "f" * 16)
     await rig.sql(
         "INSERT INTO hold_claims (user_id, trip_id, pod, cart_id) VALUES ($1, 'ffffffffffffffff', 'x', 'c')", ANN
     )
@@ -309,6 +321,7 @@ async def test_a_lapsed_claim_isnt_a_hold_elsewhere(rig: Rig) -> None:
     """A claim whose cart never came (a failed try on an old pod, a claim that timed out) lapses after 2 min."""
     trip_id = await rig.add()
     await seen(rig, trip_id, sailing("09:00"))
+    await removed_trip(rig, "f" * 16)
     await rig.sql(
         "INSERT INTO hold_claims (user_id, trip_id, pod, claimed_at) VALUES ($1, 'ffffffffffffffff', 'x',"
         " now() - interval '5 minutes')",
@@ -904,6 +917,8 @@ async def test_the_overview_shows_what_versions_run(rig: Rig) -> None:
         "UPDATE fleet_state SET value = $1 WHERE key = 'fleet_report'", json.dumps(report | {"version": "9.9"})
     )
     image = "ghcr.io/mchestr/waitlist-browser:0.6.3@sha256:" + "b" * 64
+    for trip_id in ("1" * 16, "2" * 16, "3" * 16):
+        await removed_trip(rig, trip_id, BOB)
     for gen, version, ended in [(1, "0.6.2", True), (2, "0.6.3", False)]:  # the same trip's old pod and its new one
         await rig.sql(
             "INSERT INTO browser_pods (name, trip_id, user_id, gen, mode, deadline_at, image_digest, agent_version,"

@@ -207,8 +207,11 @@ class WebStore:
     # ---- trips
 
     async def trip(self, uid: str, trip_id: str) -> tuple[Trip, int]:
+        """The user's live BC Ferries trip. Another provider's watch is "No such trip": the browser's actions (a
+        command, a manual check, a hold, a checkout) are BC Ferries' alone (docs/waitlist/design.md §2.4)."""
         row = await self._pool.fetchrow(
-            "SELECT spec, enabled, rev FROM trips WHERE id = $1 AND user_id = $2 AND archived_at IS NULL",
+            "SELECT spec, enabled, rev FROM trips"
+            " WHERE id = $1 AND user_id = $2 AND archived_at IS NULL AND provider = 'bcferries'",
             trip_id,
             uid,
         )
@@ -228,11 +231,13 @@ class WebStore:
         async with self._pool.acquire() as conn, conn.transaction():
             await conn.execute("SELECT 1 FROM users WHERE id = $1 FOR UPDATE", uid)
             limit = await self.limit(conn, uid, "maxTrips")
-            count = await conn.fetchval("SELECT count(*) FROM trips WHERE user_id = $1 AND archived_at IS NULL", uid)
+            count = await conn.fetchval(
+                "SELECT count(*) FROM trips WHERE user_id = $1 AND archived_at IS NULL AND provider = 'bcferries'", uid
+            )
             if count >= limit:
                 raise ApiError(409, f"You can watch up to {limit} trips", "trips", limit=limit, usage=count)
             await conn.execute(
-                "INSERT INTO trips (id, user_id, spec, enabled) VALUES ($1, $2, $3, $4)",
+                "INSERT INTO trips (id, user_id, provider, spec, enabled) VALUES ($1, $2, 'bcferries', $3, $4)",
                 trip.id,
                 uid,
                 json.dumps(trip.to_json()),
@@ -244,7 +249,8 @@ class WebStore:
     async def update_trip(self, uid: str, trip_id: str, data: dict[str, Any]) -> Trip:
         async with self._pool.acquire() as conn, conn.transaction():
             row = await conn.fetchrow(
-                "SELECT spec, enabled FROM trips WHERE id = $1 AND user_id = $2 AND archived_at IS NULL FOR UPDATE",
+                "SELECT spec, enabled FROM trips"
+                " WHERE id = $1 AND user_id = $2 AND archived_at IS NULL AND provider = 'bcferries' FOR UPDATE",
                 trip_id,
                 uid,
             )
@@ -270,11 +276,22 @@ class WebStore:
                 await conn.execute("UPDATE trip_runtime SET next_check_at = NULL WHERE trip_id = $1", trip_id)
         return trip
 
-    async def archive_trip(self, uid: str, trip_id: str) -> None:
-        """Stop watching. waitlist-control drains its pod, which hands back any cart first."""
+    async def archive_trip(self, uid: str, trip_id: str, *, provider: str | None = "bcferries") -> None:
+        """Stop watching. waitlist-control drains its pod, which hands back any cart first. `provider`: only a
+        watch of that provider (the /api/trips alias: BC Ferries), or None for any (DELETE /api/watches)."""
         async with self._pool.acquire() as conn, conn.transaction():
+            if provider is not None:
+                found = await conn.fetchval(
+                    "SELECT 1 FROM trips WHERE id = $1 AND user_id = $2 AND archived_at IS NULL AND provider = $3"
+                    " FOR UPDATE",
+                    trip_id,
+                    uid,
+                    provider,
+                )
+                if found is None:
+                    raise ApiError(404, "No such trip")
             if not await _archive(conn, uid, trip_id):
-                raise ApiError(404, "No such trip")
+                raise ApiError(404, "No such trip" if provider is not None else "No such watch")
 
     # ---- what users ask of their browser
 
@@ -410,7 +427,8 @@ class WebStore:
             raise ValidationError("reason", "Not a reason we know")
         async with self._pool.acquire() as conn, conn.transaction():
             paused = await conn.fetchval(
-                "SELECT paused_reason FROM trips WHERE id = $1 AND user_id = $2 AND archived_at IS NULL FOR UPDATE",
+                "SELECT paused_reason FROM trips"
+                " WHERE id = $1 AND user_id = $2 AND archived_at IS NULL AND provider = 'bcferries' FOR UPDATE",
                 trip_id,
                 uid,
             )
@@ -566,7 +584,8 @@ class WebStore:
         await self._pool.execute(
             "WITH cleared AS (UPDATE users SET paused = false WHERE id = $1 AND paused RETURNING id)"
             " UPDATE trips SET enabled = false, spec = jsonb_set(spec, '{enabled}', 'false'), rev = rev + 1,"
-            " updated_at = now() WHERE archived_at IS NULL AND enabled AND user_id IN (SELECT id FROM cleared)",
+            " updated_at = now() WHERE archived_at IS NULL AND enabled AND user_id IN (SELECT id FROM cleared)"
+            " AND provider = 'bcferries'",
             uid,
         )
         user = await self._pool.fetchrow("SELECT id, username, display, is_admin FROM users WHERE id = $1", uid)

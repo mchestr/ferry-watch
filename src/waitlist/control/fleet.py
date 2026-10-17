@@ -374,13 +374,16 @@ class Fleet:
         ]
         trips = []
         # A trip's quiet hours are lifted by a manual check (quiet_lifted_until) or "Hold it for me". A removed
-        # trip comes too while its pod lives, so the planner knows it was removed and lets a held cart go.
+        # trip comes too while its pod lives, so the planner knows it was removed and lets a held cart go. Only
+        # BC Ferries trips: another provider's watch is never a browser's (docs/waitlist/design.md §2.4). The
+        # parentheses matter: without them the provider would bind only to the live-pod case.
         for r in await self._pool.fetch(
             "SELECT t.id, t.user_id, t.spec, t.enabled, t.paused_reason, t.archived_at IS NOT NULL AS archived,"
             " rt.next_check_at, rt.backoff_until, rt.needs_attention, rt.queued_since,"
             " greatest(rt.quiet_lifted_until, rt.hold_requested_until) AS lifted_until"
-            " FROM trips t LEFT JOIN trip_runtime rt ON rt.trip_id = t.id WHERE t.archived_at IS NULL"
-            " OR t.id IN (SELECT trip_id FROM browser_pods WHERE ended_at IS NULL)"
+            " FROM trips t LEFT JOIN trip_runtime rt ON rt.trip_id = t.id"
+            " WHERE t.provider = 'bcferries' AND (t.archived_at IS NULL"
+            " OR t.id IN (SELECT trip_id FROM browser_pods WHERE ended_at IS NULL))"
         ):
             try:
                 trip = Trip.from_json(json.loads(r["spec"]) | {"enabled": r["enabled"]})

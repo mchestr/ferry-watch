@@ -92,7 +92,10 @@ async def rig(db: Database, aiohttp_server: Callable[..., Any]) -> AsyncIterator
     try:
         await owner.execute("INSERT INTO users (id, username, email) VALUES ($1, 'ann', 'ann@example.com')", ANN)
         await owner.execute(
-            "INSERT INTO trips (id, user_id, spec) VALUES ($1, $2, $3)", TRIP.id, ANN, json.dumps(TRIP.to_json())
+            "INSERT INTO trips (id, user_id, provider, spec) VALUES ($1, $2, 'bcferries', $3)",
+            TRIP.id,
+            ANN,
+            json.dumps(TRIP.to_json()),
         )
         cart = {"id": "c1", "status": "ready", "depart": "09:00", "unclaimed_deadline": 1_790_000_000.0}
         await owner.execute("INSERT INTO trip_state (trip_id, cart) VALUES ($1, $2)", TRIP.id, json.dumps(cart))
