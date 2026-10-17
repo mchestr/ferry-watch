@@ -7,6 +7,7 @@ import { AlertTriangle, BellRing, Loader2, LogOut, Settings, Shield } from "luci
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { configureBearerAuth, errorMessage, hasStatus, type AuthReason } from "@/lib/api";
+import { useTerminals } from "@/lib/hooks";
 import { AccountCard } from "./AccountCard";
 import { AdminPage } from "./AdminPage";
 import { MY_STATE_KEY, myApi } from "./api";
@@ -67,10 +68,6 @@ function Callback({ onSignedIn }: { onSignedIn: () => void }) {
   );
 }
 
-function useTerminalList() {
-  return useQuery({ queryKey: ["terminals"], queryFn: ({ signal }) => myApi.terminals(signal), staleTime: 3_600_000 });
-}
-
 function SignedIn() {
   const route = useRoute();
   const live = useMyLive();
@@ -79,7 +76,8 @@ function SignedIn() {
     queryFn: ({ signal }) => myApi.state(signal),
     refetchInterval: live ? false : 15_000,
   });
-  const terminals = useTerminalList();
+  // The one terminals query (lib/hooks): the same key with other options would stop its retries after one.
+  const terminals = useTerminals();
   const state = query.data;
 
   if (!state) {
