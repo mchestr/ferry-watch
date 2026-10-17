@@ -4,6 +4,7 @@
  */
 import type { ComponentType } from "react";
 import type { LucideIcon } from "lucide-react";
+import type { Terminal } from "@/lib/schema";
 import type { Tone } from "@/mt/trips";
 import type { ProviderInfo, Watch, WaitlistState } from "@/mt/watch-schema";
 
@@ -33,7 +34,8 @@ export interface ProviderUi<W extends Watch = Watch> {
   tagline: string;
   /** The empty state's button for this provider: "Watch a ferry". */
   cta: string;
-  title(watch: W, ctx: { terminals?: readonly { code: string; label: string }[] }): string;
+  /** The watch in a line, as its card and alerts name it: "Swartz Bay → Tsawwassen, Fri Oct 23". */
+  title(watch: W, ctx: { terminals?: readonly Terminal[] }): string;
   date(watch: W): string; // ISO date, for sorting
   group(watch: W, now: number): Group;
   badge(watch: W, now: number): { text: string; tone: Tone };

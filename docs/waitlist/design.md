@@ -131,6 +131,10 @@ card's Check now is now enabled for `quiet` as well.
   `FROM public.trips` and is declared `SET search_path = pg_catalog, public, pg_temp`. 0008 is edited in
   place, as in Amendment 4. `TEMPORARY` stays granted: it comes from `PUBLIC` on the database, outside what
   `db.grant()` manages, and with these two changes the triggers no longer depend on it.
+- **`ProviderUi.title` gets whole terminals.** §7.5's `title(watch, ctx)` takes
+  `ctx: { terminals?: readonly Terminal[] }` (lib/schema's `Terminal`, with `place`), and BC Ferries' names a
+  trip by its terminals' `place`, as `routeTitle`, the card and alerts do: "Swartz Bay → Tsawwassen, Fri Oct 23",
+  not the route form's longer labels.
 
 ---
 
