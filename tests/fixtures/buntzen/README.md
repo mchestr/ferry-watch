@@ -46,8 +46,8 @@ body is served as HTTP 200 `application/json`, except `synth-error-page.html` (`
 `uv run python scripts/capture_yodel.py --date YYYY-MM-DD` (run by the owner from the home network, never in
 CI; see docs/providers/buntzen.md) writes, per response:
 
-- `captured-<full|half>-<date>-<YYYYMMDDTHHMMSSZ>.json`: the body, pretty-printed (or `.txt`, raw, when it
-  isn't JSON);
+- `captured-<full|half>-<date>-<YYYYMMDDTHHMMSSZ>.json`: the body, pretty-printed (or `.txt`, byte for byte,
+  when it isn't JSON the parser's decoder reads: not JSON at all, a BOM or UTF-16, nesting too deep to re-encode);
 - `captured-<full|half>-<date>-<YYYYMMDDTHHMMSSZ>.meta.json`: `captured_at`, `status`, `content_type`, the
   `request` (`url`, `payload`) and what the parser made of it (`parsed`: the inventory, or `{"error": kind}`).
   No response headers are stored, so no cookie reaches the repo.

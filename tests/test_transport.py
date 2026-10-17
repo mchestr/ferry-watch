@@ -18,6 +18,7 @@ from typing import Any, cast
 
 import aiohttp
 import aiohttp.abc
+import aiohttp.connector
 import pytest
 import yarl
 from aiohttp import web
@@ -152,17 +153,45 @@ async def test_the_production_session_resolves_through_the_public_only_resolver(
     aiohttp_server: ServerFactory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """upstream_session itself (as serve() and the capture script build it), with DNS answering loopback: the
-    request must fail as `network` and never arrive."""
+    request must fail as `network` and never arrive, and the answer must have come from PublicOnlyResolver's inner
+    resolver (aiohttp's own default resolver, which a connector without `resolver=` uses, is made to fail)."""
     arrived: list[str] = []
+    asked: list[str] = []
 
     async def counted(request: web.Request) -> web.Response:
         arrived.append(request.path)
         return web.Response(text="reached")
 
+    class Recording(FakeResolver):
+        async def resolve(
+            self, host: str, port: int = 0, family: socket.AddressFamily = socket.AF_INET
+        ) -> list[aiohttp.abc.ResolveResult]:
+            asked.append(host)
+            return await super().resolve(host, port, family)
+
+    class Unreachable(aiohttp.abc.AbstractResolver):
+        """Stands in for aiohttp's DefaultResolver, so a connector that bypasses PublicOnlyResolver never sends a
+        real DNS query from the test."""
+
+        def __init__(self, *_: object, **__: object) -> None:
+            pass
+
+        async def resolve(
+            self,
+            host: str,
+            port: int = 0,  # noqa: ARG002
+            family: socket.AddressFamily = socket.AF_INET,  # noqa: ARG002
+        ) -> list[aiohttp.abc.ResolveResult]:
+            raise AssertionError(f"{host} was resolved without PublicOnlyResolver")
+
+        async def close(self) -> None:
+            pass
+
     app = web.Application()
     app.router.add_get("/", counted)
     server = await aiohttp_server(app)
-    monkeypatch.setattr(aiohttp, "ThreadedResolver", lambda: FakeResolver("127.0.0.1"))  # PublicOnlyResolver's inner
+    monkeypatch.setattr(aiohttp, "ThreadedResolver", lambda: Recording("127.0.0.1"))  # PublicOnlyResolver's inner
+    monkeypatch.setattr(aiohttp.connector, "DefaultResolver", Unreachable)  # what TCPConnector() alone would use
     async with upstream_session(FetcherConfig()) as session:
         transport = AiohttpTransport(
             session, frozenset({"api.yodelpass.test"}), max_bytes=1024, _scheme="http", _port=port_of(server)
@@ -171,6 +200,7 @@ async def test_the_production_session_resolves_through_the_public_only_resolver(
             await transport.get(f"http://api.yodelpass.test:{port_of(server)}/", headers={})
     assert caught.value.kind == "network"
     assert arrived == []
+    assert asked == ["api.yodelpass.test"]  # upstream_session asked PublicOnlyResolver, not aiohttp's default
 
 
 # ---- the real request path, through the test seam

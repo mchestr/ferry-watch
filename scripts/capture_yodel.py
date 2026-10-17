@@ -13,9 +13,9 @@ shows Yodel's shape) and again on the first day of the 2027 season around 07:00 
   waitlist-fetcher's own transport: https to api.yodelpass.com only, public addresses only, no redirects, no
   cookies, a 256 KiB cap. It waits at least 5 s between requests.
 - For each response it writes `captured-<place>-<date>-<YYYYMMDDTHHMMSSZ>.json` (the body, pretty-printed if it
-  is JSON, else raw as `.txt`) and, beside it, `….meta.json`: captured_at, status, content_type, the request (url
-  and payload), and what the parser made of it (the inventory, or {"error": kind}). No response header is
-  stored, so no cookie reaches the repo. It prints the parsed result.
+  is JSON the parser's decoder reads, else byte for byte as `.txt`) and, beside it, `….meta.json`: captured_at,
+  status, content_type, the request (url and payload), and what the parser made of it (the inventory, or
+  {"error": kind}). No response header is stored, so no cookie reaches the repo. It prints the parsed result.
 """
 
 from __future__ import annotations
@@ -116,9 +116,10 @@ def record(
         n += 1
         stem = f"captured-{name}-{query.date}-{at.strftime('%Y%m%dT%H%M%SZ')}-{n}"
     try:  # encoded before any file is made, so a body utf-8 can't hold (a lone surrogate) leaves no empty .json
+        msgspec.json.decode(response.body)  # JSON only if the parser's own decoder reads it (no BOM, no UTF-16)
         data = (json.dumps(json.loads(response.body), indent=2, ensure_ascii=False) + "\n").encode()
         body_path = out_dir / f"{stem}.json"
-    except ValueError:
+    except (msgspec.DecodeError, ValueError, RecursionError):  # kept byte for byte, so it re-parses as it did
         data, body_path = response.body, out_dir / f"{stem}.txt"
     body_path.write_bytes(data)
     meta = {

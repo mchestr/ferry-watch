@@ -15,6 +15,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, ClassVar
 
+import msgspec
 import pytest
 
 from waitlist.providers.base import FetchError, HttpResponse
@@ -166,6 +167,61 @@ def test_a_json_body_utf8_cant_hold_is_kept_raw_as_its_only_body_file(script: Mo
     assert path.read_bytes() == body
     stem = "captured-half-2027-05-20-20270519T140002Z"
     assert sorted(p.name for p in tmp_path.iterdir()) == [f"{stem}.meta.json", f"{stem}.txt"]  # no empty .json
+
+
+def reparsed(body_path: Path, meta: Mapping[str, Any]) -> object:
+    """The stored body read back as test_buntzen_parse's regression test reads it."""
+    payload = meta["request"]["payload"]
+    query = BuntzenQuery(place_id=int(payload["placeId"]), date=payload["reservationDate"])  # type: ignore[arg-type]
+    body = body_path.read_bytes()
+    if body_path.suffix == ".json":
+        body = json.dumps(json.loads(body)).encode()
+    try:
+        return msgspec.to_builtins(
+            parse_catalog(HttpResponse(status=meta["status"], content_type=meta["content_type"], body=body), query)
+        )
+    except FetchError as e:
+        return {"error": e.kind}
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b'\xef\xbb\xbf{"catalogItemExtendedResultLst": []}',  # json.loads strips a BOM; the parser's decoder doesn't
+        '{"catalogItemExtendedResultLst": []}'.encode("utf-16"),  # json.loads detects UTF-16; the parser doesn't
+    ],
+    ids=["utf-8 BOM", "utf-16"],
+)
+def test_a_body_only_pythons_json_reads_is_kept_byte_for_byte_and_reparses_as_it_did(
+    script: ModuleType, tmp_path: Path, body: bytes
+) -> None:
+    query = BuntzenQuery(place_id=10672, date="2027-05-20")
+    response = HttpResponse(status=200, content_type="application/json", body=body)
+    path, meta = script.record(tmp_path, "half", query, response, datetime(2027, 5, 19, 14, 0, 2, tzinfo=UTC))
+    assert path.suffix == ".txt"
+    assert path.read_bytes() == body
+    assert meta["parsed"] == {"error": "site_changed"}
+    assert reparsed(path, meta) == meta["parsed"]  # the capture reproduces what the owner has to fix
+
+
+def test_a_body_too_deep_to_reencode_is_kept_raw_with_its_meta(script: ModuleType, tmp_path: Path) -> None:
+    """The parser's decoder reads 2000 levels; Python's json.loads/dumps raise RecursionError on them."""
+    query = BuntzenQuery(place_id=10672, date="2027-05-20")
+    body = (
+        b'{"catalogItemExtendedResultLst": [{"catalogItemCategory": "Half Day Pass", "catalogItemStatus": "Sold Out", '
+        b'"x": ' + b"[" * 2000 + b"]" * 2000 + b"}]}"
+    )
+    response = HttpResponse(status=200, content_type="application/json", body=body)
+    path, meta = script.record(tmp_path, "half", query, response, datetime(2027, 5, 19, 14, 0, 2, tzinfo=UTC))
+    stem = "captured-half-2027-05-20-20270519T140002Z"
+    assert sorted(p.name for p in tmp_path.iterdir()) == [f"{stem}.meta.json", f"{stem}.txt"]
+    assert path.read_bytes() == body
+    assert meta["parsed"] == {
+        "place_id": 10672,
+        "date": "2027-05-20",
+        "items": [{"period": "unknown", "availability": "sold_out", "status": "Sold Out"}],
+    }
+    assert reparsed(path, meta) == meta["parsed"]
 
 
 class FakeTransport:
