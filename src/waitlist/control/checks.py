@@ -467,8 +467,8 @@ class HttpChecks:
     # ---- 8. recording one watch
 
     async def _record(self, watch: _Watch, results: Mapping[tuple[str, msgspec.Struct], Outcome], now: float) -> bool:
-        """One watch's record, in its own transaction. False: dropped (the watch changed since planning, or the
-        record failed) or nothing anyone sees changed (our own failure)."""
+        """One watch's record, in its own transaction. True when it committed something the owner's state shows,
+        so they are notified; False when it was dropped (the watch changed since planning, or the record failed)."""
         queries = watch.provider.queries(watch.input.spec)
         outcomes = [results[(watch.input.provider, q)] for q in queries]
         ok = {q: o for q, o in zip(queries, outcomes, strict=True) if not isinstance(o, CheckFailed)}
@@ -497,15 +497,15 @@ class HttpChecks:
                         await self._partial_ours(conn, watch, options, outcome, now)
                 elif theirs:
                     await self._provider_failure(conn, watch, theirs, now)
-                else:
-                    await conn.execute(
+                else:  # only the next check moves (I11), and the state shows it: notify when it did
+                    moved = await conn.execute(
                         "UPDATE trip_runtime SET next_check_at = $2, updated_at = now()"
                         " WHERE trip_id = $1 AND next_check_at IS NOT DISTINCT FROM $3",
                         watch.id,
                         _ts(now + OUR_SIDE_RETRY_S),
                         watch.planned,
                     )
-                    return False
+                    return moved == "UPDATE 1"
         except asyncpg.PostgresError:
             log.exception("Recording watch %s's check failed", watch.id)
             return False

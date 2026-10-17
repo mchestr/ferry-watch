@@ -259,7 +259,7 @@ async def overview(request: web.Request) -> web.Response:
                     "id": provider_id,
                     "name": provider.meta.name,
                     "offer": offers.get(provider_id, "off"),
-                    "paused": switches.get("maintenance") is True or provider_id in paused,
+                    "paused": provider_id in paused,  # an admin's pause only: maintenance is switches.maintenance
                 }
                 for provider_id, provider in _registry(request).http.items()
             ],

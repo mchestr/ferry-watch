@@ -347,7 +347,19 @@ async def test_our_own_trouble_charges_no_watch(rig: Rig, failure: CheckFailed) 
     before = await rig.result()
     rig.client.answers = {"a": failure, "b": failure}
     later = await rig.due_at()
-    await rig.tick(later)
+    heard: list[str] = []
+    conn = await rig.db.connect()
+    try:
+        await conn.add_listener("wl_user", lambda *args: heard.append(args[3]))
+        await rig.tick(later)
+        for _ in range(50):
+            if heard:
+                break
+            await asyncio.sleep(0.02)
+        await asyncio.sleep(0.1)
+    finally:
+        await conn.close()
+    assert heard == [ANN]  # the state's next check moved
     assert await rig.result() == before  # no counter, no outcome, no attempt
     runtime = await rig.runtime()
     assert (runtime["failures"], runtime["backoff_until"]) == (0, None)

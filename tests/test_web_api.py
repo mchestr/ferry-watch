@@ -1317,7 +1317,8 @@ async def test_the_overview_has_the_check_report_and_the_providers(rig: Rig) -> 
     assert "check_report" not in overview["switches"]  # what the loop reported: not a switch
     await rig.sql("UPDATE fleet_state SET value = 'true' WHERE key = 'maintenance'")
     overview = await (await rig.call("GET", "/api/admin/overview")).json()
-    assert overview["providers"][0]["paused"] is True
+    assert overview["switches"]["maintenance"] is True
+    assert overview["providers"][0]["paused"] is False  # no admin paused it: the switch shows paused_providers only
 
 
 async def test_pausing_a_providers_checks(rig: Rig) -> None:
