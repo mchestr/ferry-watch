@@ -28,6 +28,7 @@ control = [
 waitlist-agent = "waitlist.agent.main:main"
 waitlist-control = "waitlist.control.main:main"
 waitlist-web = "waitlist.web.main:main"
+waitlist-fetcher = "waitlist.fetcher.main:main"
 
 [dependency-groups]
 dev = [
@@ -120,6 +121,7 @@ source_modules = [
   "waitlist.tickets",
   "waitlist.models",
   "waitlist.versions",
+  "waitlist.fetchwire",
   "waitlist.bcferries.urls",
   "waitlist.bcferries.terminals",
   "waitlist.bcferries.errors",
@@ -161,6 +163,67 @@ forbidden_modules = [
   "waitlist.agent",
   "waitlist.bcferries.site",
   "waitlist.bcferries.parse",
+  "playwright",
+  "selectolax",
+]
+
+[[tool.importlinter.contracts]]
+name = "Providers are pure: no I/O, no database, no app, no browser"
+type = "forbidden"
+source_modules = ["waitlist.providers"]
+forbidden_modules = [
+  "aiohttp",
+  "asyncpg",
+  "playwright",
+  "selectolax",
+  "waitlist.agent",
+  "waitlist.control",
+  "waitlist.web",
+  "waitlist.fetcher",
+  "waitlist.fetchwire",
+  "waitlist.bcferries.site",
+  "waitlist.bcferries.parse",
+]
+
+[[tool.importlinter.contracts]]
+name = "Only waitlist-fetcher runs a provider's client (it parses what a site sends)"
+type = "forbidden"
+source_modules = ["waitlist.web", "waitlist.control", "waitlist.agent"]
+forbidden_modules = ["waitlist.providers.buntzen.client", "waitlist.fetcher"]
+
+[[tool.importlinter.contracts]]
+name = "waitlist-fetcher holds nothing: no database, no Kubernetes, no app, no browser"
+type = "forbidden"
+source_modules = ["waitlist.fetcher"]
+forbidden_modules = [
+  "asyncpg",
+  "jwt",
+  "playwright",
+  "selectolax",
+  "waitlist.agent",
+  "waitlist.control",
+  "waitlist.web",
+  "waitlist.tickets",
+  "waitlist.bcferries",
+]
+
+[[tool.importlinter.contracts]]
+name = "Providers don't know about each other"
+type = "independence"
+modules = ["waitlist.providers.bcferries", "waitlist.providers.buntzen"]
+
+[[tool.importlinter.contracts]]
+name = "The HTTP check loop never touches Kubernetes or a browser"
+type = "forbidden"
+source_modules = ["waitlist.control.checks", "waitlist.control.checkplan", "waitlist.control.fetch"]
+forbidden_modules = [
+  "waitlist.control.kube",
+  "waitlist.control.fleet",
+  "waitlist.control.pods",
+  "waitlist.control.hub",
+  "waitlist.control.config",
+  "waitlist.control.main",
+  "waitlist.agent",
   "playwright",
   "selectolax",
 ]
