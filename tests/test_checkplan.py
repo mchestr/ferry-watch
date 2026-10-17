@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import date, datetime, time, timedelta
+from itertools import pairwise
 from typing import Any
 
 import pytest
@@ -13,7 +14,9 @@ from tests.fakes import FakeHttpProvider, FakeSpec, fake_registry
 from waitlist.control.checkplan import (
     ARCHIVE_AFTER_CLOSE_S,
     BACKOFF_AFTER,
+    MIN_INTERVAL_S,
     RELEASE_DELAY_S,
+    TICK_SECONDS,
     WatchInput,
     check_state,
     plan_checks,
@@ -64,6 +67,7 @@ def plan(watches: list[WatchInput], *, now: float = NOON, tokens: int = 12, **kw
         cooldown_until=kw.pop("cooldown_until", {}),
         tokens={"buntzen": tokens},
         now=now,
+        fetched_at=kw.pop("fetched_at", None),
     )
 
 
@@ -163,6 +167,44 @@ def test_due_watches_are_taken_oldest_first() -> None:
     result = plan([newer, older], tokens=2)
     assert {j.watch_ids for j in result.jobs} == {("2" * 16,)}
     assert result.deferred == {"buntzen": 1}
+
+
+def test_a_watch_without_a_next_check_never_goes_ahead_of_watches_already_due() -> None:
+    edited = watch("1" * 16, attempted_at=NOON - 20)  # an edit reset next_check_at; its window opened yesterday
+    waiting = watch("2" * 16, day=DAY + timedelta(days=1), next_check_at=NOON - 10)
+    result = plan([edited, waiting], tokens=2)
+    assert {j.watch_ids for j in result.jobs} == {("2" * 16,)}
+    assert result.deferred == {"buntzen": 1}
+
+
+def test_a_watch_reset_every_tick_fetches_each_query_at_most_once_per_min_interval() -> None:
+    fetched: dict[Any, float] = {}
+    fetches: dict[str, list[float]] = {"a": [], "b": []}
+    now = NOON
+    while now < NOON + 300:
+        result = plan([watch("1" * 16)], now=now, fetched_at=fetched)  # next_check_at NULL, as after every PATCH
+        for job in result.jobs:
+            fetched[(job.provider, job.query)] = now
+            fetches[job.query.part].append(now)
+        now += TICK_SECONDS
+    for times in fetches.values():
+        assert times[0] == NOON
+        assert all(b - a >= MIN_INTERVAL_S for a, b in pairwise(times))
+        assert len(times) == 300 / MIN_INTERVAL_S
+
+
+def test_a_watch_held_back_by_min_interval_is_neither_checked_nor_deferred() -> None:
+    w = watch("1" * 16)
+    jobs = plan([w]).jobs
+    fetched = {(j.provider, j.query): NOON - 10 for j in jobs}
+    held = plan([w], fetched_at=fetched)
+    assert (held.jobs, held.deferred) == ([], {})
+    assert held.wake_at == NOON + MIN_INTERVAL_S - 10
+    assert plan([w], now=NOON + MIN_INTERVAL_S - 10, fetched_at=fetched).jobs == jobs
+    one = {(jobs[0].provider, jobs[0].query): NOON - 10}  # one of its queries is enough to hold the watch
+    assert plan([w], fetched_at=one).jobs == []
+    other = watch("2" * 16, BOB, day=DAY + timedelta(days=1))  # different queries: not held
+    assert {j.watch_ids for j in plan([w, other], fetched_at=fetched).jobs} == {("2" * 16,)}
 
 
 def test_a_watch_not_due_rides_along_for_free() -> None:

@@ -24,6 +24,7 @@ from waitlist.control.checkplan import (
     CHECKER_DOWN_ALERT_AFTER_S,
     OUR_SIDE_RETRY_S,
     RATE_LIMITED_COOLDOWN_S,
+    TICK_SECONDS,
 )
 from waitlist.control.checks import HttpChecks
 from waitlist.control.fetch import CheckFailed, FetchClient
@@ -267,6 +268,14 @@ async def test_out_of_season_is_no_inventory_not_an_error(rig: Rig) -> None:
 
 
 # ---- what a record never does
+
+
+async def test_edits_on_every_tick_fetch_each_query_at_most_once_per_min_interval(rig: Rig) -> None:
+    await rig.add()
+    for step in range(24):  # two minutes of ticks, each after an edit that made the watch due at once
+        await rig.sql("UPDATE trip_runtime SET next_check_at = NULL WHERE trip_id = $1", W1, user=ROLES.web)
+        await rig.tick(NOON + step * TICK_SECONDS)
+    assert len(rig.client.calls) == 2 * 4  # parts a and b, at 0, 30, 60 and 90 s
 
 
 async def test_an_edit_while_fetching_drops_the_result(rig: Rig) -> None:

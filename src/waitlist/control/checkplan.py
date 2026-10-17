@@ -7,7 +7,8 @@ dashboard and the loop always agree on a watch's state.
 A watch is checked from its window's `opens_at` (plus RELEASE_DELAY_S) until `closes_at`. Each tick takes the due
 watches oldest first and admits one only if all of its queries fit in its provider's request budget; identical
 queries are coalesced across watches and users, and every other checkable watch whose queries all made the round
-rides along for free.
+rides along for free. No query is fetched again within MIN_INTERVAL_S of its last fetch, whatever made its watch
+due early (an edit or a re-enable resets next_check_at, and a new watch has none).
 """
 
 from __future__ import annotations
@@ -183,6 +184,17 @@ def _released(watch: WatchInput, now: float) -> bool:
     return now >= watch.window.opens_at.timestamp() + RELEASE_DELAY_S
 
 
+FetchedAt = Mapping[tuple[str, msgspec.Struct], float]
+"""When each (provider, query) was last fetched, as the check loop remembers it."""
+
+
+def _spaced_until(provider: str, queries: Sequence[msgspec.Struct], fetched_at: FetchedAt) -> float:
+    """The earliest instant at which every one of these queries may be fetched again (0.0: at once)."""
+    return max(
+        (fetched_at[(provider, q)] + MIN_INTERVAL_S for q in queries if (provider, q) in fetched_at), default=0.0
+    )
+
+
 def plan_checks(
     watches: Sequence[WatchInput],
     users: Mapping[str, UserView],
@@ -192,8 +204,14 @@ def plan_checks(
     cooldown_until: Mapping[str, float],
     tokens: Mapping[str, int],
     now: float,
+    fetched_at: FetchedAt | None = None,
 ) -> CheckPlan:
-    """The tick's jobs, reminders and archives, every watch's state, and when to wake next (design.md §4.5)."""
+    """The tick's jobs, reminders and archives, every watch's state, and when to wake next (design.md §4.5).
+
+    A watch is due only once all of its queries were last fetched (`fetched_at`) at least MIN_INTERVAL_S ago; until
+    then it waits, neither admitted nor deferred. A due watch without a next_check_at (new, edited or re-enabled)
+    is as old as `now`: it never goes ahead of watches already due."""
+    fetched = fetched_at if fetched_at is not None else {}
     states: dict[str, CheckState] = {}
     queries: dict[str, tuple[msgspec.Struct, ...]] = {}
     for w in watches:
@@ -207,10 +225,11 @@ def plan_checks(
             now=now,
         )
         queries[w.id] = provider.queries(w.spec) if provider is not None else ()
+    spaced = {w.id: _spaced_until(w.provider, queries[w.id], fetched) for w in watches}
     checkable = [w for w in watches if states[w.id] in CHECKABLE and queries[w.id] and _released(w, now)]
     due = sorted(
-        (w for w in checkable if (w.next_check_at or 0.0) <= now),
-        key=lambda w: (w.next_check_at if w.next_check_at is not None else w.window.opens_at.timestamp(), w.id),
+        (w for w in checkable if (w.next_check_at or 0.0) <= now and spaced[w.id] <= now),
+        key=lambda w: (w.next_check_at if w.next_check_at is not None else now, w.id),
     )
     jobs, included = _jobs(checkable, due, queries, tokens)
     deferred: dict[str, int] = {}
@@ -224,7 +243,7 @@ def plan_checks(
         deferred=deferred,
         # 6. Watches whose window closed long enough ago to clear away.
         ended=sorted(w.id for w in watches if now >= w.window.closes_at.timestamp() + ARCHIVE_AFTER_CLOSE_S),
-        wake_at=_wake_at(watches, registry, states, cooldown_until, now),
+        wake_at=_wake_at(watches, registry, states, cooldown_until, spaced, now),
     )
 
 
@@ -285,10 +304,11 @@ def _wake_at(
     registry: Registry,
     states: Mapping[str, CheckState],
     cooldown_until: Mapping[str, float],
+    spaced: Mapping[str, float],
     now: float,
 ) -> float | None:
     """Rule 7: the earliest future instant at which something becomes due (a release, a reminder, a next check, an
-    archive), or None."""
+    archive), or None. A checkable watch's next check is never before its queries may be fetched again."""
     instants: list[float] = []
     for w in watches:
         opens, closes = w.window.opens_at.timestamp(), w.window.closes_at.timestamp()
@@ -299,8 +319,8 @@ def _wake_at(
         remind = provider.reminder_at(w.spec) if provider is not None else None
         if remind is not None:
             instants.append(remind.timestamp())
-        if state in CHECKABLE:  # due at its next check, and never before the release delay
-            instants.append(max(w.next_check_at or 0.0, opens + RELEASE_DELAY_S))
+        if state in CHECKABLE:  # due at its next check, and never before the release delay or MIN_INTERVAL_S
+            instants.append(max(w.next_check_at or 0.0, opens + RELEASE_DELAY_S, spaced[w.id]))
         elif state == "backoff":
             instants.append(max(w.next_check_at or 0.0, w.backoff_until or 0.0, cooldown_until.get(w.provider, 0.0)))
         instants.append(closes + ARCHIVE_AFTER_CLOSE_S)

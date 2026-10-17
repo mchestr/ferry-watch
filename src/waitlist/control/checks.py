@@ -180,6 +180,8 @@ class HttpChecks:
         self._buckets = {p: _Bucket(rate, float(rate), start) for p, rate in self._rates.items()}
         self._stats = {p: _Stats() for p in self._rates}
         self._cooldown_until: dict[str, float] = {}
+        # When each (provider, query) was last fetched, kept for MIN_INTERVAL_S: plan_checks fetches none sooner.
+        self._fetched_at: dict[tuple[str, msgspec.Struct], float] = {}
         self._down_since: dict[str, float] = {}
         self._reminded: set[str] = set()  # reminder dedup keys this process inserted (the database dedups too)
         self._bad_specs: set[tuple[str, int]] = set()  # (id, rev) already logged
@@ -224,6 +226,7 @@ class HttpChecks:
     async def tick(self) -> CheckPlan:
         now = self._clock()
         watches, counts, users, provider_paused = await self._read()
+        self._fetched_at = {key: at for key, at in self._fetched_at.items() if 0 <= now - at < MIN_INTERVAL_S}
         plan = plan_checks(
             [w.input for w in watches.values()],
             users,
@@ -232,6 +235,7 @@ class HttpChecks:
             cooldown_until={p: t for p, t in self._cooldown_until.items() if t > now},
             tokens={p: bucket.available(now) for p, bucket in self._buckets.items()},
             now=now,
+            fetched_at=self._fetched_at,
         )
         affected = await self._remind(plan.reminders, now)
         affected |= await self._archive(plan.ended, watches, now)
@@ -394,6 +398,7 @@ class HttpChecks:
 
         for job in jobs:
             self._buckets[job.provider].take(1)
+            self._fetched_at[(job.provider, job.query)] = now
         outcomes = await asyncio.gather(*(one(job) for job in jobs))
         for job, outcome in zip(jobs, outcomes, strict=True):
             stats = self._stats[job.provider]
