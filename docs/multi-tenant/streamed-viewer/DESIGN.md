@@ -882,7 +882,7 @@ read once per session in the main world must start with `en-US`, else `date` ans
   suggestion selects the word it replaces and types over it in one task, before that runs).
   - Found on an iPhone in 0.7.0, which kept text only where the proxy's `autocapitalize` was `words` or
     `sentences` (names, addresses, free text): "mike" typed into an email field, then the keyboard's suggestion
-    "mikeachester@gmail.com", gave the pod "mikemikeachester@gmail.com". The empty proxy had no "mike" for the
+    "mike@example.com", gave the pod "mikemike@example.com". The empty proxy had no "mike" for the
     suggestion to replace, so it arrived whole and was sent as new text.
   - An email input's value leaves out spaces at either end, though the user typed them, and it has no selection
     (`setSelectionRange` throws). A space typed at the end is sent all the same (the browser's `input` says what it
@@ -908,7 +908,7 @@ read once per session in the main world must start with `en-US`, else `date` ans
   is sent as the difference too.
   - Found in review: Gboard re-opens the word before the caret as its composition (after a Backspace into it, or to
     offer a suggestion for it), which was sent as new text after the word the pod already had: "mike" and the
-    suggestion "mikeachester@gmail.com" gave "mikemikeachester@gmail.com", the owner's bug the Android way (0.7.0
+    suggestion "mike@example.com" gave "mikemike@example.com", the owner's bug the Android way (0.7.0
     had it in names and free text). On a composition's `input` the viewer finds it in the proxy, ending at the
     caret (an email input's end); if what precedes it isn't what was kept, or text follows it, the kept text it
     covers is deleted in the pod (`compose ""`, `Backspace`s) and the composition sent again, and what follows it
