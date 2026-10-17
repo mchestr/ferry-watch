@@ -17,6 +17,11 @@ import { WatchCard } from "./WatchCard";
 import { capacityFor, nextHint, pickable, sections, SECTIONS, useWatchSheet } from "./watches";
 import type { WaitlistState } from "./watch-schema";
 
+// On phones New watch floats this far up, clear of the home indicator; the list below the heading leaves that much
+// room, plus the button's 2.75rem and a gap, so that scrolled to the end no card's actions are under the button.
+const FLOATING_AT = "bottom-[max(1rem,env(safe-area-inset-bottom))]";
+const ROOM_FOR_FLOATING = "pb-[calc(max(1rem,env(safe-area-inset-bottom))+4rem)]";
+
 export function Dashboard({ state }: { state: WaitlistState }) {
   const now = useNow(30_000);
   const wide = useMediaQuery("(min-width: 640px)");
@@ -25,7 +30,7 @@ export function Dashboard({ state }: { state: WaitlistState }) {
   const count = state.watches.length;
 
   return (
-    <div className={cn("mx-auto max-w-3xl space-y-5", !wide && count > 0 && "pb-20")}>
+    <div className={cn("mx-auto max-w-3xl space-y-5", !wide && count > 0 && ROOM_FOR_FLOATING)}>
       <div className="flex items-end justify-between gap-4">
         <div className="min-w-0">
           {/* Focusable from script: where focus goes when the New watch sheet closes and what opened it has gone. */}
@@ -91,11 +96,7 @@ function NewWatchButton({ state, floating = false }: { state: WaitlistState; flo
         </span>
       </Tooltip>
     );
-  return floating ? (
-    <div className="fixed bottom-[max(1rem,env(safe-area-inset-bottom))] right-4 z-40">{shown}</div>
-  ) : (
-    shown
-  );
+  return floating ? <div className={cn("fixed right-4 z-40", FLOATING_AT)}>{shown}</div> : shown;
 }
 
 function Section({

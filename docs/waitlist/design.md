@@ -135,6 +135,14 @@ card's Check now is now enabled for `quiet` as well.
   `ctx: { terminals?: readonly Terminal[] }` (lib/schema's `Terminal`, with `place`), and BC Ferries' names a
   trip by its terminals' `place`, as `routeTitle`, the card and alerts do: "Swartz Bay → Tsawwassen, Fri Oct 23",
   not the route form's longer labels.
+- **A picker tile says each thing once.** §7.3's tile showed the whole catalog description and then the
+  tagline, and each description's second sentence was its tagline again ("...Can hold a sailing in a cart for
+  you to check out." over "Can hold a sailing in a cart for you"). A tile now shows the description's first
+  sentence, what the provider is ("Sailing reservations."), and the tagline chip, what it does. The catalog
+  (`ProviderMeta.description`, `GET /api/providers`) is unchanged.
+- **The floating New watch never hides a card.** On phones the dashboard's bottom padding is the button's own
+  offset, `max(1rem, env(safe-area-inset-bottom))`, plus 4rem, so scrolled to the end the last card's actions
+  sit above the button on a phone with a home indicator too.
 
 ---
 

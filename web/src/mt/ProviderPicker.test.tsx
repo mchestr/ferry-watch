@@ -34,14 +34,19 @@ function withProviders(changes: (state: WaitlistState) => void): WaitlistState {
 }
 
 describe("the provider picker", () => {
-  it("shows a tile per offered provider, with its name, description and tagline", async () => {
+  it("shows a tile per offered provider: its name, what it is, and what it does, each said once", async () => {
     serveState(parsedState());
     renderWithProviders(<MtApp />);
     expect(await screen.findByRole("dialog", { name: "New watch" })).toBeInTheDocument();
     expect(tiles()).toEqual(["BC Ferries", "Buntzen Lake"]);
-    expect(tile("Buntzen Lake")).toHaveTextContent(BUNTZEN_INFO.description);
-    expect(tile("Buntzen Lake")).toHaveTextContent("Alert only: you book on Yodel");
-    expect(tile("BC Ferries")).toHaveTextContent("Can hold a sailing in a cart for you");
+    // The description's first sentence, then the tagline chip; the description's second sentence said the same.
+    expect(tile("Buntzen Lake")).toHaveTextContent(
+      /^Buntzen LakeBC Hydro day-use parking passes, sold on Yodel\.Alert only: you book on Yodel$/,
+    );
+    expect(tile("BC Ferries")).toHaveTextContent(
+      /^BC FerriesSailing reservations\.Can hold a sailing in a cart for you$/,
+    );
+    expect(BUNTZEN_INFO.description).toContain("Alerts only: you book on Yodel."); // the catalog is unchanged
   });
 
   it("leaves out providers not offered to this user, and ones this build doesn't know", async () => {

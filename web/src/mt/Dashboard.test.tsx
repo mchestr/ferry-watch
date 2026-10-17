@@ -150,6 +150,18 @@ describe("the dashboard", () => {
     await waitFor(() => expect(screen.getAllByText("You're watching as many as you can").length).toBeGreaterThan(0));
   });
 
+  it("on a phone, leaves room below the last card for the floating New watch, above the home indicator", async () => {
+    serveState(parsedState());
+    renderWithProviders(<MtApp />); // jsdom matches no media query: the phone layout
+    const heading = await screen.findByRole("heading", { level: 1, name: "Your watches" });
+    const floating = screen.getByRole("button", { name: "New watch" }).parentElement ?? fail();
+    expect(floating).toHaveClass("fixed", "bottom-[max(1rem,env(safe-area-inset-bottom))]");
+    // The same offset, plus the button's 2.75rem and a gap: scrolled to the end, no card's actions are under it.
+    const list = heading.parentElement?.parentElement?.parentElement ?? fail();
+    expect(list).toContainElement(floating);
+    expect(list).toHaveClass("pb-[calc(max(1rem,env(safe-area-inset-bottom))+4rem)]");
+  });
+
   it("says when it's quiet now", async () => {
     const state = parsedState();
     serveState({ ...state, quiet_hours: { start: "22:00", end: "05:00", now: true } });

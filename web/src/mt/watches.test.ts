@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { uiFor } from "@/providers/registry";
 import {
   asWatch,
+  BCFERRIES_INFO,
   BUNTZEN_INFO,
   FIXTURE_NOW,
   makeBuntzenWatch,
@@ -10,7 +11,7 @@ import {
   tripsOf,
   fail,
 } from "@/test/fixtures";
-import { capacityFor, nextHint, pickable, rememberProvider, sections } from "./watches";
+import { capacityFor, nextHint, pickable, rememberProvider, sections, whatItIs } from "./watches";
 import type { ProviderUi } from "@/providers/types";
 import type { MyTrip } from "./schema";
 import type { Watch } from "./watch-schema";
@@ -202,5 +203,18 @@ describe("which providers a new watch can be on", () => {
       count: 6,
     };
     expect(capacityFor(state, "buntzen")).toEqual({ canAdd: false, reason: "You can have up to 6 alert-only watches" });
+  });
+});
+
+describe("what a provider is, as its picker tile says it", () => {
+  it("is its description's first sentence: the tagline chip says the rest", () => {
+    expect(whatItIs(BCFERRIES_INFO.description)).toBe("Sailing reservations.");
+    expect(whatItIs(BUNTZEN_INFO.description)).toBe("BC Hydro day-use parking passes, sold on Yodel.");
+  });
+
+  it("is the whole description when it is one sentence, and never ends inside an abbreviation", () => {
+    expect(whatItIs("Campsite reservations")).toBe("Campsite reservations");
+    expect(whatItIs("Campsites on B.C. Parks. Alerts only.")).toBe("Campsites on B.C. Parks.");
+    expect(whatItIs("Passes (day use). Alerts only.")).toBe("Passes (day use).");
   });
 });

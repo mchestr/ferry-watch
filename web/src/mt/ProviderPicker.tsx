@@ -1,11 +1,12 @@
 /**
  * Step 1 of a new watch (docs/waitlist/design.md §7.3): one tile per provider offered to this user and known to this
  * build, the last used first. A provider at its limit is shown but disabled, with why; a paused one stays pickable.
+ * Each tile says what the provider is (its description's first sentence) and, in a chip, what it does (its tagline).
  */
 import { ChevronRight } from "lucide-react";
 import { SheetBody, SheetHeader } from "@/components/ui/sheet";
 import { providerUi } from "@/providers/registry";
-import { capacityFor } from "./watches";
+import { capacityFor, whatItIs } from "./watches";
 import type { ProviderInfo, WaitlistState } from "./watch-schema";
 
 export function ProviderPicker({
@@ -54,7 +55,9 @@ export function ProviderPicker({
                       >
                         {provider.name}
                       </span>
-                      <span className="mt-0.5 block text-sm text-muted-foreground">{provider.description}</span>
+                      <span className="mt-0.5 block text-sm text-muted-foreground">
+                        {whatItIs(provider.description)}
+                      </span>
                       <span className="mt-2 inline-flex rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-foreground/80">
                         {ui.tagline}
                       </span>

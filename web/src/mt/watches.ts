@@ -71,6 +71,16 @@ export function pickable(state: WaitlistState, known: (provider: string) => bool
   return [...offered.filter((p) => p.id === last), ...offered.filter((p) => p.id !== last)];
 }
 
+/**
+ * What a provider is: the first sentence of its catalog description. The rest says what it does, which the tile's
+ * tagline chip already says ("Sailing reservations. Can hold a sailing in a cart for you to check out." shows
+ * "Sailing reservations."). A sentence ends at ".", "!" or "?" after a lowercase letter, a digit or ")", before a
+ * capital, so "B.C. Hydro" stays whole.
+ */
+export function whatItIs(description: string): string {
+  return /^(.*?[a-z0-9)][.!?])\s+(?=[A-Z])/.exec(description)?.[1] ?? description;
+}
+
 /** Whether this user may add a watch on `provider` now, and if not, why. */
 export function capacityFor(state: WaitlistState, provider: string): { canAdd: boolean; reason: string | null } {
   const room = state.capacity.providers[provider];
