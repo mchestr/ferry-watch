@@ -1,0 +1,12 @@
+{
+  "catalogItemExtendedResultLst": [
+    {
+      "catalogItemCategory": "Half Day Pass",
+      "catalogItemStatus": "Morning"
+    },
+    {
+      "catalogItemCategory": "Half Day Pass",
+      "catalogItemStatus": "Afternoon"
+    }
+  ]
+}
