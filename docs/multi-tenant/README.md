@@ -102,6 +102,7 @@ The single-container mode is retired.
 | `ferry-web` | OIDC sign-in and sessions, dashboard, user and admin API, live updates, VNC tickets, alerts from a DB outbox. Holds the OIDC client secret, ticket key and VAPID key. | Read and edit tenants' trips; mint tickets for a cart its owner may open; send push and email; talk to Authelia's token endpoint and JWKS. | Anything in Kubernetes (no token, no RBAC); reach browser pods; join a VNC session the user already opened; see your Authelia cookie (removed at the route). |
 | `vnc-edge` | Serves the unmodified KasmVNC client and proxies `/t/<trip>/g/<gen>/ws` to that pod. | Sees VNC traffic in plaintext (as do Envoy and Cloudflare). | Mint tickets; reach ferry-web, ferry-control or Postgres. No app code, no secrets. |
 | Browser pod `fw-<trip>-g<gen>` | Today's watcher for one trip: search, cart, hold timers, the VNC gate. Chromium in kiosk mode, Xvnc on a unix socket. | Reach bcferries.com, Queue-it and ferry-control; during its own hold, any public HTTPS host. Hold a guest cart. Admit a viewer with a valid ticket. | Reach other pods, the API server, the LAN, nodes, metadata, smtp-relay or logging, ever. Use its token anywhere but ferry-control. |
+| `waitlist-fetcher` (added in Waitlist 1.0, [design](../waitlist/design.md) §4) | Makes HTTP providers' requests for waitlist-control: control names a provider and its typed query (a Buntzen Lake place and date), the fetcher calls the site, parses the answer in its own process and replies with a typed inventory or an error kind. Stateless; no database, no ServiceAccount token, no secrets, no RBAC. | Receive `POST /v1/fetch` from waitlist-control's pods. Make HTTPS requests to `api.yodelpass.com` within its own per-provider cap (30/min) and concurrency (2). | Reach Postgres, the API server, other pods, the LAN, any other host, any non-public address, or DNS for any other name. It holds no secrets, no token, no writable filesystem beyond `/tmp`. Its replies carry no free text beyond Buntzen's sanitised ≤ 32-character status. |
 | Postgres | All durable state; two login roles with separate grants. | Trips, limits, invitations, session hashes, cart summaries, audit, outbox. | Hold any BC Ferries credential or a usable session token. |
 | GitOps guardrails | VAPs, PSA restricted, ResourceQuota, LimitRange, PriorityClass, two Cilium egress policies. | Bound what a buggy or compromised operator can create or change. | Be changed by any app identity. |
 
@@ -126,6 +127,13 @@ Postgres. No CRDs. Authelia gains one OIDC client.
 
 What the operator *can* still do if compromised: forge any trip's status, release carts, start pinned pods up to
 the quota, open hold egress on any pod, and read itineraries and emails (design-reference.md §4.5).
+
+**HTTP providers keep this model (Waitlist 1.0, [design](../waitlist/design.md) §4).** Buntzen Lake is checked
+over HTTP, not by a browser pod, and the operator still has no internet egress: its only new egress is
+waitlist-fetcher's Service port (I2). Yodel's answers are parsed only in waitlist-fetcher, a low-privilege
+sandbox that reports typed, bounded results to the operator, as browser pods do (I6). The fetcher holds no
+secret, no ServiceAccount token and no database credential, so a parser compromised by a hostile answer can
+forge only the inventories it returns for the queries it is sent, and learns no user's identity (I7).
 
 ---
 
