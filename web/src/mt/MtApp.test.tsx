@@ -1,58 +1,72 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { makeSettings } from "@/test/fixtures";
+import { asWatch, BCFERRIES_INFO, makeSettings, tripsOf } from "@/test/fixtures";
+import { addDays, todayInPacific } from "@/lib/time";
 import { FakeWebSocket } from "@/test/fake-websocket";
 import { jsonResponse, mockFetch, renderWithProviders } from "@/test/render";
 import type { QueryClient } from "@tanstack/react-query";
 import { MY_STATE_KEY } from "./api";
 import { MtApp } from "./MtApp";
-import type { CheckoutViewer, MyState } from "./schema";
+import type { CheckoutViewer, MyTrip } from "./schema";
+import type { WaitlistState } from "./watch-schema";
 
 const TRIP_ID = "3f9c0a1b2c3d4e5f";
 
-function myState(overrides: Partial<MyState> = {}): MyState {
+/** The one trip, tomorrow: a held cart. (A trip dated before today is in the dashboard's folded Ended section.) */
+function firstTrip(): MyTrip {
+  return {
+    trip: { ...makeSettings({ date: addDays(todayInPacific(), 1) ?? "" }), id: TRIP_ID },
+    rev: 1,
+    paused_reason: null,
+    quiet: false,
+    hold: { reason: null, can_request: true, holdable: [], requested_at: null, requested_until: null },
+    booking_url: null,
+    browser: {
+      phase: "holding",
+      mode: "warm",
+      queue_position: null,
+      next_check_at: null,
+      last_check_at: null,
+      checked_at: null,
+      next_due: null,
+      effective_interval: 120,
+      heartbeat_at: null,
+      sailings: [],
+      error_class: null,
+      consecutive_errors: 0,
+      cart: {
+        id: "cart1",
+        status: "ready",
+        depart: "09:00",
+        fare: "Saver",
+        price: "$93.45",
+        ready_at: null,
+        unclaimed_deadline: Date.now() / 1000 + 1500,
+        session_deadline: null,
+        hard_deadline: Date.now() / 1000 + 3000,
+        payment_in_progress: false,
+      },
+      viewer_connected: false,
+    },
+  };
+}
+
+/** The user's state, with these BC Ferries trips (the one above unless told). */
+function myState({
+  trips = [firstTrip()],
+  ...overrides
+}: Partial<Omit<WaitlistState, "watches">> & { trips?: MyTrip[] } = {}): WaitlistState {
   return {
     me: { id: "u1", username: "ann", display: "Ann", is_admin: false },
     limits: { maxTrips: { value: 3, source: "default" } },
     usage: {},
-    trips: [
-      {
-        trip: { ...makeSettings(), id: TRIP_ID },
-        rev: 1,
-        paused_reason: null,
-        quiet: false,
-        hold: { reason: null, can_request: true, holdable: [], requested_at: null, requested_until: null },
-        booking_url: null,
-        browser: {
-          phase: "holding",
-          mode: "warm",
-          queue_position: null,
-          next_check_at: null,
-          last_check_at: null,
-          checked_at: null,
-          next_due: null,
-          effective_interval: 120,
-          heartbeat_at: null,
-          sailings: [],
-          error_class: null,
-          consecutive_errors: 0,
-          cart: {
-            id: "cart1",
-            status: "ready",
-            depart: "09:00",
-            fare: "Saver",
-            price: "$93.45",
-            ready_at: null,
-            unclaimed_deadline: Date.now() / 1000 + 1500,
-            session_deadline: null,
-            hard_deadline: Date.now() / 1000 + 3000,
-            payment_in_progress: false,
-          },
-          viewer_connected: false,
-        },
-      },
-    ],
-    capacity: { can_add: true, reason: null },
+    watches: trips.map(asWatch),
+    providers: [BCFERRIES_INFO],
+    capacity: {
+      can_add: true,
+      reason: null,
+      providers: { bcferries: { can_add: true, reason: null, limit: 3, count: trips.length } },
+    },
     settings: {
       quiet_hours: { start: "22:00", end: "05:00" },
       checkout_viewer: "classic",
@@ -101,7 +115,7 @@ describe("a page load", () => {
       r.url === "/api/state" ? jsonResponse(myState()) : jsonResponse({ terminals: [] }),
     );
     renderWithProviders(<Fresh />);
-    expect(await screen.findByRole("heading", { name: "Your trips" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Your watches" })).toBeInTheDocument();
     expect(requests.map((r) => r.headers.get("Authorization"))).toEqual(requests.map(() => "Bearer t-1"));
     expect(localStorage.getItem("wl.token")).toBe("t-1");
   });
@@ -116,7 +130,7 @@ describe("a page load", () => {
       return jsonResponse({ terminals: [] });
     });
     renderWithProviders(<MtApp />);
-    expect(await screen.findByRole("heading", { name: "Your trips" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Your watches" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Sign in" })).toBeNull();
     expect(location.pathname).toBe("/");
     expect(requests.find((r) => r.url === "/api/state")?.headers.get("Authorization")).toBe("Bearer t-2");
@@ -208,12 +222,12 @@ describe("settings", () => {
   it("has its own page, opened from the header, not beside the trips", async () => {
     api();
     const { user } = renderWithProviders(<MtApp />);
-    expect(await screen.findByRole("heading", { name: "Your trips" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Your watches" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Your account" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Settings" }));
     expect(await screen.findByRole("heading", { name: "Your account" })).toBeInTheDocument();
     expect(location.pathname).toBe("/settings");
-    expect(screen.queryByRole("heading", { name: "Your trips" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Your watches" })).toBeNull();
   });
 
   it.each([
@@ -239,9 +253,8 @@ describe("pausing a trip", () => {
   });
 
   /** The one trip, with nothing held, enabled or not. */
-  function tripState(enabled: boolean, extra: Partial<MyState["trips"][number]> = {}): MyState {
-    const base = myState().trips[0];
-    if (!base) throw new Error("no trip");
+  function tripState(enabled: boolean, extra: Partial<MyTrip> = {}): WaitlistState {
+    const base = firstTrip();
     return myState({
       trips: [
         {
@@ -258,10 +271,11 @@ describe("pausing a trip", () => {
   it("pauses and resumes one trip, and doesn't check a paused one", async () => {
     let enabled = true;
     const { requests } = mockFetch((r) => {
-      if (r.url === `/api/trips/${TRIP_ID}` && r.method === "PATCH") {
+      if (r.url === `/api/watches/${TRIP_ID}` && r.method === "PATCH") {
         enabled = (r.body as { enabled: boolean }).enabled;
       }
-      if (r.url === "/api/state" || r.url.startsWith("/api/trips/")) return jsonResponse(tripState(enabled));
+      if (r.url === "/api/state" || r.url.startsWith("/api/trips/") || r.url.startsWith("/api/watches/"))
+        return jsonResponse(tripState(enabled));
       return jsonResponse({ terminals: [] });
     });
     const { user } = renderWithProviders(<MtApp />);
@@ -269,7 +283,7 @@ describe("pausing a trip", () => {
     await user.click(screen.getByRole("button", { name: "Pause" }));
     expect(await screen.findByText("Trip paused")).toBeInTheDocument();
     expect(requests.find((r) => r.method === "PATCH")).toMatchObject({
-      url: `/api/trips/${TRIP_ID}`,
+      url: `/api/watches/${TRIP_ID}`,
       body: { enabled: false },
     });
     expect(statusBadge()).toBe("Paused");
@@ -288,8 +302,7 @@ describe("pausing a trip", () => {
   it("says a held cart stays held", async () => {
     mockFetch((r) => {
       if (r.method === "PATCH") {
-        const held = myState().trips[0];
-        if (!held) throw new Error("no trip");
+        const held = firstTrip();
         return jsonResponse(myState({ trips: [{ ...held, trip: { ...held.trip, enabled: false } }] }));
       }
       return r.url === "/api/state" ? jsonResponse(myState()) : jsonResponse({ terminals: [] });
@@ -329,16 +342,15 @@ describe("releasing a held cart", () => {
   /** waitlist-web only passes a release on: the cart is still held when it answers. */
   function api() {
     return mockFetch((r) =>
-      r.url === "/api/state" || r.url.startsWith("/api/trips/")
+      r.url === "/api/state" || r.url.startsWith("/api/trips/") || r.url.startsWith("/api/watches/")
         ? jsonResponse(myState())
         : jsonResponse({ terminals: [] }),
     );
   }
 
   /** The browser lets the cart go (or holds another one). */
-  function cartIs(queryClient: QueryClient, cart: MyState["trips"][number]["browser"]["cart"]) {
-    const base = myState().trips[0];
-    if (!base) throw new Error("no trip");
+  function cartIs(queryClient: QueryClient, cart: MyTrip["browser"]["cart"]) {
+    const base = firstTrip();
     queryClient.setQueryData(MY_STATE_KEY, myState({ trips: [{ ...base, browser: { ...base.browser, cart } }] }));
   }
 
@@ -351,7 +363,7 @@ describe("releasing a held cart", () => {
     expect(screen.getByRole("button", { name: /Open checkout/ })).toBeDisabled();
     expect(requests.filter((r) => r.url.endsWith("/cart/release")).map((r) => r.body)).toEqual([{ cart_id: "cart1" }]);
 
-    const held = myState().trips[0]?.browser.cart;
+    const held = firstTrip().browser.cart;
     if (!held) throw new Error("no cart");
     cartIs(queryClient, { ...held, id: "cart2" }); // a new cart can be released again
     expect(await screen.findByRole("button", { name: "Release" })).toBeEnabled();
@@ -369,8 +381,8 @@ describe("releasing a held cart", () => {
     expect(screen.getByRole("button", { name: /Check out on this device/ })).toBeDisabled();
     expect(location.pathname).toBe(`/c/${TRIP_ID}`);
 
-    await user.click(screen.getByRole("button", { name: "Your trips" }));
-    expect(await screen.findByRole("heading", { name: "Your trips" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Your watches" }));
+    expect(await screen.findByRole("heading", { name: "Your watches" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Releasing…" })).toBeDisabled();
   });
 });
@@ -380,27 +392,27 @@ describe("removing a trip", () => {
     localStorage.setItem("wl.token", "t-1");
   });
 
-  type Cart = MyState["trips"][number]["browser"]["cart"];
+  type Cart = MyTrip["browser"]["cart"];
 
   /** waitlist-web archives the trip at once (waitlist-control then lets any cart go); a second DELETE is a 404. */
   function api(cart?: Cart) {
-    const base = myState().trips[0];
-    if (!base) throw new Error("no trip");
+    const base = firstTrip();
     let state = cart === undefined ? myState() : myState({ trips: [{ ...base, browser: { ...base.browser, cart } }] });
     return mockFetch((r) => {
-      if (r.url === `/api/trips/${TRIP_ID}` && r.method === "DELETE") {
-        if (state.trips.length === 0) return jsonResponse({ error: "No such trip" }, 404);
+      if (r.url === `/api/watches/${TRIP_ID}` && r.method === "DELETE") {
+        if (state.watches.length === 0) return jsonResponse({ error: "No such trip" }, 404);
         state = myState({ trips: [] });
       }
-      if (r.url === "/api/state" || r.url.startsWith("/api/trips/")) return jsonResponse(state);
+      if (r.url === "/api/state" || r.url.startsWith("/api/trips/") || r.url.startsWith("/api/watches/"))
+        return jsonResponse(state);
       return jsonResponse({ terminals: [] });
     });
   }
 
   const removals = (requests: { method: string; url: string }[]) =>
-    requests.filter((r) => r.method === "DELETE" && r.url === `/api/trips/${TRIP_ID}`).length;
+    requests.filter((r) => r.method === "DELETE" && r.url === `/api/watches/${TRIP_ID}`).length;
 
-  const held = myState().trips[0]?.browser.cart ?? null;
+  const held = firstTrip().browser.cart;
 
   it.each<[string, Cart, string]>([
     ["a held cart", held, "Removing it releases the 9:00 am sailing in your cart."],
@@ -420,7 +432,7 @@ describe("removing a trip", () => {
 
     await user.click(within(dialog).getByRole("button", { name: "Remove trip" }));
     expect(await screen.findByText("Trip removed")).toBeInTheDocument();
-    expect(screen.getByText("No trips yet")).toBeInTheDocument();
+    expect(screen.getByText("Nothing watched yet")).toBeInTheDocument();
     expect(screen.queryByRole("alertdialog")).toBeNull();
     expect(removals(requests)).toBe(1);
   });
@@ -440,7 +452,7 @@ describe("removing a trip", () => {
     const { user, queryClient } = renderWithProviders(<MtApp />);
     await user.click(await screen.findByRole("button", { name: "Remove" }));
     await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Remove trip" }));
-    expect(await screen.findByText("No trips yet")).toBeInTheDocument();
+    expect(await screen.findByText("Nothing watched yet")).toBeInTheDocument();
     act(() => {
       queryClient.setQueryData(MY_STATE_KEY, myState()); // a stale view, from before the removal
     });
@@ -448,7 +460,7 @@ describe("removing a trip", () => {
     await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Remove trip" }));
     expect(await screen.findByText("That trip was already removed.")).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
-    expect(await screen.findByText("No trips yet")).toBeInTheDocument(); // fetched afresh
+    expect(await screen.findByText("Nothing watched yet")).toBeInTheDocument(); // fetched afresh
     expect(removals(requests)).toBe(2);
   });
 
@@ -462,7 +474,7 @@ describe("removing a trip", () => {
     expect(dialog).toHaveTextContent("Removing it releases the 9:00 am sailing in your cart.");
     await user.click(within(dialog).getByRole("button", { name: "Remove trip" }));
     expect(await screen.findByText("Trip removed")).toBeInTheDocument();
-    expect(await screen.findByText("No trips yet")).toBeInTheDocument();
+    expect(await screen.findByText("Nothing watched yet")).toBeInTheDocument();
     expect(removals(requests)).toBe(1);
   });
 });
@@ -473,9 +485,8 @@ describe("did you book it?", () => {
   });
 
   /** The trip after a viewed checkout, paused until it's answered. */
-  function asking(): MyState {
-    const base = myState().trips[0];
-    if (!base) throw new Error("no trip");
+  function asking(): WaitlistState {
+    const base = firstTrip();
     return myState({
       trips: [
         {
@@ -494,13 +505,14 @@ describe("did you book it?", () => {
     return mockFetch((r) => {
       if (r.url === `/api/trips/${TRIP_ID}/booked`) {
         const answer = r.body as { booked: boolean; stop?: boolean };
-        const trip = state.trips[0];
+        const trip = tripsOf(state)[0];
         state =
           answer.booked || answer.stop || !trip
             ? myState({ trips: [] })
             : myState({ trips: [{ ...trip, paused_reason: null, hold: { ...trip.hold, reason: null } }] });
       }
-      if (r.url === "/api/state" || r.url.startsWith("/api/trips/")) return jsonResponse(state);
+      if (r.url === "/api/state" || r.url.startsWith("/api/trips/") || r.url.startsWith("/api/watches/"))
+        return jsonResponse(state);
       return jsonResponse({ terminals: [] });
     });
   }
@@ -522,7 +534,7 @@ describe("did you book it?", () => {
     const { requests } = api();
     const { user } = renderWithProviders(<MtApp />);
     await user.click(await screen.findByRole("button", { name: "Yes, booked" }));
-    expect(await screen.findByText("No trips yet")).toBeInTheDocument();
+    expect(await screen.findByText("Nothing watched yet")).toBeInTheDocument();
     expect(booked(requests)).toEqual([{ booked: true }]);
   });
 
@@ -563,7 +575,7 @@ describe("did you book it?", () => {
     const { user } = renderWithProviders(<MtApp />);
     await user.click(await screen.findByRole("button", { name: "No, cancel" }));
     expect(await screen.findByText("Stopped watching")).toBeInTheDocument();
-    expect(screen.getByText("No trips yet")).toBeInTheDocument();
+    expect(screen.getByText("Nothing watched yet")).toBeInTheDocument();
     expect(booked(requests)).toEqual([{ booked: false, stop: true }]);
   });
 
@@ -576,7 +588,7 @@ describe("did you book it?", () => {
     const { user } = renderWithProviders(<MtApp />);
     expect(await screen.findByText("Did you book it?")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: button }));
-    expect(await screen.findByRole("heading", { name: "Your trips" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Your watches" })).toBeInTheDocument();
     expect(location.pathname).toBe("/");
     expect(booked(requests)).toEqual([body]);
   });
@@ -670,7 +682,7 @@ describe("quiet hours", () => {
   });
 
   it("are the default for a server that doesn't send them", async () => {
-    const older: Partial<MyState> = myState();
+    const older: Partial<WaitlistState> = myState();
     delete older.settings;
     delete older.quiet_hours;
     mockFetch((r) => (r.url === "/api/state" ? jsonResponse(older) : jsonResponse({ terminals: [] })));
@@ -683,8 +695,7 @@ describe("quiet hours", () => {
 
   it("say when it's quiet now, on the trips", async () => {
     history.replaceState(null, "", "/");
-    const base = myState().trips[0];
-    if (!base) throw new Error("no trip");
+    const base = firstTrip();
     const state = myState({
       settings: { ...myState().settings, quiet_hours: DEFAULT },
       quiet_hours: { ...DEFAULT, now: true },
@@ -692,15 +703,14 @@ describe("quiet hours", () => {
     });
     mockFetch((r) => (r.url === "/api/state" ? jsonResponse(state) : jsonResponse({ terminals: [] })));
     renderWithProviders(<MtApp />);
-    const heading = await screen.findByRole("heading", { name: "Your trips" });
-    expect(heading.nextElementSibling).toHaveTextContent("1 of 3 watched · quiet until 5:00 am PT");
+    const heading = await screen.findByRole("heading", { name: "Your watches" });
+    expect(heading.nextElementSibling).toHaveTextContent("1 watched · quiet until 5:00 am PT");
     expect(statusBadge()).toBe("Quiet hours");
   });
 
   it("say on a quiet trip's checkout page when it's checked again", async () => {
     history.replaceState(null, "", `/c/${TRIP_ID}`);
-    const base = myState().trips[0];
-    if (!base) throw new Error("no trip");
+    const base = firstTrip();
     const state = myState({
       settings: { ...myState().settings, quiet_hours: DEFAULT },
       quiet_hours: { ...DEFAULT, now: true },
@@ -727,7 +737,7 @@ describe("the new checkout viewer (beta)", () => {
   const beta = () => screen.findByRole("switch", { name: NAME });
 
   /** waitlist-web as the contract has it: PATCH /api/me {checkout_viewer} answers with the whole state, or a 403. */
-  function api(initial: MyState, { refuse = false } = {}) {
+  function api(initial: WaitlistState, { refuse = false } = {}) {
     let state = initial;
     return mockFetch((r) => {
       if (r.url === "/api/me" && r.method === "PATCH") {
@@ -786,7 +796,7 @@ describe("the new checkout viewer (beta)", () => {
   describe("on the checkout page", () => {
     const LINE = "Opens in the new checkout viewer (beta).";
 
-    function open(state: MyState, viewer?: CheckoutViewer) {
+    function open(state: WaitlistState, viewer?: CheckoutViewer) {
       history.replaceState(null, "", `/c/${TRIP_ID}`);
       const assign = vi.fn();
       vi.stubGlobal("location", { ...window.location, assign, pathname: `/c/${TRIP_ID}`, search: "" });
@@ -837,9 +847,8 @@ describe("a bookable sailing nothing holds", () => {
   };
   const BOOK = "https://www.bcferries.com/?sailing=true&departureLocation=NAN";
 
-  function unheldState(hold: Partial<MyState["trips"][number]["hold"]> = {}, checkedAt: number | null = null) {
-    const base = myState().trips[0];
-    if (!base) throw new Error("no trip");
+  function unheldState(hold: Partial<MyTrip["hold"]> = {}, checkedAt: number | null = null) {
+    const base = firstTrip();
     return myState({
       trips: [
         {
@@ -914,12 +923,11 @@ describe("a bookable sailing nothing holds", () => {
   it("keeps saying it's trying while a new pod starts with no sailings yet", async () => {
     const now = Date.now() / 1000;
     const base = unheldState({ requested_at: now - 20, requested_until: now + 580 });
-    const trip = base.trips[0];
+    const trip = tripsOf(base)[0];
     if (!trip) throw new Error("no trip");
-    const starting = {
-      ...base,
+    const starting = myState({
       trips: [{ ...trip, browser: { ...trip.browser, sailings: [], phase: "starting" as const } }],
-    };
+    });
     history.replaceState(null, "", `/c/${TRIP_ID}`);
     mockFetch((r) => (r.url === "/api/state" ? jsonResponse(starting) : jsonResponse({ terminals: [] })));
     renderWithProviders(<MtApp />);
@@ -972,7 +980,7 @@ describe("admin", () => {
       r.url === "/api/state" ? jsonResponse(myState()) : jsonResponse({ terminals: [] }),
     );
     renderWithProviders(<MtApp />);
-    expect(await screen.findByRole("heading", { name: "Your trips" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Your watches" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Admin" })).toBeNull();
     expect(requests.some((r) => r.url.startsWith("/api/admin"))).toBe(false);
   });

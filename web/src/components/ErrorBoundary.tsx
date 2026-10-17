@@ -4,6 +4,8 @@ import { Button } from "./ui/button";
 
 interface Props {
   children: ReactNode;
+  /** What to show instead, in place (a card's own fallback). Without it, the full-screen page below. */
+  fallback?: (error: Error) => ReactNode;
 }
 
 interface State {
@@ -25,6 +27,7 @@ export class ErrorBoundary extends Component<Props, State> {
   override render() {
     const { error } = this.state;
     if (!error) return this.props.children;
+    if (this.props.fallback) return this.props.fallback(error);
     return (
       <div
         role="alert"

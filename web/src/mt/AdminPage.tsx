@@ -1,6 +1,7 @@
 /**
- * /admin: the fleet and the people (docs/multi-tenant/design-reference.md §9.4). Every change asks why
- * and lands in the audit log. Admins never see a tenant's screen or sailings, only the cart summary.
+ * /admin: the fleet, the providers checked over HTTP, and the people (docs/multi-tenant/design-reference.md §9.4,
+ * docs/waitlist/design.md §7.9). Every change asks why and lands in the audit log. Admins never see a tenant's
+ * screen or sailings, only the cart summary.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Loader2, RotateCcw, UserPlus } from "lucide-react";
@@ -13,7 +14,7 @@ import { Field, Input } from "@/components/ui/controls";
 import { Switch } from "@/components/ui/switch";
 import { errorMessage } from "@/lib/api";
 import { useNow } from "@/lib/hooks";
-import { ago, timeLabel } from "@/lib/time";
+import { ago, clock, timeLabel } from "@/lib/time";
 import { cn, plural } from "@/lib/utils";
 import {
   ADMIN_KEYS,
@@ -22,11 +23,13 @@ import {
   LIMIT_LABELS,
   quantityGiB,
   USAGE_LABELS,
+  type AdminProvider,
   type AdminUser,
   type FleetReport,
   type FleetSwitch,
   type Invite,
   type Overview,
+  type ProviderChecks,
 } from "./admin";
 import { minutesLeft } from "./trips";
 import { ReasonDialog } from "./ReasonDialog";
@@ -83,8 +86,16 @@ const ATTENTION: Readonly<Record<string, (who: string) => string>> = {
   checkout_blocked: (who) => `${who}'s checkout hit a blocked page`,
 };
 
+/** Alerts about a provider rather than a person (docs/waitlist/design.md §6.5): said as they are. */
+const PROVIDER_ATTENTION: Readonly<Record<string, string>> = {
+  site_changed: "A provider's site changed shape; its checks are failing",
+  checker_down: "waitlist-fetcher isn't answering; HTTP checks are on hold",
+};
+
 /** One attention entry as a sentence; a kind this page doesn't know yet shows by its name. */
 function attentionText(kind: string, who: string): string {
+  const fixed = PROVIDER_ATTENTION[kind];
+  if (fixed) return fixed;
   const text = ATTENTION[kind]?.(who) ?? `${who}: ${kind.replace(/_/g, " ")}`;
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
@@ -370,6 +381,8 @@ function Fleet({ users }: { users: readonly AdminUser[] | undefined }) {
         </div>
       </Card>
 
+      <ProvidersCard providers={data.providers ?? []} checks={data.checks ?? null} now={now} ask={ask} />
+
       <Card>
         <CardHeader>
           <CardTitle>Browsers</CardTitle>
@@ -460,6 +473,158 @@ function Fleet({ users }: { users: readonly AdminUser[] | undefined }) {
       {dialog}
     </div>
   );
+}
+
+const OFFERS: Readonly<Record<string, string>> = { off: "nobody", admins: "admins", everyone: "everyone" };
+
+/** The check loop's report counts as current for this long (checkplan.STALE_REPORT_S). */
+const CHECKS_STALE_MS = 120_000;
+
+/**
+ * The providers checked over HTTP (Buntzen Lake): who they're offered to, whether checks run, waitlist-fetcher's
+ * state, the budget against demand, the last hour, any cooldown, and the watches. Each can be paused, with a reason.
+ */
+function ProvidersCard({
+  providers,
+  checks,
+  now,
+  ask,
+}: {
+  providers: readonly AdminProvider[];
+  checks: Overview["checks"];
+  now: number;
+  ask: (ask: Ask) => void;
+}) {
+  if (providers.length === 0) return null;
+  const at = checks?.at ?? null;
+  const stale = at === null || now - at * 1000 > CHECKS_STALE_MS;
+  return (
+    <Card className="lg:col-span-2">
+      <CardHeader>
+        <CardTitle>Providers</CardTitle>
+        {at !== null && <span className="text-sm text-muted-foreground">reported {ago(at * 1000, now)}</span>}
+      </CardHeader>
+      {stale && (
+        <p className="flex items-center gap-2 px-5 pb-3 text-sm font-medium text-warning">
+          <AlertTriangle className="size-4 shrink-0" aria-hidden />
+          {at === null ? "The check loop hasn't reported." : "The check loop's report is old."} Is waitlist-control
+          running?
+        </p>
+      )}
+      <ul className="divide-y border-t">
+        {providers.map((provider) => {
+          const report = checks?.providers[provider.id] ?? null;
+          const labelId = `pause-provider-${provider.id}`;
+          return (
+            <li key={provider.id} className="space-y-3 px-5 py-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="flex flex-wrap items-center gap-2 font-medium">
+                    {provider.name}
+                    {provider.paused ? (
+                      <Badge variant="warning">Paused</Badge>
+                    ) : report?.running ? (
+                      <Badge variant="soft">Running</Badge>
+                    ) : (
+                      <Badge variant="muted">Not running</Badge>
+                    )}
+                  </p>
+                  <p className="text-sm text-muted-foreground">Offered to {OFFERS[provider.offer] ?? provider.offer}</p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span id={labelId} className="text-sm font-medium">
+                    Pause checks
+                  </span>
+                  <Switch
+                    aria-labelledby={labelId}
+                    checked={provider.paused}
+                    onCheckedChange={(on) =>
+                      ask({
+                        title: on ? `Pause ${provider.name} checks?` : `Resume ${provider.name} checks?`,
+                        description: on
+                          ? `No ${provider.name} watch is checked until you resume. Watches stay, and nobody is told.`
+                          : `${provider.name} watches are checked again.`,
+                        confirmLabel: on ? "Pause checks" : "Resume checks",
+                        danger: on,
+                        done: on ? `${provider.name} checks are paused` : `${provider.name} checks resume`,
+                        run: (reason) => adminApi.pauseProvider(provider.id, on, reason),
+                      })
+                    }
+                  />
+                </div>
+              </div>
+              <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm sm:grid-cols-[auto_minmax(0,1fr)_auto_minmax(0,1fr)]">
+                {providerFacts(report, now).map(([label, value]) => (
+                  <div key={label} className="contents">
+                    <dt className="text-muted-foreground">{label}</dt>
+                    <dd className="tabular text-right font-medium sm:text-left">{value}</dd>
+                  </div>
+                ))}
+              </dl>
+            </li>
+          );
+        })}
+      </ul>
+    </Card>
+  );
+}
+
+function providerFacts(report: ProviderChecks | null, now: number): Fact[] {
+  if (!report) return [["Last report", "None yet"]];
+  const rows: Fact[] = [];
+  if (report.fetcher) {
+    rows.push([
+      "Fetcher",
+      report.fetcher === "ok" ? (
+        "OK"
+      ) : (
+        <span className="text-danger">
+          Down{report.fetcher_down_since ? ` since ${clock(report.fetcher_down_since * 1000)}` : ""}
+        </span>
+      ),
+    ]);
+  }
+  const budget = report.budget_per_minute ?? null;
+  const demand = report.demand_per_minute ?? null;
+  if (budget !== null || demand !== null) {
+    rows.push(["Budget", `${decimal(demand ?? 0)} of ${budget !== null ? decimal(budget) : "?"} requests a minute`]);
+  }
+  if (report.fetches_last_hour != null || report.errors_last_hour != null) {
+    const errors = report.errors_last_hour ?? 0;
+    rows.push([
+      "Last hour",
+      <>
+        {plural(report.fetches_last_hour ?? 0, "fetch", "fetches")} ·{" "}
+        <span className={errors ? "text-warning" : undefined}>{plural(errors, "error")}</span>
+      </>,
+    ]);
+  }
+  rows.push(["Last success", report.last_ok_at ? ago(report.last_ok_at * 1000, now) : "Never"]);
+  rows.push([
+    "Last error",
+    report.last_error ? (
+      <span className="text-warning">
+        {report.last_error.replace(/_/g, " ")}
+        {report.last_error_at ? `, ${ago(report.last_error_at * 1000, now)}` : ""}
+      </span>
+    ) : (
+      "None"
+    ),
+  ]);
+  const cooldown = report.cooldown_until ?? null;
+  rows.push([
+    "Cooldown",
+    cooldown !== null && cooldown * 1000 > now ? (
+      <span className="text-warning">Until {clock(cooldown * 1000)}</span>
+    ) : (
+      "None"
+    ),
+  ]);
+  rows.push([
+    "Watches",
+    `${report.watches ?? 0} · ${report.checking ?? 0} checking · ${report.deferred ?? 0} deferred`,
+  ]);
+  return rows;
 }
 
 /** Whether waitlist-control is alive. It turns into a warning past two minutes, or when it never reported. */
@@ -617,6 +782,9 @@ function PeoplePage({
   const now = useNow(60_000);
   const qc = useQueryClient();
   const unmatched = useQuery({ queryKey: ADMIN_KEYS.unmatched, queryFn: ({ signal }) => adminApi.unmatched(signal) });
+  // Provider names for each person's watches, from the overview the version line loads anyway.
+  const overview = useQuery({ queryKey: ADMIN_KEYS.overview, queryFn: ({ signal }) => adminApi.overview(signal) });
+  const names = new Map((overview.data?.providers ?? []).map((p) => [p.id, p.name]));
   const { ask, dialog } = useReasoned();
   const [draft, setDraft] = useState({ username: "", email: "", reason: "" });
   const invite = useMutation({
@@ -633,7 +801,7 @@ function PeoplePage({
     <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
       <div className="min-w-0 space-y-4">
         {users.map((user) => (
-          <PersonCard key={user.id} user={user} isMe={user.id === meId} now={now} ask={ask} />
+          <PersonCard key={user.id} user={user} isMe={user.id === meId} now={now} ask={ask} names={names} />
         ))}
       </div>
       <aside className="space-y-6">
@@ -760,16 +928,29 @@ function PeoplePage({
   );
 }
 
+/** "1 trip · 2 Buntzen Lake watches": BC Ferries trips, then each other provider's live watches. */
+function watchCounts(user: AdminUser, names: ReadonlyMap<string, string>): string {
+  const others = Object.entries(user.watches ?? {})
+    .filter(([provider, n]) => provider !== "bcferries" && n > 0)
+    .map(([provider, n]) => {
+      const name = names.get(provider) ?? provider;
+      return plural(n, `${name} watch`, `${name} watches`);
+    });
+  return [plural(user.trips, "trip"), ...others].join(" · ");
+}
+
 function PersonCard({
   user,
   isMe,
   now,
   ask,
+  names,
 }: {
   user: AdminUser;
   isMe: boolean;
   now: number;
   ask: (ask: Ask) => void;
+  names: ReadonlyMap<string, string>;
 }) {
   const [showLimits, setShowLimits] = useState(false);
   const suspended = user.state === "suspended";
@@ -795,7 +976,7 @@ function PersonCard({
           </h2>
           <p className="text-sm text-muted-foreground">
             {user.email ? `${user.email} · ` : ""}
-            {plural(user.trips, "trip")} ·{" "}
+            {watchCounts(user, names)} ·{" "}
             {user.last_seen_at ? `seen ${ago(user.last_seen_at * 1000, now)}` : "never signed in"}
           </p>
           {counts.length > 0 && <p className="text-sm text-muted-foreground">{counts.join(" · ")}</p>}

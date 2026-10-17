@@ -2,16 +2,21 @@
   "id": "/",
   "name": "Waitlist",
   "short_name": "Waitlist",
-  "description": "Get an alert the moment a BC Ferries reservation opens up.",
+  "description": "Alerts the moment a reservation opens up: BC Ferries sailings, Buntzen Lake passes and more.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "theme_color": "#0b4f94",
   "background_color": "#f5f7fa",
   "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
     { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
     { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
     { "src": "/icon-maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
     { "src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "New Buntzen Lake watch", "short_name": "Buntzen Lake", "url": "/new/buntzen" },
+    { "name": "New BC Ferries watch", "short_name": "BC Ferries", "url": "/new/bcferries" }
   ]
 }
