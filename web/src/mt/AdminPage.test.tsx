@@ -1,5 +1,6 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { fail } from "@/test/fixtures";
 import { jsonResponse, mockFetch, renderWithProviders, type RecordedRequest } from "@/test/render";
 import { browserVersions, quantityGiB, type Overview, type People, type Unmatched } from "./admin";
 import { AdminPage } from "./AdminPage";
@@ -643,6 +644,28 @@ describe("providers checked over HTTP", () => {
     renderWithProviders(<AdminPage meId={ME} />);
     expect(await screen.findByText("A provider's site changed shape; its checks are failing")).toBeInTheDocument();
     expect(screen.getByText("waitlist-fetcher isn't answering; HTTP checks are on hold")).toBeInTheDocument();
+  });
+
+  it("says a provider's alert once, though waitlist-web sends its words as the detail too", async () => {
+    // GET /api/admin/overview: admin.ATTENTION_ALERTS gives these kinds' detail, the very words the list leads with.
+    const site = "A provider's site changed shape; its checks are failing";
+    const fetcher = "waitlist-fetcher isn't answering; HTTP checks are on hold";
+    api((r) =>
+      r.url === "/api/admin/overview"
+        ? jsonResponse({
+            ...withProviders(),
+            attention: [
+              { kind: "site_changed", trip: null, user: ME, at: now() - 60, detail: site },
+              { kind: "checker_down", trip: null, user: ME, at: now() - 120, detail: fetcher },
+            ],
+          })
+        : undefined,
+    );
+    renderWithProviders(<AdminPage meId={ME} />);
+    const list = (await screen.findByText(site)).closest("ul") ?? fail("the attention list");
+    const times = (words: string) => (list.textContent ?? "").split(words).length - 1;
+    expect([times(site), times(fetcher)]).toEqual([1, 1]);
+    expect(within(list).getByText("1 min ago")).toBeInTheDocument();
   });
 
   it("warns when the check loop's report is old", async () => {

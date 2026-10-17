@@ -331,15 +331,20 @@ function Fleet({ users }: { users: readonly AdminUser[] | undefined }) {
         </CardHeader>
         {attention.length ? (
           <ul className="divide-y border-t">
-            {attention.map((a, i) => (
-              <li key={`${a.kind}-${i}`} className="px-5 py-3 text-sm">
-                <span className="font-medium">{attentionText(a.kind, a.user ? name(a.user) : "someone")}</span>
-                <span className="block break-words text-muted-foreground">
-                  {a.detail ? `${a.detail} · ` : ""}
-                  {ago(a.at * 1000, now)}
-                </span>
-              </li>
-            ))}
+            {attention.map((a, i) => {
+              const text = attentionText(a.kind, a.user ? name(a.user) : "someone");
+              // A provider's alert leads with the very words waitlist-web sends as its detail: said once.
+              const detail = a.detail && a.detail !== text ? a.detail : null;
+              return (
+                <li key={`${a.kind}-${i}`} className="px-5 py-3 text-sm">
+                  <span className="font-medium">{text}</span>
+                  <span className="block break-words text-muted-foreground">
+                    {detail ? `${detail} · ` : ""}
+                    {ago(a.at * 1000, now)}
+                  </span>
+                </li>
+              );
+            })}
           </ul>
         ) : (
           <p className="px-5 pb-5 text-sm text-muted-foreground">Nothing needs you.</p>
