@@ -1,7 +1,8 @@
 """`waitlist-control`: the operator's entrypoints (docs/multi-tenant/design-reference.md §6.1).
 
 - `waitlist-control migrate`: apply migrations and grants, as the database owner (the db-migrate Job).
-- `waitlist-control run`: the hub endpoint (:8766) and the fleet loop, as `waitlist_control`.
+- `waitlist-control run`: the hub endpoint (:8766), the fleet loop and, when `fetcher` is configured, the HTTP check
+  loop (docs/waitlist/design.md §4.5), as `waitlist_control`.
 
 Configuration is the deployment's JSON (WL_CONTROL_CONFIG); database credentials come from the libpq
 variables. Only one `run` works at a time: it takes a Postgres advisory lock, and a second replica idles
@@ -23,8 +24,10 @@ import aiohttp
 import asyncpg
 from aiohttp import web
 
+from .checks import HttpChecks
 from .config import ConfigError, ControlConfig, load
 from .db import grant, migrate
+from .fetch import FetchClient
 from .fleet import Fleet
 from .hub import HubEndpoint
 from .kube import KubeCluster
@@ -108,16 +111,26 @@ async def _serve(
     await runner.setup()
     await web.TCPSite(runner, "0.0.0.0", config.listen_port).start()  # noqa: S104 - agents dial in
     tasks = [asyncio.create_task(hub.run(), name="hub"), asyncio.create_task(fleet.run(), name="fleet")]
-    ready.set()
-    log.info("waitlist-control running")
-    try:
-        await stop.wait()
-    finally:
-        ready.clear()
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
-        await runner.cleanup()
+    async with contextlib.AsyncExitStack() as stack:
+        if config.fetcher is not None:
+            # Its own session, never the kube one: no proxy from the environment, no cookies kept.
+            fetcher_http = await stack.enter_async_context(
+                aiohttp.ClientSession(trust_env=False, cookie_jar=aiohttp.DummyCookieJar())
+            )
+            client = FetchClient(fetcher_http, config.fetcher.url, timeout_s=config.fetcher.timeout_seconds)
+            checks = HttpChecks(pool, client, rates=config.http_rates())
+            tasks.append(asyncio.create_task(checks.run(stop), name="http checks"))
+            log.info("HTTP checks running for %s", ", ".join(sorted(config.http_rates())) or "no provider")
+        ready.set()
+        log.info("waitlist-control running")
+        try:
+            await stop.wait()
+        finally:
+            ready.clear()
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            await runner.cleanup()
 
 
 def main() -> None:
