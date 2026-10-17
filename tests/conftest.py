@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from ferry_watch.bcferries.terminals import Terminals
+from waitlist.bcferries.terminals import Terminals
 
 FIXTURES = Path(__file__).parent / "fixtures"
 TODAY = date(2026, 10, 11)
@@ -25,7 +25,7 @@ def terminals() -> Terminals:
 @pytest.fixture(autouse=True)
 def frozen_today(monkeypatch: pytest.MonkeyPatch) -> date:
     """Pin "today" (Pacific), so date rules are deterministic."""
-    monkeypatch.setattr("ferry_watch.models.today", lambda: TODAY)
+    monkeypatch.setattr("waitlist.models.today", lambda: TODAY)
     return TODAY
 
 

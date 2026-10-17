@@ -1,5 +1,5 @@
 {
-  "protocol": "fw.cast1",
+  "protocol": "wl.cast1",
   "cases": [
     {
       "id": "occlusion-page", "sec": "8.3",

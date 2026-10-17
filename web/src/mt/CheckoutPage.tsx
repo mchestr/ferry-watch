@@ -37,7 +37,7 @@ export function CheckoutPage({
     mutationFn: () => myApi.checkout(tripId),
     onSuccess: ({ url }) => location.assign(url),
   });
-  // Which viewer the link opens, once there is one. Until then, the user's choice: ferry-web overrules it only for
+  // Which viewer the link opens, once there is one. Until then, the user's choice: waitlist-web overrules it only for
   // a browser pod from before the beta, which opens in the classic viewer.
   const { checkout_viewer, stream_viewer_offered } = state.settings;
   const streamed = (open.data?.viewer ?? (stream_viewer_offered ? checkout_viewer : "classic")) === "stream";
@@ -142,8 +142,8 @@ export function CheckoutPage({
         )}
         {elsewhere && (
           <p className="rounded-xl bg-muted p-3 text-sm">
-            Open Ferry Watch on your computer, sign in, and choose this trip's <strong>Open checkout</strong>. A
-            computer is easiest.
+            Open Waitlist on your computer, sign in, and choose this trip's <strong>Open checkout</strong>. A computer
+            is easiest.
           </p>
         )}
         <Button variant="ghost" className="w-full" disabled={releasing} onClick={release}>

@@ -16,13 +16,13 @@ from aiohttp import web
 from aiohttp.test_utils import TestServer
 from cryptography.hazmat.primitives.asymmetric import ec
 
-from ferry_watch.bcferries.terminals import Terminals
-from ferry_watch.models import Trip
-from ferry_watch.web.messages import Messages
-from ferry_watch.web.outbox import RETRY_SECONDS, Outbox, allowed_endpoint, subscription_row
-from ferry_watch.web.push import Vapid, _point, b64
 from tests.postgres import ROLES, Database
 from tests.test_push import AS_PRIVATE, decrypt
+from waitlist.bcferries.terminals import Terminals
+from waitlist.models import Trip
+from waitlist.web.messages import Messages
+from waitlist.web.outbox import RETRY_SECONDS, Outbox, allowed_endpoint, subscription_row
+from waitlist.web.push import Vapid, _point, b64
 
 ANN = "a" * 20
 TRIP = Trip(id="3f9c0a1b2c3d4e5f", origin="SWB", destination="TSA", date=date(2026, 10, 16))
@@ -59,7 +59,7 @@ class Rig:
     endpoint: str
     clock: list[float]
 
-    async def sql(self, query: str, *args: Any, user: str = "ferrywatch") -> list[asyncpg.Record]:
+    async def sql(self, query: str, *args: Any, user: str = "waitlist") -> list[asyncpg.Record]:
         conn = await self.db.connect(user)
         try:
             return await conn.fetch(query, *args)
@@ -112,8 +112,8 @@ async def rig(db: Database, aiohttp_server: Callable[..., Any]) -> AsyncIterator
         outbox = Outbox(
             pool,
             http,
-            Messages("https://ferry.chestr.dev", lambda: None),
-            vapid=Vapid.from_raw(AS_PRIVATE, "mailto:ferry-watch@chestr.dev"),
+            Messages("https://waitlist.chestr.dev", lambda: None),
+            vapid=Vapid.from_raw(AS_PRIVATE, "mailto:waitlist@chestr.dev"),
             mailer=mailer,  # type: ignore[arg-type]
             clock=lambda: time.time() + clock[0],
         )
@@ -129,7 +129,7 @@ async def test_a_held_cart_is_pushed_and_emailed(rig: Rig) -> None:
     (message,) = rig.pushed()
     assert message["title"] == "Held for you: 9:00 am, 11:00 am SWB → TSA, Fri Oct 16"
     assert message["body"].startswith("Check out by ")  # not "as a guest": signing in is up to them
-    assert message["url"] == f"https://ferry.chestr.dev/c/{TRIP.id}"
+    assert message["url"] == f"https://waitlist.chestr.dev/c/{TRIP.id}"
     headers = rig.push.received[0][0]
     assert headers["Urgency"] == "high"
     assert headers["Content-Encoding"] == "aes128gcm"
@@ -152,31 +152,31 @@ async def test_email_stands_in_when_no_device_works(rig: Rig) -> None:
     await rig.outbox.deliver_due()
     assert [to for to, _, _ in rig.mailer.sent] == ["ann@example.com"]
     (_, _, text) = rig.mailer.sent[0]
-    assert text.startswith("It's in your quiet hours, so we didn't hold it. Open Ferry Watch to hold it now.\n\n")
-    assert f"https://ferry.chestr.dev/c/{TRIP.id}\n" in text  # the trip's page
+    assert text.startswith("It's in your quiet hours, so we didn't hold it. Open Waitlist to hold it now.\n\n")
+    assert f"https://waitlist.chestr.dev/c/{TRIP.id}\n" in text  # the trip's page
     assert "bcferries.com" not in text  # no terminal list here: no second link, rather than a wrong one
     assert await rig.sql("SELECT * FROM push_subscriptions") == []  # forgotten
 
 
 def test_unheld_alerts_say_why_and_link_to_the_trip(terminals: Terminals) -> None:
-    messages = Messages("https://ferry.chestr.dev", lambda: terminals)
+    messages = Messages("https://waitlist.chestr.dev", lambda: terminals)
     trip = Trip(id=TRIP.id, origin="NAN", destination="HSB", date=date(2026, 10, 16))
-    page = f"https://ferry.chestr.dev/c/{TRIP.id}"
+    page = f"https://waitlist.chestr.dev/c/{TRIP.id}"
     quiet = messages.render("bookable", {"departures": ["09:00"], "held_back": "quiet_hours"}, trip)
     assert quiet is not None
     assert (quiet.url, quiet.body) == (
         page,
-        "It's in your quiet hours, so we didn't hold it. Open Ferry Watch to hold it now.",
+        "It's in your quiet hours, so we didn't hold it. Open Waitlist to hold it now.",
     )
     assert quiet.also is not None
     assert quiet.also[1].startswith("https://www.bcferries.com/?sailing=true&departureLocation=NAN")
     older = messages.render("bookable", {"departures": ["09:00"]}, trip)  # queued before held_back existed
     assert older is not None
-    assert older.body == "We couldn't hold it this time. Open Ferry Watch to try again."
+    assert older.body == "We couldn't hold it this time. Open Waitlist to try again."
     failed = messages.render("cart_failed", {"departures": ["09:00"], "error_class": "not_bookable"}, trip)
     assert failed is not None
     assert failed.url == page
-    assert failed.body == "BC Ferries didn't let us hold it (it may have just sold out). Open Ferry Watch to try again."
+    assert failed.body == "BC Ferries didn't let us hold it (it may have just sold out). Open Waitlist to try again."
     assert failed.push() == {"title": failed.title, "body": failed.body, "url": page}  # a push opens one link
 
 
@@ -200,9 +200,7 @@ async def test_an_invitation_goes_by_email(rig: Rig) -> None:
         user=ROLES.web,
     )
     await rig.outbox.deliver_due()
-    assert [(to, subject) for to, subject, _ in rig.mailer.sent] == [
-        ("cat@example.com", "You're invited to Ferry Watch")
-    ]
+    assert [(to, subject) for to, subject, _ in rig.mailer.sent] == [("cat@example.com", "You're invited to Waitlist")]
     assert rig.push.received == []
 
 

@@ -72,7 +72,7 @@ const SWITCHES: readonly FleetSwitchCopy[] = [
   },
 ];
 
-/** ferry-control reports every pass; past this, the Fleet page says it may not be running. */
+/** waitlist-control reports every pass; past this, the Fleet page says it may not be running. */
 const CONTROL_LATE_MS = 2 * 60_000;
 
 /** The attention list, in plain words. `who` is a username, or "someone". */
@@ -217,8 +217,8 @@ export function AdminPage({ meId }: { meId: string }) {
 }
 
 /**
- * Which release each part runs: this page, ferry-web, ferry-control and the browsers. A page left open across
- * a deploy keeps its old code, so it offers a reload when it's older than ferry-web.
+ * Which release each part runs: this page, waitlist-web, waitlist-control and the browsers. A page left open across
+ * a deploy keeps its old code, so it offers a reload when it's older than waitlist-web.
  */
 function Versions() {
   const overview = useQuery({ queryKey: ADMIN_KEYS.overview, queryFn: ({ signal }) => adminApi.overview(signal) });
@@ -462,7 +462,7 @@ function Fleet({ users }: { users: readonly AdminUser[] | undefined }) {
   );
 }
 
-/** Whether ferry-control is alive. It turns into a warning past two minutes, or when it never reported. */
+/** Whether waitlist-control is alive. It turns into a warning past two minutes, or when it never reported. */
 function ControlSeen({ seen, now }: { seen: number | null; now: number }) {
   const late = seen === null || now - seen * 1000 > CONTROL_LATE_MS;
   return (
@@ -474,8 +474,8 @@ function ControlSeen({ seen, now }: { seen: number | null; now: number }) {
     >
       {late && <AlertTriangle className="size-4 shrink-0" aria-hidden />}
       {seen === null
-        ? "ferry-control hasn't reported. Is it running?"
-        : `ferry-control last reported ${ago(seen * 1000, now)}${late ? ". Is it running?" : ""}`}
+        ? "waitlist-control hasn't reported. Is it running?"
+        : `waitlist-control last reported ${ago(seen * 1000, now)}${late ? ". Is it running?" : ""}`}
     </p>
   );
 }
@@ -500,7 +500,7 @@ function Facts({ rows }: { rows: readonly Fact[] }) {
 const decimal = (n: number) => String(Number(n.toFixed(1)));
 const gib = (n: number) => `${decimal(n)} GiB`;
 
-/** Only what ferry-control reported; queued falls back to ferry-web's own count. */
+/** Only what waitlist-control reported; queued falls back to waitlist-web's own count. */
 function capacity(fleet: FleetReport | null, queued: number): Fact[] {
   const rows: Fact[] = [];
   const max = fleet?.browsers?.max ?? null;
@@ -553,7 +553,7 @@ function budget(fleet: FleetReport | null): Fact[] {
   return rows;
 }
 
-/** The breaker as stored (an admin's close shows at once), else as ferry-control last reported it. */
+/** The breaker as stored (an admin's close shows at once), else as waitlist-control last reported it. */
 function breakerOpen(data: Overview): boolean {
   const stored = data.switches.breaker;
   return (stored === "open" || stored === "closed" ? stored : data.fleet?.breaker) === "open";

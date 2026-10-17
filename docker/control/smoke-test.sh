@@ -8,11 +8,11 @@ set -euo pipefail
 image="${1:?usage: smoke-test.sh <image>}"
 docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges "$image" sh -euc '
   test "$(id -u)" = 65532
-  python -c "import ferry_watch.web.main, ferry_watch.control.main"
+  python -c "import waitlist.web.main, waitlist.control.main"
   ! python -c "import playwright" 2>/dev/null
   ! python -c "import selectolax" 2>/dev/null
-  ferry-web --help >/dev/null
-  ferry-control --help >/dev/null
+  waitlist-web --help >/dev/null
+  waitlist-control --help >/dev/null
   test -f /app/static/index.html
   python -c "import zoneinfo; zoneinfo.ZoneInfo(\"America/Vancouver\")"
 '

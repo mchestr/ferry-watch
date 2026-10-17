@@ -76,7 +76,7 @@ function HeldCart({ trip }: { trip: MyTrip }) {
 }
 
 /**
- * Remove, after asking. ferry-control drains the trip's browser even while it holds a cart, so the dialog's
+ * Remove, after asking. waitlist-control drains the trip's browser even while it holds a cart, so the dialog's
  * "releases the sailing in your cart" is what happens.
  */
 function RemoveButton({ trip, title }: { trip: MyTrip; title: string }) {

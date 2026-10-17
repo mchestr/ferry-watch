@@ -1,5 +1,5 @@
 /**
- * What ferry-web sends: one user's own state (docs/multi-tenant/design-reference.md §6.3). Parsed before
+ * What waitlist-web sends: one user's own state (docs/multi-tenant/design-reference.md §6.3). Parsed before
  * the app sees it; statuses the build doesn't know read as "unknown" rather than blanking the page.
  */
 import { z } from "zod";

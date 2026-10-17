@@ -11,18 +11,18 @@ from aiohttp.test_utils import TestClient
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat, PublicFormat
 
-from ferry_watch.tickets import public_keys
-from ferry_watch.web.config import ConfigError, checkout_key, load, new_keys, read_secret, signing_key
-from ferry_watch.web.main import add_static
-from ferry_watch.web.push import Vapid
+from waitlist.tickets import public_keys
+from waitlist.web.config import ConfigError, checkout_key, load, new_keys, read_secret, signing_key
+from waitlist.web.main import add_static
+from waitlist.web.push import Vapid
 
 MINIMAL: dict[str, Any] = {
     "oidc": {
         "issuer": "https://auth.chestr.dev",
-        "clientId": "ferry-watch",
-        "redirectUri": "https://ferry.chestr.dev/auth/callback",
+        "clientId": "waitlist",
+        "redirectUri": "https://waitlist.chestr.dev/auth/callback",
     },
-    "checkout": {"origin": "https://ferry-checkout.chestr.dev", "keyId": "k1"},
+    "checkout": {"origin": "https://waitlist-checkout.chestr.dev", "keyId": "k1"},
 }
 
 
@@ -56,8 +56,8 @@ def test_the_streamed_viewer_is_off_unless_the_deployment_offers_it(tmp_path: Pa
     "change",
     [
         {"kofiUrl": "https://evil.example/kofi"},
-        {"checkout": {"origin": "http://ferry-checkout.chestr.dev", "keyId": "k1"}},
-        {"checkout": {"origin": "https://ferry-checkout.chestr.dev/path", "keyId": "k1"}},
+        {"checkout": {"origin": "http://waitlist-checkout.chestr.dev", "keyId": "k1"}},
+        {"checkout": {"origin": "https://waitlist-checkout.chestr.dev/path", "keyId": "k1"}},
         # Only the three values; YAML reads a bare `off` as false, which must stop startup, not mean anything.
         *({"checkout": MINIMAL["checkout"] | {"streamViewer": v}} for v in ("on", "Admins", False, True, None)),
         {"oidc": MINIMAL["oidc"] | {"algorithms": ["HS256"]}},  # never a shared-secret signature
@@ -84,12 +84,12 @@ def test_keys_come_out_in_the_forms_the_app_reads() -> None:
     lines = [line for line in new_keys("k2").splitlines() if not line.startswith("#")]
     values = dict(line.split("=", 1) for line in lines[:2])
     public = public_keys(lines[2])["k2"]
-    key_id, checkout = checkout_key(values["FERRY_WATCH_CHECKOUT_KEY"], "k1")
+    key_id, checkout = checkout_key(values["WAITLIST_CHECKOUT_KEY"], "k1")
     assert key_id == "k2"  # the id travels with the key, so a rotation is one change
     assert checkout.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw) == public.public_bytes(
         Encoding.Raw, PublicFormat.Raw
     )
-    assert Vapid.from_raw(values["FERRY_WATCH_VAPID_KEY"], "mailto:x@example.com").public_key
+    assert Vapid.from_raw(values["WAITLIST_VAPID_KEY"], "mailto:x@example.com").public_key
     with pytest.raises(ConfigError):
         new_keys("K-1")
 
@@ -108,10 +108,10 @@ def test_secrets_come_from_files(tmp_path: Path) -> None:
     raw = key.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())
     secret = tmp_path / "key"
     secret.write_text(base64.urlsafe_b64encode(raw).decode().rstrip("=") + "\n")
-    text = read_secret({"FW_CHECKOUT_KEY_FILE": str(secret)}, "FW_CHECKOUT_KEY_FILE")
+    text = read_secret({"WL_CHECKOUT_KEY_FILE": str(secret)}, "WL_CHECKOUT_KEY_FILE")
     assert signing_key(text).private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption()) == raw
     with pytest.raises(ConfigError):
-        read_secret({}, "FW_CHECKOUT_KEY_FILE")
+        read_secret({}, "WL_CHECKOUT_KEY_FILE")
     with pytest.raises(ConfigError):
         signing_key("short")
 

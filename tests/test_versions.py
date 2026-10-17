@@ -1,10 +1,10 @@
-"""Reading an agent's version: what ferry-web and ferry-control offer a pod depends on it."""
+"""Reading an agent's version: what waitlist-web and waitlist-control offer a pod depends on it."""
 
 from __future__ import annotations
 
 import pytest
 
-from ferry_watch.versions import STREAM_VIEWER, at_least
+from waitlist.versions import STREAM_VIEWER, at_least
 
 
 @pytest.mark.parametrize(

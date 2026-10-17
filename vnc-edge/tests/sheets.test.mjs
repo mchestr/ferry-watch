@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { heading } from "../site/fw/viewer/sheets.js";
+import { heading } from "../site/wl/viewer/sheets.js";
 
 const SHOP = "https://www.bcferries.com";
 const PAY = "https://pay.example";

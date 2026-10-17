@@ -1,5 +1,5 @@
 /**
- * The app as ferry-web serves it: each person signs in (OIDC) and sees only their own trips
+ * The app as waitlist-web serves it: each person signs in (OIDC) and sees only their own trips
  * (docs/multi-tenant/design-reference.md §10).
  */
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -51,7 +51,7 @@ function SignedOut({ message }: { message?: string }) {
       <div className="grid size-12 place-items-center rounded-2xl bg-accent text-accent-foreground">
         <Ship className="size-6" aria-hidden />
       </div>
-      <h1 className="text-xl font-bold">Ferry Watch</h1>
+      <h1 className="text-xl font-bold">Waitlist</h1>
       <p className="text-sm text-muted-foreground">{message ?? "Sign in to watch your BC Ferries sailings."}</p>
       <Button
         size="lg"
@@ -153,7 +153,7 @@ function SignedIn() {
       <header className="border-b bg-card">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
           <button type="button" className="flex items-center gap-2 font-bold" onClick={() => navigate("/")}>
-            <Ship className="size-5" aria-hidden /> Ferry Watch
+            <Ship className="size-5" aria-hidden /> Waitlist
           </button>
           <div className="flex items-center gap-1">
             <span className="hidden text-sm text-muted-foreground sm:inline">

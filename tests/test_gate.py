@@ -13,17 +13,17 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from ferry_watch.agent.cast_protocol import CloseCode
-from ferry_watch.agent.gate import MAX_FAILURES_PER_MINUTE, Gate, GateSettings, ViewerKind
-from ferry_watch.tickets import mint
 from tests.cast1 import load as load_pack
+from waitlist.agent.cast_protocol import CloseCode
+from waitlist.agent.gate import MAX_FAILURES_PER_MINUTE, Gate, GateSettings, ViewerKind
+from waitlist.tickets import mint
 
 NOW = 1_790_000_000.0
 KEY = Ed25519PrivateKey.generate()
-ORIGIN = "https://ferry-checkout.chestr.dev"
+ORIGIN = "https://waitlist-checkout.chestr.dev"
 OWNER = "user-7"
 TRIP = "3f9c0a1b2c3d4e5f"
-POD = f"fw-{TRIP}-g1"
+POD = f"wl-{TRIP}-g1"
 NONCE = "n" * 32
 GREETING = b"RFB 003.008\n"
 
@@ -36,9 +36,9 @@ def ticket(**kw: Any) -> str:
 def protocols(nonce: str | None = NONCE, tkt: str | None = None) -> list[str]:
     offered = ["binary"]
     if tkt is not None:
-        offered.append(f"fw.t1.{tkt}")
+        offered.append(f"wl.t1.{tkt}")
     if nonce is not None:
-        offered.append(f"fw.n1.{nonce}")
+        offered.append(f"wl.n1.{nonce}")
     return offered
 
 
@@ -168,7 +168,7 @@ async def test_nothing_without_a_held_cart(rig: Rig) -> None:
 
 @pytest.mark.parametrize(
     "binding",
-    [{"sub": "user-8"}, {"trip": "ffffffffffffffff"}, {"pod": f"fw-{TRIP}-g2"}, {"cart_id": "cart2"}],
+    [{"sub": "user-8"}, {"trip": "ffffffffffffffff"}, {"pod": f"wl-{TRIP}-g2"}, {"cart_id": "cart2"}],
 )
 async def test_a_ticket_for_anything_else_is_refused(rig: Rig, binding: dict[str, str]) -> None:
     assert await rig.refused(protocols(tkt=ticket(**binding))) == 403
@@ -280,14 +280,14 @@ async def test_xvnc_unreachable(rig: Rig) -> None:
     assert again == 502
 
 
-# ---- two kinds of viewer: the classic (binary) one and the streamed one (fw.cast1)
+# ---- two kinds of viewer: the classic (binary) one and the streamed one (wl.cast1)
 
 PACK_OFFERS = load_pack("messages")["offers"]
 PACK_NONCE = "Q2hlY2tvdXROb25jZUZvclRlc3Rz"  # the pack's offers use it
 
 
 def cast_protocols(nonce: str | None = NONCE, tkt: str | None = None) -> list[str]:
-    return ["fw.cast1", *protocols(nonce, tkt)[1:]]
+    return ["wl.cast1", *protocols(nonce, tkt)[1:]]
 
 
 @dataclass
@@ -366,7 +366,7 @@ class CastRig:
         """A stream that has started its session."""
         count = len(self.sessions)
         ws = await self.connect(offered)
-        assert ws.protocol == "fw.cast1"
+        assert ws.protocol == "wl.cast1"
         await until(lambda: len(self.sessions) > count and f"{self.sessions[-1].name} runs" in self.log)
         return ws
 
@@ -474,7 +474,7 @@ async def test_nobody_without_the_nonce_or_a_ticket_can_tell_whether_a_stream_is
     the same refusal as a classic viewer would, so it says nothing about the switch, nor (under "admins") about
     whether the owner is an admin."""
     cast_rig.allowed[0] = allowed
-    assert await cast_rig.refused(["fw.cast1"]) == 403  # no nonce
+    assert await cast_rig.refused(["wl.cast1"]) == 403  # no nonce
     assert await cast_rig.refused(cast_protocols(nonce="m" * 32)) == 403  # a nonce, no ticket, nothing locked yet
     assert await cast_rig.refused(cast_protocols(nonce="m" * 32, tkt=ticket(sub="someone-else"))) == 403
     first = await cast_rig.connect(protocols(tkt=ticket()))  # the owner's device takes the lock
@@ -484,7 +484,7 @@ async def test_nobody_without_the_nonce_or_a_ticket_can_tell_whether_a_stream_is
     await first.close()
 
 
-async def test_without_a_stream_factory_fw_cast1_is_refused(rig: Rig) -> None:
+async def test_without_a_stream_factory_wl_cast1_is_refused(rig: Rig) -> None:
     assert await rig.refused(cast_protocols(tkt=ticket())) == 400
     ws = await rig.connect(protocols(tkt=ticket()))  # and it wasn't counted
     assert await greeted(ws) == GREETING

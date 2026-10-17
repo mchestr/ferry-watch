@@ -7,7 +7,7 @@ it. That file's stand-in RFB server can't say what the real Xvnc lets a client s
 touch handling and the viewer's settings (docs/multi-tenant/design-reference.md §7.9) are tested here too, since
 what they're for is what the pod's page sees.
 
-Needs FW_KASMVNC_WWW (as test_checkout_edge.py does), and Xvnc from the KasmVNC package and
+Needs WL_KASMVNC_WWW (as test_checkout_edge.py does), and Xvnc from the KasmVNC package and
 matchbox-window-manager on PATH (CI installs both, as the browser image does; see .github/workflows/ci.yml).
 """
 
@@ -26,10 +26,10 @@ import pytest
 from aiohttp.test_utils import TestServer, unused_port
 from playwright.async_api import Browser, BrowserContext, Page
 
-from ferry_watch.agent.gate import Gate, GateSettings
-from ferry_watch.agent.processes import pod_processes
-from ferry_watch.bcferries.site import PodBrowser
 from tests.browser import test_checkout_edge as edge
+from waitlist.agent.gate import Gate, GateSettings
+from waitlist.agent.processes import pod_processes
+from waitlist.bcferries.site import PodBrowser
 
 pytestmark = pytest.mark.browser
 
@@ -125,7 +125,7 @@ async def pod() -> AsyncIterator[Pod]:
     if not (shutil.which("Xvnc") and shutil.which("matchbox-window-manager")):
         pytest.skip("Xvnc (KasmVNC's) and matchbox-window-manager aren't on PATH")
     # Short, since Chromium's singleton socket goes under TMPDIR and a unix socket's path is limited.
-    work = Path(tempfile.mkdtemp(prefix="fw-"))
+    work = Path(tempfile.mkdtemp(prefix="wl-"))
     (work / "home").mkdir()
     x11 = Path("/tmp/.X11-unix")
     if not x11.exists():

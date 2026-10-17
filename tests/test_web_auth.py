@@ -1,4 +1,4 @@
-"""ferry-web's sign-in against a fake OIDC provider, and its cookie-less sessions, on real Postgres."""
+"""waitlist-web's sign-in against a fake OIDC provider, and its cookie-less sessions, on real Postgres."""
 
 from __future__ import annotations
 
@@ -19,12 +19,12 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from ferry_watch.web.accounts import Accounts, IdentityPolicy
-from ferry_watch.web.auth import ACCOUNTS, OIDC, require_session, routes, signed_in
-from ferry_watch.web.identity import OidcClient, OidcSettings, principal_hash
 from tests.postgres import ROLES, Database
+from waitlist.web.accounts import Accounts, IdentityPolicy
+from waitlist.web.auth import ACCOUNTS, OIDC, require_session, routes, signed_in
+from waitlist.web.identity import OidcClient, OidcSettings, principal_hash
 
-CLIENT_ID = "ferry-watch"
+CLIENT_ID = "waitlist"
 SECRET = "client-secret-" + "x" * 32
 VERIFIER = "v" * 43
 
@@ -84,7 +84,7 @@ class FakeIdP:
             "nonce": nonce,
             "preferred_username": sub,
             "email": f"{sub}@example.com",
-            "groups": ["ferry-watch"],
+            "groups": ["waitlist"],
         } | claims
         if headers and headers.get("alg") == "HS256":
             token = jwt.encode(payload, SECRET, algorithm="HS256")

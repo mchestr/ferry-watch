@@ -66,11 +66,11 @@ function overview(): Overview {
       {
         user: BEA,
         trip: TRIP,
-        pod: "fw-3f9c0a1b2c3d4e5f-2",
+        pod: "wl-3f9c0a1b2c3d4e5f-2",
         since: Date.now() / 1000 - 120,
         cart: { status: "ready", depart: "09:00", hard_deadline: Date.now() / 1000 + 25 * 60 },
       },
-      { user: DEE, trip: "0a0b0c0d0e0f0102", pod: "fw-0a0b0c0d0e0f0102-1", since: 0, cart: { status: "failed" } },
+      { user: DEE, trip: "0a0b0c0d0e0f0102", pod: "wl-0a0b0c0d0e0f0102-1", since: 0, cart: { status: "failed" } },
     ],
     switches: { maintenance: false, pause_carting: true, breaker: "closed" },
     outcomes_7d: { booked: 4, released: 1 },
@@ -180,7 +180,7 @@ describe("fleet", () => {
     expect(screen.getByText(line)).toBeInTheDocument();
   });
 
-  it("offers a reload when ferry-web is newer than this page", async () => {
+  it("offers a reload when waitlist-web is newer than this page", async () => {
     const reload = vi.fn();
     vi.stubGlobal("location", { ...window.location, reload });
     api((r) =>
@@ -206,10 +206,10 @@ describe("fleet", () => {
     expect(screen.queryByRole("button", { name: "Reload to update" })).toBeNull();
   });
 
-  it("reports capacity and budget from ferry-control's last pass", async () => {
+  it("reports capacity and budget from waitlist-control's last pass", async () => {
     api();
     renderWithProviders(<AdminPage meId={ME} />);
-    expect(await screen.findByText("ferry-control last reported 1 min ago")).toBeInTheDocument();
+    expect(await screen.findByText("waitlist-control last reported 1 min ago")).toBeInTheDocument();
     expect(fact("Browsers running")).toBe("3 of 7");
     expect(fact("Memory requested")).toBe("3 GiB of 7 GiB");
     expect(fact("Queued")).toBe("3");
@@ -222,7 +222,7 @@ describe("fleet", () => {
     expect(screen.queryByRole("button", { name: "Close the breaker" })).toBeNull();
   });
 
-  it("warns when ferry-control is late or has never reported", async () => {
+  it("warns when waitlist-control is late or has never reported", async () => {
     let seen: number | null = Date.now() / 1000 - 5 * 60;
     api((r) =>
       r.url === "/api/admin/overview"
@@ -230,10 +230,10 @@ describe("fleet", () => {
         : undefined,
     );
     const { queryClient } = renderWithProviders(<AdminPage meId={ME} />);
-    expect(await screen.findByText("ferry-control last reported 5 min ago. Is it running?")).toBeInTheDocument();
+    expect(await screen.findByText("waitlist-control last reported 5 min ago. Is it running?")).toBeInTheDocument();
     seen = null;
     await queryClient.invalidateQueries({ queryKey: ["admin"] });
-    expect(await screen.findByText("ferry-control hasn't reported. Is it running?")).toBeInTheDocument();
+    expect(await screen.findByText("waitlist-control hasn't reported. Is it running?")).toBeInTheDocument();
     expect(fact("Last report")).toBe("None yet");
   });
 
@@ -275,7 +275,7 @@ describe("fleet", () => {
 
     await user.click(screen.getByRole("button", { name: "Recycle bea's browser" }));
     dialog = await screen.findByRole("dialog", { name: "Recycle bea's browser?" });
-    expect(dialog).toHaveTextContent("Restarts their browser (fw-3f9c0a1b2c3d4e5f-2).");
+    expect(dialog).toHaveTextContent("Restarts their browser (wl-3f9c0a1b2c3d4e5f-2).");
     await user.type(within(dialog).getByLabelText("Reason"), "frozen page");
     await user.click(within(dialog).getByRole("button", { name: "Recycle" }));
     await waitFor(() =>
@@ -288,11 +288,11 @@ describe("fleet", () => {
   it("offers release only for a cart that's held and not being paid for", async () => {
     const holds: Overview["holds"] = [
       ...overview().holds,
-      { user: CY, trip: "1a1b1c1d1e1f1011", pod: "fw-1a1b1c1d1e1f1011-g1", since: 0, cart: { status: "adding" } },
+      { user: CY, trip: "1a1b1c1d1e1f1011", pod: "wl-1a1b1c1d1e1f1011-g1", since: 0, cart: { status: "adding" } },
       {
         user: ME,
         trip: "2a2b2c2d2e2f2021",
-        pod: "fw-2a2b2c2d2e2f2021-g1",
+        pod: "wl-2a2b2c2d2e2f2021-g1",
         since: 0,
         cart: { status: "ready", payment_in_progress: true },
       },

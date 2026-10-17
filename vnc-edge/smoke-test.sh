@@ -23,15 +23,15 @@ expect() {
   fi
 }
 
-for path in "/t/$trip/g/1/" "/t/$trip/g/123456/" /vnc.html /fw/shim.js /fw/landing.js /gone.html \
-  /fw/viewer.html /fw/session.js /fw/viewer.css /fw/viewer/main.js /fw/viewer/core/protocol.js; do
+for path in "/t/$trip/g/1/" "/t/$trip/g/123456/" /vnc.html /wl/shim.js /wl/landing.js /gone.html \
+  /wl/viewer.html /wl/session.js /wl/viewer.css /wl/viewer/main.js /wl/viewer/core/protocol.js; do
   expect 200 "$base$path"
 done
 for path in / /index.html /screen.html /package.json /disconnected.html "/t/$trip/g/1" "/t/$trip/g/1234567/" \
-  "/t/${trip}0/g/1/" /t/XYZ/g/1/ /fw /etc/passwd; do
+  "/t/${trip}0/g/1/" /t/XYZ/g/1/ /wl /etc/passwd; do
   expect 404 "$base$path"
 done
-expect 400 "$base/fw/../../etc/passwd"
+expect 400 "$base/wl/../../etc/passwd"
 expect 400 "$base/t/$trip/g/1/ws" # not a WebSocket upgrade
 
 curl -fsS -D "$work/headers" -o "$work/vnc.html" "$base/vnc.html"
@@ -44,7 +44,7 @@ import base64, hashlib, re, sys
 headers, html = (open(path, encoding="utf-8").read() for path in sys.argv[1:])
 csp = re.search(r"(?im)^content-security-policy: (.*?)\r?$", headers).group(1)
 scripts = re.findall(r"<script[^>]*>", html)
-assert scripts[1:] == ['<script src="/fw/shim.js">', scripts[2]] and 'type="module"' in scripts[2], scripts
+assert scripts[1:] == ['<script src="/wl/shim.js">', scripts[2]] and 'type="module"' in scripts[2], scripts
 inline = re.findall(r"<script>(.*?)</script>", html, re.DOTALL)
 digest = base64.b64encode(hashlib.sha256(inline[0].encode()).digest()).decode()
 assert len(inline) == 1 and f"'sha256-{digest}'" in csp, (inline, csp)
@@ -53,20 +53,20 @@ EOF
 
 # The streamed viewer's page has a policy and headers of its own, and its modules are never cached, so a deploy
 # can't mix old modules with a new page (docs/multi-tenant/streamed-viewer/DESIGN.md §9).
-curl -fsS -D "$work/viewer-headers" -o /dev/null "$base/fw/viewer.html"
+curl -fsS -D "$work/viewer-headers" -o /dev/null "$base/wl/viewer.html"
 grep -qi '^referrer-policy: no-referrer' "$work/viewer-headers"
 grep -qi '^x-content-type-options: nosniff' "$work/viewer-headers"
 grep -qi '^cache-control: no-store' "$work/viewer-headers"
-for path in /fw/viewer/main.js /fw/viewer/core/protocol.js /fw/session.js /fw/viewer.css; do
+for path in /wl/viewer/main.js /wl/viewer/core/protocol.js /wl/session.js /wl/viewer.css; do
   curl -fsS -D "$work/module-headers" -o /dev/null "$base$path"
   if ! grep -qi '^cache-control: no-store' "$work/module-headers"; then
     echo "FAIL: $path may be cached" >&2
     exit 1
   fi
 done
-curl -fsS -o "$work/shim.js" "$base/fw/shim.js"
-curl -fsS -o "$work/landing.js" "$base/fw/landing.js"
-curl -fsS -o "$work/session.js" "$base/fw/session.js"
+curl -fsS -o "$work/shim.js" "$base/wl/shim.js"
+curl -fsS -o "$work/landing.js" "$base/wl/landing.js"
+curl -fsS -o "$work/session.js" "$base/wl/session.js"
 python3 -I - "$work/headers" "$work/viewer-headers" "$work/session.js" "$work/shim.js" "$work/landing.js" <<'EOF'
 import re, sys
 
@@ -89,7 +89,7 @@ assert viewer == (
     "trusted-types 'none'"
 ), viewer
 # Each page's script stands on its own while replicas of two versions serve (a rolling update, a rollback).
-assert shim.startswith(session) and len(shim) > len(session), "fw/shim.js doesn't start with fw/session.js"
-assert landing.startswith(session) and len(landing) > len(session), "fw/landing.js doesn't start with fw/session.js"
+assert shim.startswith(session) and len(shim) > len(session), "wl/shim.js doesn't start with wl/session.js"
+assert landing.startswith(session) and len(landing) > len(session), "wl/landing.js doesn't start with wl/session.js"
 EOF
 echo "vnc-edge smoke test passed"

@@ -11,20 +11,21 @@ from typing import Any
 import msgspec
 import pytest
 
-from ferry_watch.agent.cast_protocol import Clock as ClockMessage
-from ferry_watch.agent.cast_protocol import CloseCode
-from ferry_watch.agent.store import OneTripStore
-from ferry_watch.agent.watch import (
+from tests.fakes import FakeSite, sailing
+from waitlist.agent.cast_protocol import Clock as ClockMessage
+from waitlist.agent.cast_protocol import CloseCode
+from waitlist.agent.store import OneTripStore
+from waitlist.agent.watch import (
     FAIL_SLOW_INTERVAL_S,
     MAX_CART_ATTEMPTS,
     RECYCLE_AFTER_FAILURES,
     Finish,
     TripWatcher,
 )
-from ferry_watch.bcferries.errors import MarkupChanged, NotBookable
-from ferry_watch.bcferries.urls import CheckoutView
-from ferry_watch.models import PACIFIC, Fare, Sailing, SailingStatus, Trip
-from ferry_watch.protocol import (
+from waitlist.bcferries.errors import MarkupChanged, NotBookable
+from waitlist.bcferries.urls import CheckoutView
+from waitlist.models import PACIFIC, Fare, Sailing, SailingStatus, Trip
+from waitlist.protocol import (
     AlertKind,
     AlertParams,
     Brake,
@@ -39,8 +40,7 @@ from ferry_watch.protocol import (
     decode_agent_message,
     encode,
 )
-from ferry_watch.state import CartStatus
-from tests.fakes import FakeSite, sailing
+from waitlist.state import CartStatus
 
 TRIP = Trip(
     id="3f9c0a1b2c3d4e5f",

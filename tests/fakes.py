@@ -8,10 +8,10 @@ from datetime import time
 from pathlib import Path
 from typing import Any
 
-from ferry_watch.bcferries.errors import SessionExpired
-from ferry_watch.bcferries.urls import CheckoutView
-from ferry_watch.models import Fare, FarePreference, Sailing, SailingStatus, Trip
-from ferry_watch.protocol import ReleaseCheck
+from waitlist.bcferries.errors import SessionExpired
+from waitlist.bcferries.urls import CheckoutView
+from waitlist.models import Fare, FarePreference, Sailing, SailingStatus, Trip
+from waitlist.protocol import ReleaseCheck
 
 
 def sailing(hour: int, *, available: bool = True) -> Sailing:

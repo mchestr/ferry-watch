@@ -3,9 +3,9 @@ import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
-/** The release this bundle belongs to: FW_VERSION if set, else pyproject.toml's version, else "dev". */
+/** The release this bundle belongs to: WL_VERSION if set, else pyproject.toml's version, else "dev". */
 function appVersion(): string {
-  if (process.env.FW_VERSION) return process.env.FW_VERSION;
+  if (process.env.WL_VERSION) return process.env.WL_VERSION;
   try {
     // The repo's root in a checkout; /pyproject.toml in the image's web stage.
     const pyproject = readFileSync(new URL("../pyproject.toml", import.meta.url), "utf8");

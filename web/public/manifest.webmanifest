@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "Ferry Watch",
-  "short_name": "Ferry Watch",
+  "name": "Waitlist",
+  "short_name": "Waitlist",
   "description": "Get an alert the moment a BC Ferries reservation opens up.",
   "start_url": "/",
   "scope": "/",

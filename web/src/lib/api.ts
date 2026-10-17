@@ -27,7 +27,7 @@ export class ApiError extends Error {
   readonly status: number | null;
   /** For a 400: the request field that failed validation, when the server names one. */
   readonly field: string | null;
-  /** For a 401 from ferry-web: why the session doesn't work. */
+  /** For a 401 from waitlist-web: why the session doesn't work. */
   readonly reason: AuthReason | null;
 
   constructor(
@@ -43,7 +43,7 @@ export class ApiError extends Error {
   }
 }
 
-/** The bearer token for every request (ferry-web's sign-in, mt/auth.ts); none until it's configured. */
+/** The bearer token for every request (waitlist-web's sign-in, mt/auth.ts); none until it's configured. */
 let bearerToken: () => string | null = () => null;
 let onUnauthorized: (reason: AuthReason) => void = () => undefined;
 

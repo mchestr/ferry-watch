@@ -79,7 +79,7 @@ export interface EditableTrip extends TripSettings {
   cart: CartSummary | null;
 }
 
-/** Where the sheet's trips come from and go to (ferry-web's API, in MtApp). */
+/** Where the sheet's trips come from and go to (waitlist-web's API, in MtApp). */
 export interface TripSource {
   defaults: TripSettings;
   trips: readonly EditableTrip[];

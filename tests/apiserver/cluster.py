@@ -1,7 +1,7 @@
 """A real kube-apiserver (envtest's binaries) with the deployment applied, for the admission and RBAC tests.
 
-Set FW_ENVTEST_BIN to a directory holding etcd, kube-apiserver and kubectl (controller-tools' envtest
-release for the cluster's Kubernetes minor), and FW_HELM to a helm binary. Without them these tests skip.
+Set WL_ENVTEST_BIN to a directory holding etcd, kube-apiserver and kubectl (controller-tools' envtest
+release for the cluster's Kubernetes minor), and WL_HELM to a helm binary. Without them these tests skip.
 CI sets both (.github/workflows/ci.yml). The deployment is deploy/helmrelease.yaml rendered through
 app-template (tests/deploy.py).
 
@@ -29,14 +29,14 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from ferry_watch.control.config import ControlConfig
-from ferry_watch.control.pods import browser_pod
 from tests.deploy import NAMESPACE, render
+from waitlist.control.config import ControlConfig
+from waitlist.control.pods import browser_pod
 
 RELEASE_NAMESPACE = NAMESPACE
-BROWSERS = "ferry-watch-browsers"
-CONTROL_SA = f"system:serviceaccount:{RELEASE_NAMESPACE}:ferry-control"
-BREAK_GLASS = "ferry-watch:break-glass"
+BROWSERS = "waitlist-browsers"
+CONTROL_SA = f"system:serviceaccount:{RELEASE_NAMESPACE}:waitlist-control"
+BREAK_GLASS = "waitlist:break-glass"
 # Cilium and Gateway API kinds aren't installed here; kubeconform checks those (CI's deploy job).
 NOT_INSTALLED = {"CiliumNetworkPolicy", "HTTPRoute"}
 
@@ -84,8 +84,8 @@ class Cluster:
 
 
 def control_config(cluster: Cluster) -> ControlConfig:
-    """ferry-control's config as the deployment rendered it."""
-    data = cluster.get("configmap", "ferry-control-config", f"--namespace={RELEASE_NAMESPACE}")["data"]
+    """waitlist-control's config as the deployment rendered it."""
+    data = cluster.get("configmap", "waitlist-control-config", f"--namespace={RELEASE_NAMESPACE}")["data"]
     return msgspec.json.decode(data["config.json"], type=ControlConfig).check()
 
 
@@ -113,12 +113,12 @@ def _start(argv: list[str], log: Path) -> subprocess.Popen[bytes]:
 
 @contextlib.contextmanager
 def running_cluster() -> Iterator[Cluster]:
-    bin_dir, helm = os.environ.get("FW_ENVTEST_BIN"), os.environ.get("FW_HELM")
+    bin_dir, helm = os.environ.get("WL_ENVTEST_BIN"), os.environ.get("WL_HELM")
     if not bin_dir or not helm:
-        pytest.skip("FW_ENVTEST_BIN and FW_HELM aren't set")
+        pytest.skip("WL_ENVTEST_BIN and WL_HELM aren't set")
     binaries = Path(bin_dir)
     processes: list[subprocess.Popen[bytes]] = []
-    with tempfile.TemporaryDirectory(prefix="fw-apiserver-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="wl-apiserver-") as tmp:
         work = Path(tmp)
         etcd_port, peer_port, api_port = _free_port(), _free_port(), _free_port()
         processes.append(
@@ -211,14 +211,14 @@ def _install(cluster: Cluster, helm: Path) -> None:
     rendered = json.dumps({"apiVersion": "v1", "kind": "List", "items": objects})
     cluster.kubectl("create", "namespace", RELEASE_NAMESPACE)
     cluster.kubectl("apply", "--server-side", "-f", "-", stdin=rendered)
-    # The policies load asynchronously: wait until fw-browser-pod refuses ferry-control's own pod from an admin.
+    # The policies load asynchronously: wait until wl-browser-pod refuses waitlist-control's own pod from an admin.
     pod = browser_pod("0" * 16, 1, "u" + "a" * 19, control_config(cluster).pod_params(), now=time.time())
 
     def enforcing() -> bool:
         try:
             cluster.kubectl("create", "--dry-run=server", "-f", "-", stdin=json.dumps(pod))
         except KubectlError as e:
-            return "fw-browser-pod" in e.stderr
+            return "wl-browser-pod" in e.stderr
         return False
 
     _wait(enforcing, "the admission policies")

@@ -1,4 +1,4 @@
-/** A tiny router: the four pages ferry-web serves index.html on. */
+/** A tiny router: the four pages waitlist-web serves index.html on. */
 import { useEffect, useState } from "react";
 
 export type Route =

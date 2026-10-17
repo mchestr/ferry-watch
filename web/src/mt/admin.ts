@@ -1,5 +1,5 @@
 /**
- * ferry-web's admin API (docs/multi-tenant/design-reference.md §9.4). Every change carries a reason, which
+ * waitlist-web's admin API (docs/multi-tenant/design-reference.md §9.4). Every change carries a reason, which
  * lands in the audit log. Admins see people, limits and the fleet; never a tenant's screen or sailings.
  */
 import { z } from "zod";
@@ -12,7 +12,7 @@ const OkSchema = z.object({}).passthrough();
 export const AdminLimitSchema = z.object({ value: z.number().int(), source: z.string() });
 
 /**
- * What ferry-control's last fleet pass knew (fleet_state "fleet_report"). It reports only what it computes,
+ * What waitlist-control's last fleet pass knew (fleet_state "fleet_report"). It reports only what it computes,
  * so every part may be missing.
  */
 export const FleetReportSchema = z.object({
@@ -44,7 +44,7 @@ export const AttentionSchema = z.object({
   detail: z.string().nullish().catch(null),
 });
 
-/** Which release runs where. Each part may be missing: from an older server, or before ferry-control's first pass. */
+/** Which release runs where. Each part may be missing: from an older server, or before waitlist-control's first pass. */
 export const VersionsSchema = z.object({
   web: z.object({ version: z.string() }).nullish().catch(null),
   control: z.object({ version: z.string(), at: epoch.nullish() }).nullish().catch(null),
@@ -80,7 +80,7 @@ export const OverviewSchema = z.object({
   outcomes_7d: z.record(z.string(), z.number().int()),
   // A report this page can't read shows as missing rather than breaking the page.
   fleet: FleetReportSchema.nullish().catch(null),
-  /** When ferry-control last said it was alive (epoch seconds, its clock), or null if it never has. */
+  /** When waitlist-control last said it was alive (epoch seconds, its clock), or null if it never has. */
   control_seen: epoch.nullish(),
   /** Newest first: ids and usernames only, never sailings. */
   attention: z.array(AttentionSchema).optional(),
@@ -245,7 +245,7 @@ export const adminApi = {
     request(`${userPath(id)}/limits`, { method: "POST", body: { key, value, reason }, schema: AdminLimitSchema }),
   setSwitch: (name: FleetSwitch, on: boolean, reason: string) =>
     request("/api/admin/switches", { method: "POST", body: { switch: name, on, reason }, schema: OkSchema }),
-  /** Only ferry-control opens the breaker; an admin can only close it. */
+  /** Only waitlist-control opens the breaker; an admin can only close it. */
   closeBreaker: (reason: string) =>
     request("/api/admin/switches", {
       method: "POST",
@@ -255,7 +255,7 @@ export const adminApi = {
   /** Empties the trip's held cart and tells its owner. */
   releaseCart: (trip: string, reason: string) =>
     request(`${tripPath(trip)}/release`, { method: "POST", body: { reason }, schema: OkSchema }),
-  /** Restarts the trip's browser; ferry-control starts the next one. */
+  /** Restarts the trip's browser; waitlist-control starts the next one. */
   recyclePod: (trip: string, reason: string) =>
     request(`${tripPath(trip)}/recycle`, { method: "POST", body: { reason }, schema: OkSchema }),
 };

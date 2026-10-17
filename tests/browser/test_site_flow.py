@@ -21,10 +21,10 @@ from aiohttp.test_utils import TestServer
 from multidict import MultiDictProxy
 from playwright.async_api import Browser, BrowserContext, async_playwright
 
-from ferry_watch.bcferries.errors import CartMismatch, NotBookable, RouteRejected, SessionExpired
-from ferry_watch.bcferries.site import SiteSession
-from ferry_watch.bcferries.terminals import Terminals
-from ferry_watch.models import FarePreference, Trip
+from waitlist.bcferries.errors import CartMismatch, NotBookable, RouteRejected, SessionExpired
+from waitlist.bcferries.site import SiteSession
+from waitlist.bcferries.terminals import Terminals
+from waitlist.models import FarePreference, Trip
 
 pytestmark = pytest.mark.browser
 

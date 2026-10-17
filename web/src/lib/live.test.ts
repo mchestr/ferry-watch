@@ -3,7 +3,7 @@ import { backoffDelay, socketUrl } from "./live";
 
 describe("socketUrl and backoffDelay", () => {
   it("connects to /api/ws on the page's host, over wss for https", () => {
-    expect(socketUrl("https://ferry.example/")).toBe("wss://ferry.example/api/ws");
+    expect(socketUrl("https://waitlist.example/")).toBe("wss://waitlist.example/api/ws");
     expect(socketUrl("http://localhost:5173/")).toBe("ws://localhost:5173/api/ws");
   });
 

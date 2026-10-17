@@ -96,19 +96,19 @@ describe("a page load", () => {
   it("sends the token with the very first requests", async () => {
     vi.resetModules(); // a fresh page: nothing wired up yet by an earlier test
     const { MtApp: Fresh } = await import("./MtApp");
-    localStorage.setItem("fw.token", "t-1");
+    localStorage.setItem("wl.token", "t-1");
     const { requests } = mockFetch((r) =>
       r.url === "/api/state" ? jsonResponse(myState()) : jsonResponse({ terminals: [] }),
     );
     renderWithProviders(<Fresh />);
     expect(await screen.findByRole("heading", { name: "Your trips" })).toBeInTheDocument();
     expect(requests.map((r) => r.headers.get("Authorization"))).toEqual(requests.map(() => "Bearer t-1"));
-    expect(localStorage.getItem("fw.token")).toBe("t-1");
+    expect(localStorage.getItem("wl.token")).toBe("t-1");
   });
 
   it("lands on the trips straight after a first sign-in", async () => {
     const flow = { state: "S", nonce: "N", verifier: "V", returnTo: "/" };
-    sessionStorage.setItem("fw.signin", JSON.stringify(flow));
+    sessionStorage.setItem("wl.signin", JSON.stringify(flow));
     history.replaceState(null, "", "/auth/callback#code=c1&state=S");
     const { requests } = mockFetch((r) => {
       if (r.url === "/auth/session") return jsonResponse({ token: "t-2" });
@@ -125,7 +125,7 @@ describe("a page load", () => {
 
 describe("signed in", () => {
   beforeEach(() => {
-    localStorage.setItem("fw.token", "t-1");
+    localStorage.setItem("wl.token", "t-1");
   });
 
   it("shows the user's trips with a held cart, sending the token", async () => {
@@ -142,7 +142,7 @@ describe("signed in", () => {
     history.replaceState(null, "", `/c/${TRIP_ID}`);
     const assign = vi.fn();
     vi.stubGlobal("location", { ...window.location, assign, pathname: `/c/${TRIP_ID}`, search: "" });
-    const url = `https://ferry-checkout.chestr.dev/t/${TRIP_ID}/g/2/#ticket`;
+    const url = `https://waitlist-checkout.chestr.dev/t/${TRIP_ID}/g/2/#ticket`;
     const { requests } = mockFetch((r) => {
       if (r.url === "/api/state") return jsonResponse(myState());
       if (r.url.endsWith("/vnc")) return jsonResponse({ url, ttl: 60 });
@@ -163,8 +163,8 @@ describe("signed in", () => {
       if (r.url === "/auth/config") {
         return jsonResponse({
           authorization_endpoint: "https://auth.chestr.dev/api/oidc/authorization",
-          client_id: "ferry-watch",
-          redirect_uri: "https://ferry.chestr.dev/auth/callback",
+          client_id: "waitlist",
+          redirect_uri: "https://waitlist.chestr.dev/auth/callback",
           scopes: "openid",
         });
       }
@@ -174,7 +174,7 @@ describe("signed in", () => {
     await waitFor(() => expect(assign).toHaveBeenCalled());
     const target = new URL(String(assign.mock.calls[0]?.[0]));
     expect(target.origin).toBe("https://auth.chestr.dev");
-    const flow = JSON.parse(sessionStorage.getItem("fw.signin") ?? "{}") as { returnTo?: string };
+    const flow = JSON.parse(sessionStorage.getItem("wl.signin") ?? "{}") as { returnTo?: string };
     expect(flow.returnTo).toBe(`/c/${TRIP_ID}`); // a cart alert still lands on its checkout
   });
 
@@ -182,13 +182,13 @@ describe("signed in", () => {
     mockFetch((r) => (r.url === "/api/state" ? jsonResponse({ reason: "revoked" }, 401) : jsonResponse({})));
     renderWithProviders(<MtApp />);
     expect(await screen.findByRole("button", { name: "Sign in" })).toBeInTheDocument();
-    expect(localStorage.getItem("fw.token")).toBeNull();
+    expect(localStorage.getItem("wl.token")).toBeNull();
   });
 });
 
 describe("settings", () => {
   beforeEach(() => {
-    localStorage.setItem("fw.token", "t-1");
+    localStorage.setItem("wl.token", "t-1");
   });
 
   const api = () =>
@@ -228,14 +228,14 @@ describe("settings", () => {
     await user.click(button(account));
     await waitFor(() => expect(assign).toHaveBeenCalledWith("/"));
     expect(requests.filter((r) => r.url.startsWith("/auth/")).map((r) => r.url)).toEqual(["/auth/logout"]);
-    expect(localStorage.getItem("fw.token")).toBeNull();
-    expect(localStorage.getItem("fw.signedOut")).toBe("1");
+    expect(localStorage.getItem("wl.token")).toBeNull();
+    expect(localStorage.getItem("wl.signedOut")).toBe("1");
   });
 });
 
 describe("pausing a trip", () => {
   beforeEach(() => {
-    localStorage.setItem("fw.token", "t-1");
+    localStorage.setItem("wl.token", "t-1");
   });
 
   /** The one trip, with nothing held, enabled or not. */
@@ -323,10 +323,10 @@ describe("pausing a trip", () => {
 
 describe("releasing a held cart", () => {
   beforeEach(() => {
-    localStorage.setItem("fw.token", "t-1");
+    localStorage.setItem("wl.token", "t-1");
   });
 
-  /** ferry-web only passes a release on: the cart is still held when it answers. */
+  /** waitlist-web only passes a release on: the cart is still held when it answers. */
   function api() {
     return mockFetch((r) =>
       r.url === "/api/state" || r.url.startsWith("/api/trips/")
@@ -377,12 +377,12 @@ describe("releasing a held cart", () => {
 
 describe("removing a trip", () => {
   beforeEach(() => {
-    localStorage.setItem("fw.token", "t-1");
+    localStorage.setItem("wl.token", "t-1");
   });
 
   type Cart = MyState["trips"][number]["browser"]["cart"];
 
-  /** ferry-web archives the trip at once (ferry-control then lets any cart go); a second DELETE is a 404. */
+  /** waitlist-web archives the trip at once (waitlist-control then lets any cart go); a second DELETE is a 404. */
   function api(cart?: Cart) {
     const base = myState().trips[0];
     if (!base) throw new Error("no trip");
@@ -469,7 +469,7 @@ describe("removing a trip", () => {
 
 describe("did you book it?", () => {
   beforeEach(() => {
-    localStorage.setItem("fw.token", "t-1");
+    localStorage.setItem("wl.token", "t-1");
   });
 
   /** The trip after a viewed checkout, paused until it's answered. */
@@ -488,7 +488,7 @@ describe("did you book it?", () => {
     });
   }
 
-  /** ferry-web as the contract has it: yes and "no, cancel" archive the trip; "no" resumes it. */
+  /** waitlist-web as the contract has it: yes and "no, cancel" archive the trip; "no" resumes it. */
   function api() {
     let state = asking();
     return mockFetch((r) => {
@@ -594,14 +594,14 @@ describe("did you book it?", () => {
 
 describe("quiet hours", () => {
   beforeEach(() => {
-    localStorage.setItem("fw.token", "t-1");
+    localStorage.setItem("wl.token", "t-1");
     history.replaceState(null, "", "/settings");
   });
 
   const DEFAULT = { start: "22:00", end: "05:00" }; // everyone's, until they change them
   const group = () => screen.findByRole("group", { name: "Quiet hours (Pacific time)" });
 
-  /** ferry-web as the contract has it: PATCH /api/me {quiet_hours} answers with the whole state. */
+  /** waitlist-web as the contract has it: PATCH /api/me {quiet_hours} answers with the whole state. */
   function api(initial: { start: string; end: string }) {
     let quiet = initial;
     const state = () =>
@@ -717,7 +717,7 @@ describe("quiet hours", () => {
 
 describe("the new checkout viewer (beta)", () => {
   beforeEach(() => {
-    localStorage.setItem("fw.token", "t-1");
+    localStorage.setItem("wl.token", "t-1");
     history.replaceState(null, "", "/settings");
   });
 
@@ -726,7 +726,7 @@ describe("the new checkout viewer (beta)", () => {
     myState({ settings: { ...myState().settings, checkout_viewer: viewer, stream_viewer_offered: true } });
   const beta = () => screen.findByRole("switch", { name: NAME });
 
-  /** ferry-web as the contract has it: PATCH /api/me {checkout_viewer} answers with the whole state, or a 403. */
+  /** waitlist-web as the contract has it: PATCH /api/me {checkout_viewer} answers with the whole state, or a 403. */
   function api(initial: MyState, { refuse = false } = {}) {
     let state = initial;
     return mockFetch((r) => {
@@ -790,7 +790,7 @@ describe("the new checkout viewer (beta)", () => {
       history.replaceState(null, "", `/c/${TRIP_ID}`);
       const assign = vi.fn();
       vi.stubGlobal("location", { ...window.location, assign, pathname: `/c/${TRIP_ID}`, search: "" });
-      const url = `https://ferry-checkout.chestr.dev/t/${TRIP_ID}/g/2/#${viewer === "stream" ? "v=s1&t=" : ""}ticket`;
+      const url = `https://waitlist-checkout.chestr.dev/t/${TRIP_ID}/g/2/#${viewer === "stream" ? "v=s1&t=" : ""}ticket`;
       mockFetch((r) => {
         if (r.url === "/api/state") return jsonResponse(state);
         if (r.url.endsWith("/vnc")) return jsonResponse({ url, ttl: 60, ...(viewer ? { viewer } : {}) });
@@ -860,7 +860,7 @@ describe("a bookable sailing nothing holds", () => {
   }
 
   beforeEach(() => {
-    localStorage.setItem("fw.token", "t-1");
+    localStorage.setItem("wl.token", "t-1");
   });
 
   it("says why, offers to hold it, and links to bcferries.com", async () => {
@@ -947,7 +947,7 @@ describe("a bookable sailing nothing holds", () => {
 
 describe("admin", () => {
   beforeEach(() => {
-    localStorage.setItem("fw.token", "t-1");
+    localStorage.setItem("wl.token", "t-1");
     history.replaceState(null, "", "/admin");
   });
 

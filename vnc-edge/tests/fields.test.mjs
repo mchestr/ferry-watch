@@ -11,7 +11,7 @@ import {
   proxyAttributes,
   typable,
   withOk,
-} from "../site/fw/viewer/core/fields.js";
+} from "../site/wl/viewer/core/fields.js";
 import { forViewer, pack } from "./pack.mjs";
 
 const hits = pack("hits.json");

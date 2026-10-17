@@ -1,7 +1,7 @@
 [project]
-name = "ferry-watch"
+name = "waitlist"
 version = "0.7.1"
-description = "Watch BC Ferries for open reservations, alert by Web Push and email, and hold the sailing in a cart"
+description = "Watch reservation systems for openings on what is booked up, and alert when one opens (BC Ferries first)"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -11,27 +11,27 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# What drives a browser: the browser pod's agent. The control plane (ferry-control, ferry-web) installs
+# What drives a browser: the browser pod's agent. The control plane (waitlist-control, waitlist-web) installs
 # without it, so its image carries no Playwright or Chromium.
 browser = [
   # Must match the browsers in the mcr.microsoft.com/playwright/python base image.
   "playwright==1.56.0",
   "selectolax==0.3.21",
 ]
-# What the control plane (ferry-control, ferry-web) needs beyond the core: Postgres.
+# What the control plane (waitlist-control, waitlist-web) needs beyond the core: Postgres.
 control = [
   "asyncpg==0.31.0",
-  "PyJWT==2.15.1",  # ferry-web's OIDC id_token checks
+  "PyJWT==2.15.1",  # waitlist-web's OIDC id_token checks
 ]
 
 [project.scripts]
-ferry-watch-agent = "ferry_watch.agent.main:main"
-ferry-control = "ferry_watch.control.main:main"
-ferry-web = "ferry_watch.web.main:main"
+waitlist-agent = "waitlist.agent.main:main"
+waitlist-control = "waitlist.control.main:main"
+waitlist-web = "waitlist.web.main:main"
 
 [dependency-groups]
 dev = [
-  "ferry-watch[browser,control]",
+  "waitlist[browser,control]",
   "asyncpg-stubs==0.31.3",
   "import-linter==2.15",
   "mypy==1.13.0",
@@ -50,7 +50,7 @@ requires = ["hatchling==1.25.0"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/ferry_watch"]
+packages = ["src/waitlist"]
 
 [tool.ruff]
 line-length = 120
@@ -107,60 +107,60 @@ filterwarnings = ["error"]
 
 # Module boundaries (docs/multi-tenant/design-reference.md §11): checked in CI with `lint-imports`.
 [tool.importlinter]
-root_package = "ferry_watch"
+root_package = "waitlist"
 include_external_packages = true
 
 [[tool.importlinter.contracts]]
 name = "The shared core never drives a browser"
 type = "forbidden"
 source_modules = [
-  "ferry_watch.protocol",
-  "ferry_watch.polling",
-  "ferry_watch.holds",
-  "ferry_watch.tickets",
-  "ferry_watch.models",
-  "ferry_watch.versions",
-  "ferry_watch.bcferries.urls",
-  "ferry_watch.bcferries.terminals",
-  "ferry_watch.bcferries.errors",
+  "waitlist.protocol",
+  "waitlist.polling",
+  "waitlist.holds",
+  "waitlist.tickets",
+  "waitlist.models",
+  "waitlist.versions",
+  "waitlist.bcferries.urls",
+  "waitlist.bcferries.terminals",
+  "waitlist.bcferries.errors",
 ]
 forbidden_modules = [
   "playwright",
   "selectolax",
-  "ferry_watch.bcferries.site",
-  "ferry_watch.bcferries.parse",
-  "ferry_watch.agent",
+  "waitlist.bcferries.site",
+  "waitlist.bcferries.parse",
+  "waitlist.agent",
 ]
 
 [[tool.importlinter.contracts]]
 name = "The control plane never drives a browser"
 type = "forbidden"
-source_modules = ["ferry_watch.control"]
+source_modules = ["waitlist.control"]
 forbidden_modules = [
   "playwright",
   "selectolax",
-  "ferry_watch.bcferries.site",
-  "ferry_watch.bcferries.parse",
-  "ferry_watch.agent",
+  "waitlist.bcferries.site",
+  "waitlist.bcferries.parse",
+  "waitlist.agent",
 ]
 
 [[tool.importlinter.contracts]]
 name = "The agent never imports the control plane"
 type = "forbidden"
-source_modules = ["ferry_watch.agent"]
-forbidden_modules = ["ferry_watch.control", "asyncpg"]
+source_modules = ["waitlist.agent"]
+forbidden_modules = ["waitlist.control", "asyncpg"]
 
 [[tool.importlinter.contracts]]
-name = "ferry-web has no Kubernetes access and never drives a browser"
+name = "waitlist-web has no Kubernetes access and never drives a browser"
 type = "forbidden"
-source_modules = ["ferry_watch.web"]
+source_modules = ["waitlist.web"]
 forbidden_modules = [
-  "ferry_watch.control.kube",
-  "ferry_watch.control.fleet",
-  "ferry_watch.control.hub",
-  "ferry_watch.agent",
-  "ferry_watch.bcferries.site",
-  "ferry_watch.bcferries.parse",
+  "waitlist.control.kube",
+  "waitlist.control.fleet",
+  "waitlist.control.hub",
+  "waitlist.agent",
+  "waitlist.bcferries.site",
+  "waitlist.bcferries.parse",
   "playwright",
   "selectolax",
 ]

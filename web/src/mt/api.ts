@@ -1,4 +1,4 @@
-/** ferry-web's API, for the signed-in user. Every call carries the bearer token (see auth.ts). */
+/** waitlist-web's API, for the signed-in user. Every call carries the bearer token (see auth.ts). */
 import { z } from "zod";
 import { request } from "@/lib/api";
 import { TerminalListSchema, type Terminal, type TripSettings } from "@/lib/schema";

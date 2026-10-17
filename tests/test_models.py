@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from ferry_watch.models import FarePreference, Trip, ValidationError, Vehicle, format_time
+from waitlist.models import FarePreference, Trip, ValidationError, Vehicle, format_time
 
 BASE: dict[str, Any] = {"from": "SWB", "to": "TSA", "date": "2026-10-12"}
 

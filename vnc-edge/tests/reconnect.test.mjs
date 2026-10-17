@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { DELAYS, initialState, nextAction } from "../site/fw/viewer/core/reconnect.js";
+import { DELAYS, initialState, nextAction } from "../site/wl/viewer/core/reconnect.js";
 import { forViewer, pack } from "./pack.mjs";
 
 const codes = pack("close_codes.json");

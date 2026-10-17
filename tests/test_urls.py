@@ -5,13 +5,13 @@ import sys
 
 import pytest
 
-from ferry_watch.bcferries.urls import CheckoutView, checkout_view
+from waitlist.bcferries.urls import CheckoutView, checkout_view
 
 
 def test_loads_without_playwright() -> None:
     """The web API and the control plane import these without a browser installed (docs/multi-tenant)."""
     code = (
-        "import sys, ferry_watch.bcferries.urls, ferry_watch.polling, ferry_watch.protocol\n"
+        "import sys, waitlist.bcferries.urls, waitlist.polling, waitlist.protocol\n"
         "loaded = sorted(m for m in sys.modules if m.split('.')[0] == 'playwright')\n"
         "assert not loaded, loaded\n"
     )

@@ -1,6 +1,6 @@
 /**
  * Runtime schemas shared by the app: a trip's settings, sailings, BC Ferries' terminals and error bodies.
- * ferry-web's own responses are in mt/schema.ts, built on these. Every response is parsed before the app sees
+ * waitlist-web's own responses are in mt/schema.ts, built on these. Every response is parsed before the app sees
  * it. Unknown keys are stripped, so the server can add fields without breaking an open page.
  */
 import { z } from "zod";

@@ -5,7 +5,7 @@ nginx proxies the socket), and a minimal RFB server stands in for Xvnc. If a Kas
 how the client builds its socket URL or picks subprotocols, these fail (docs/multi-tenant/design-reference.md
 §7.9).
 
-The client's files come from the KasmVNC package: set FW_KASMVNC_WWW to its extracted ``www`` directory
+The client's files come from the KasmVNC package: set WL_KASMVNC_WWW to its extracted ``www`` directory
 (CI does; see .github/workflows/ci.yml).
 """
 
@@ -36,28 +36,29 @@ from aiohttp.test_utils import TestServer, unused_port
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from playwright.async_api import Browser, Page, Route, async_playwright
 
-from ferry_watch.agent.gate import Gate, GateSettings
-from ferry_watch.tickets import Display, mint
+from waitlist.agent.gate import Gate, GateSettings
+from waitlist.tickets import Display, mint
 
 pytestmark = pytest.mark.browser
 
 EDGE = Path(__file__).resolve().parents[2] / "vnc-edge"
-APP = "https://ferry.chestr.dev"
+APP = "https://waitlist.chestr.dev"
 KEY = Ed25519PrivateKey.generate()
 OWNER = "a" * 20
 TRIP = "3f9c0a1b2c3d4e5f"
 GEN = 4
-POD = f"fw-{TRIP}-g{GEN}"
+POD = f"wl-{TRIP}-g{GEN}"
 CART = "cart-1"
 LANDING = f"/t/{TRIP}/g/{GEN}/"
-RECORD = f"fw:{TRIP}:{GEN}"
-STREAM_VIEWER = f"/fw/viewer.html#t={TRIP}&g={GEN}"
-# vnc.html's policy exactly as 0.6.4 served it with KasmVNC 1.5.0's client: the streamed viewer changes nothing
-# the classic viewer gets (docs/multi-tenant/streamed-viewer/DESIGN.md §9).
+RECORD = f"wl:{TRIP}:{GEN}"
+STREAM_VIEWER = f"/wl/viewer.html#t={TRIP}&g={GEN}"
+# vnc.html's policy as 0.6.4 served it with KasmVNC 1.5.0's client (but for the checkout host's new name): the
+# streamed viewer changes nothing the classic viewer gets (docs/multi-tenant/streamed-viewer/DESIGN.md §9).
 CLASSIC_CSP = (
     "default-src 'self'; script-src 'self' 'sha256-+w4uuxDuaRJ0kH5I4sifAwedyfxg1il+lsKFqslG+L0=' 'wasm-unsafe-eval'; "
-    "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' wss://ferry-checkout.chestr.dev "
-    "data:; worker-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+    "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
+    "connect-src 'self' wss://waitlist-checkout.chestr.dev data:; worker-src 'self'; object-src 'none'; "
+    "frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
 )
 
 
@@ -88,11 +89,11 @@ def viewer_policy(host: str) -> str:
 
 @pytest.fixture(scope="module")
 def site(tmp_path_factory: pytest.TempPathFactory) -> Site:
-    www = os.environ.get("FW_KASMVNC_WWW")
+    www = os.environ.get("WL_KASMVNC_WWW")
     if not www:
-        pytest.skip("FW_KASMVNC_WWW isn't set to KasmVNC's www directory")
+        pytest.skip("WL_KASMVNC_WWW isn't set to KasmVNC's www directory")
     built = _load_build().build(
-        Path(www), tmp_path_factory.mktemp("vnc-edge"), checkout_host="ferry-checkout.chestr.dev", app_origin=APP
+        Path(www), tmp_path_factory.mktemp("vnc-edge"), checkout_host="waitlist-checkout.chestr.dev", app_origin=APP
     )
     return Site(built.www, built.csp)
 
@@ -150,7 +151,7 @@ def edge_app(site: Site, gate: Gate | Handler, offers: list[list[str]]) -> web.A
             offers.append([p.strip() for p in request.headers.get("Sec-WebSocket-Protocol", "").split(",")])
             return await handler(request)
         response = await handler(request)
-        viewer = request.path == "/fw/viewer.html"
+        viewer = request.path == "/wl/viewer.html"
         response.headers.update(
             {
                 "Content-Security-Policy": viewer_policy(request.host) if viewer else site.csp,
@@ -168,10 +169,10 @@ def edge_app(site: Site, gate: Gate | Handler, offers: list[list[str]]) -> web.A
         return serve
 
     app = web.Application(middlewares=[headers])
-    app.router.add_get(r"/t/{trip:[a-f0-9]{16}}/g/{gen:[0-9]{1,6}}/", file(site.www / "fw" / "landing.html"))
+    app.router.add_get(r"/t/{trip:[a-f0-9]{16}}/g/{gen:[0-9]{1,6}}/", file(site.www / "wl" / "landing.html"))
     app.router.add_get("/vnc.html", file(site.www / "vnc.html"))
     app.router.add_get("/gone.html", file(site.www / "gone.html"))
-    for directory in ("assets", "app", "core", "fw"):
+    for directory in ("assets", "app", "core", "wl"):
         app.router.add_static(f"/{directory}", site.www / directory)
     if isinstance(gate, Gate):
         (upgrade,) = gate.app().router.routes()  # GET /ws, which nginx proxies this path to
@@ -267,8 +268,8 @@ async def test_the_client_opens_the_checkout_with_the_ticket_then_comes_back_wit
     await page.click("#open")
     await page.wait_for_selector("html.noVNC_connected")
     (first,) = edge.offers
-    nonce = next(p for p in first if p.startswith("fw.n1."))
-    assert sorted(first) == sorted(["binary", nonce, f"fw.t1.{issued}"])
+    nonce = next(p for p in first if p.startswith("wl.n1."))
+    assert sorted(first) == sorted(["binary", nonce, f"wl.t1.{issued}"])
     assert edge.viewers == [True]
 
     # A reload is a reconnect: the same nonce, and the ticket is gone.
@@ -309,9 +310,9 @@ async def test_the_viewer_is_the_devices_own_size_and_a_touch_screen_gets_a_keyb
         await context.close()
 
 
-async def test_an_expired_ticket_goes_back_to_ferry_watch_to_open_it_again(edge: Edge, page: Page) -> None:
+async def test_an_expired_ticket_goes_back_to_waitlist_to_open_it_again(edge: Edge, page: Page) -> None:
     async def dashboard(route: Route) -> None:
-        await route.fulfill(body="Ferry Watch", content_type="text/plain")
+        await route.fulfill(body="Waitlist", content_type="text/plain")
 
     await page.route(f"{APP}/**", dashboard)
     await page.goto(f"{edge.url}{LANDING}#{ticket(issued=time.time() - 120)}")
@@ -334,7 +335,7 @@ def forged(trip: str = TRIP, **disp: Any) -> str:
         {"disp": {"route": "Payment failed: call +1 800 555 0100", "fare": "or your booking is cancelled", **disp}}
     )
     payload = base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip("=")
-    return f"fw1.k1.{payload}.AAAA"
+    return f"wl1.k1.{payload}.AAAA"
 
 
 async def page_text(page: Page) -> str:
@@ -373,10 +374,10 @@ async def test_a_made_up_link_neither_ends_nor_keeps_forever_a_checkout_on_this_
         assert (again["n"], again["opened"], again["hard_deadline"]) == (record["n"], True, record["hard_deadline"])
     # A record that 0.6.4's page kept from such a link, with a deadline no hold could have, goes.
     stale = {"n": "QW5vdGhlckRldmljZXNOb25jZQ", "opened": False, "hard_deadline": 4102444800}
-    await page.evaluate("(r) => localStorage.setItem('fw:0123456789abcdef:1', JSON.stringify(r))", stale)
+    await page.evaluate("(r) => localStorage.setItem('wl:0123456789abcdef:1', JSON.stringify(r))", stale)
     await page.goto("about:blank")
     await page.goto(f"{edge.url}{LANDING}")
-    assert await page.evaluate("localStorage.getItem('fw:0123456789abcdef:1')") is None
+    assert await page.evaluate("localStorage.getItem('wl:0123456789abcdef:1')") is None
     assert (await device_record(page))["n"] == record["n"]
 
 
@@ -415,8 +416,8 @@ async def test_vnc_html_and_its_policy_are_as_0_6_4_served_them(edge: Edge, site
     async with aiohttp.ClientSession() as http, http.get(f"{edge.url}/vnc.html") as response:
         assert response.headers["Content-Security-Policy"] == CLASSIC_CSP
         html = await response.text()
-    stock = (Path(os.environ["FW_KASMVNC_WWW"]) / "vnc.html").read_text()
-    assert html.replace('<script src="/fw/shim.js"></script>', "", 1) == stock
+    stock = (Path(os.environ["WL_KASMVNC_WWW"]) / "vnc.html").read_text()
+    assert html.replace('<script src="/wl/shim.js"></script>', "", 1) == stock
 
 
 @pytest.mark.parametrize("form", ["{t}", "t={t}", "v=s9&t={t}"], ids=["0.6.4", "no-viewer", "unknown-viewer"])
@@ -430,7 +431,7 @@ async def test_a_classic_ticket_opens_vnc_html_as_0_6_4_did(edge: Edge, page: Pa
     assert page.url == f"{edge.url}{classic_url()}"
     record = await device_record(page)
     assert (record["viewer"], record["viewer_fallback"]) == ("classic", False)
-    assert sorted(edge.offers[-1]) == sorted(["binary", f"fw.n1.{record['n']}", f"fw.t1.{issued}"])
+    assert sorted(edge.offers[-1]) == sorted(["binary", f"wl.n1.{record['n']}", f"wl.t1.{issued}"])
 
 
 @pytest.mark.parametrize(
@@ -445,11 +446,11 @@ async def test_a_classic_ticket_opens_vnc_html_while_vnc_edge_rolls(
     shutil.copytree(site.www, mixed)
     old = Path(__file__).resolve().parents[1] / "fixtures" / "vnc-edge-0.6.4"
     if page_from == "0.6.4":
-        html = (old / "landing.html").read_text().replace("__FW_APP_ORIGIN__", APP)
-        (mixed / "fw" / "landing.html").write_text(html)
-        (mixed / "fw" / "session.js").unlink()  # that replica has none
+        html = (old / "landing.html").read_text().replace("__WL_APP_ORIGIN__", APP)
+        (mixed / "wl" / "landing.html").write_text(html)
+        (mixed / "wl" / "session.js").unlink()  # that replica has none
     else:
-        (mixed / "fw" / "landing.js").write_text((old / "landing.js").read_text())
+        (mixed / "wl" / "landing.js").write_text((old / "landing.js").read_text())
     errors: list[str] = []
     page.on("pageerror", lambda error: errors.append(str(error)))
     async with serve_edge(Site(mixed, site.csp), tmp_path) as edge:
@@ -459,7 +460,7 @@ async def test_a_classic_ticket_opens_vnc_html_while_vnc_edge_rolls(
         await page.wait_for_selector("html.noVNC_connected")
         assert page.url == f"{edge.url}{classic_url()}"
         assert sorted(edge.offers[-1]) == sorted(
-            ["binary", f"fw.n1.{(await device_record(page))['n']}", f"fw.t1.{issued}"]
+            ["binary", f"wl.n1.{(await device_record(page))['n']}", f"wl.t1.{issued}"]
         )
     assert errors == []
 
@@ -475,7 +476,7 @@ async def test_a_stream_ticket_opens_the_streamed_viewer(edge: Edge, page: Page)
     assert (record["viewer"], record["viewer_fallback"]) == ("stream", False)
     # The streamed viewer offers its own subprotocol, with the ticket (this gate refuses it: 0.6.4's takes binary).
     await _until_offered(edge, 1)
-    assert edge.offers[0] == ["fw.cast1", f"fw.n1.{record['n']}", f"fw.t1.{issued}"]
+    assert edge.offers[0] == ["wl.cast1", f"wl.n1.{record['n']}", f"wl.t1.{issued}"]
 
 
 async def test_once_the_streamed_viewer_gives_way_the_checkout_stays_classic_on_this_device(
@@ -483,10 +484,10 @@ async def test_once_the_streamed_viewer_gives_way_the_checkout_stays_classic_on_
 ) -> None:
     await page.goto(f"{edge.url}{LANDING}#v=s1&t={ticket()}")
     # What "Use the classic viewer" does on the streamed viewer.
-    await page.evaluate("([trip, gen]) => FwSession.useClassic(trip, gen)", [TRIP, str(GEN)])
+    await page.evaluate("([trip, gen]) => WlSession.useClassic(trip, gen)", [TRIP, str(GEN)])
     nonce = (await device_record(page))["n"]
 
-    # Ferry Watch still hands this device stream tickets for the checkout: they open the classic viewer.
+    # Waitlist still hands this device stream tickets for the checkout: they open the classic viewer.
     await page.goto("about:blank")  # a new page, not a new fragment on this one
     await page.goto(f"{edge.url}{LANDING}#v=s1&t={ticket()}")
     assert not await page.is_visible("#beta")

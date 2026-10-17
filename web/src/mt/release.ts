@@ -1,5 +1,5 @@
 /**
- * Releasing a held cart. ferry-web only passes the request on, so the cart stays held until the trip's browser
+ * Releasing a held cart. waitlist-web only passes the request on, so the cart stays held until the trip's browser
  * lets it go: until then the trip card and /c/<trip> both say "Releasing…".
  */
 import { useMutation, useMutationState, useQueryClient } from "@tanstack/react-query";

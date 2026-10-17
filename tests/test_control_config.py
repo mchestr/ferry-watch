@@ -7,16 +7,16 @@ from typing import Any
 
 import pytest
 
-from ferry_watch.control.config import ConfigError, duration, load
-from ferry_watch.control.configure import Allowance, Switches, cart_gate
-from ferry_watch.models import PACIFIC, Trip
+from waitlist.control.config import ConfigError, duration, load
+from waitlist.control.configure import Allowance, Switches, cart_gate
+from waitlist.models import PACIFIC, Trip
 
 MINIMAL: dict[str, Any] = {
     "pod": {
-        "image": "ghcr.io/mchestr/ferry-watch-browser@sha256:" + "b" * 64,
-        "hubUrl": "ws://ferry-control.ferry-watch.svc.cluster.local.:8766/agent/v1",
+        "image": "ghcr.io/mchestr/waitlist-browser@sha256:" + "b" * 64,
+        "hubUrl": "ws://waitlist-control.waitlist.svc.cluster.local.:8766/agent/v1",
         "vncPubkeys": "k1:AAAA",
-        "vncOrigin": "https://ferry-checkout.chestr.dev",
+        "vncOrigin": "https://waitlist-checkout.chestr.dev",
     }
 }
 
@@ -36,7 +36,7 @@ def test_defaults_are_the_documented_ones(tmp_path: Path) -> None:
     assert settings.policy.short_check_interval == timedelta(hours=6)
     assert config.user_limits().value("maxTrips", {}) == 3
     assert config.fleet.max_browsers_total == 7
-    assert config.pod_params().namespace == "ferry-watch-browsers"
+    assert config.pod_params().namespace == "waitlist-browsers"
     assert settings.stream_viewer == "off"  # the streamed viewer's kill switch is on until a deployment says
 
 
@@ -89,8 +89,8 @@ def test_the_old_fleet_wide_quiet_hours_still_parse(tmp_path: Path) -> None:
         {"surprise": True},
         # Only the three values; YAML reads a bare `off` as false, which must stop startup, not mean anything.
         *({"checkout": {"streamViewer": value}} for value in ("on", "Admins", False, None)),
-        {"checkout": {"streamViewer": "off", "origin": "https://ferry-checkout.chestr.dev"}},  # ferry-web's key
-        {"pod": MINIMAL["pod"] | {"image": "ghcr.io/mchestr/ferry-watch-browser:latest"}},
+        {"checkout": {"streamViewer": "off", "origin": "https://waitlist-checkout.chestr.dev"}},  # waitlist-web's key
+        {"pod": MINIMAL["pod"] | {"image": "ghcr.io/mchestr/waitlist-browser:latest"}},
     ],
 )
 def test_bad_values_stop_startup(tmp_path: Path, change: dict[str, Any]) -> None:

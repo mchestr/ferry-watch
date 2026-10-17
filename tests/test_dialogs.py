@@ -13,7 +13,7 @@ from typing import Any, cast
 
 import pytest
 
-from ferry_watch.agent.dialogs import ORIGIN_WAIT_SECONDS, DialogKeeper, KeptDialog
+from waitlist.agent.dialogs import ORIGIN_WAIT_SECONDS, DialogKeeper, KeptDialog
 
 
 class Gone(Exception):

@@ -1,4 +1,4 @@
-// The shared fw.cast1 conformance pack (tests/fixtures/cast1/README.md), as the viewer's tests read it.
+// The shared wl.cast1 conformance pack (tests/fixtures/cast1/README.md), as the viewer's tests read it.
 import { readFileSync } from "node:fs";
 
 export function pack(name) {

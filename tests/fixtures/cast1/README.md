@@ -1,4 +1,4 @@
-# fw.cast1 conformance pack
+# wl.cast1 conformance pack
 
 The shared test cases of the streamed checkout viewer's wire protocol
 ([PROTOCOL.md](../../../docs/multi-tenant/streamed-viewer/PROTOCOL.md) §10.1; DESIGN §11, step 0). The agent's
@@ -8,7 +8,7 @@ the same pull request. `tests/test_cast_pack.py` checks that the files match the
 
 ## Conventions
 
-- Each file is one JSON object: `"protocol": "fw.cast1"`, one or more arrays of cases (named below), and in some
+- Each file is one JSON object: `"protocol": "wl.cast1"`, one or more arrays of cases (named below), and in some
   files shared data (`context`, `rate_table`, `drop_limit`, `delays`).
 - Every case is an object with:
   - `id`: unique within its file. Ids starting `round1-` are round 1's 15 valid and 22 invalid messages (its
@@ -35,7 +35,7 @@ the same pull request. `tests/test_cast_pack.py` checks that the files match the
 |---|---|---|---|---|
 | `messages.json` | `cases` | §1, §2.2, §3.2, §6 | each frame's outcome (carried out, `error invalid`, close) | its encoder accepts the `ok` ones and refuses the rest |
 | | `offers` | §2.2 | the gate's choice | — |
-| | `viewer_offers` | §2.1 | — | `FwSession.offer()` |
+| | `viewer_offers` | §2.1 | — | `WlSession.offer()` |
 | | `hello_env` | §8.1 | — | `hello` from the window |
 | | `dsf` | §6.1 | the scale factor | — |
 | | `rates` | §7.1 | the rate limiter and the drop limit | — |
@@ -90,7 +90,7 @@ refuse any other. The viewer never needs `state` or `context`: cases whose outco
 
 | Field | Type | Meaning |
 |---|---|---|
-| `record` | object or null | the device record `fw:<trip>:<gen>` in localStorage (only `n` and `opened` matter) |
+| `record` | object or null | the device record `wl:<trip>:<gen>` in localStorage (only `n` and `opened` matter) |
 | `ticket` | object or null | the pending ticket in sessionStorage: `{ticket, exp}`, `exp` in epoch seconds |
 | `now` | number | epoch seconds |
 | `offer` | array or null | the subprotocols the viewer offers, in order; null: it doesn't connect (the landing page takes over) |

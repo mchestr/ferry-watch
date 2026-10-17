@@ -1,6 +1,6 @@
 """A stand-in for the pod's agent on the streamed viewer's socket (docs/multi-tenant/streamed-viewer/PROTOCOL.md).
 
-The viewer's browser tests run the real viewer against it. It admits ``fw.cast1`` upgrades as the gate does (the
+The viewer's browser tests run the real viewer against it. It admits ``wl.cast1`` upgrades as the gate does (the
 Origin, exactly one viewer kind, the device's nonce, a ticket until the first connect locks the checkout to that
 nonce), and checks every message the viewer sends against PROTOCOL.md §6: anything the real agent would close the
 connection for (4400, 1009) or drop with ``error invalid`` is recorded in ``Session.problems``, which a test expects
@@ -25,7 +25,7 @@ import msgspec
 from aiohttp import WSMsgType, web
 
 PACK = Path(__file__).resolve().parents[1] / "fixtures" / "cast1"
-SUBPROTOCOL = "fw.cast1"
+SUBPROTOCOL = "wl.cast1"
 MAX_FRAME_BYTES = 4096
 HELLO_TIMEOUT_S = 5.0
 WAIT_S = 10.0  # for what a test waits on
@@ -460,7 +460,7 @@ class Session:
 
 
 class FakeAgent:
-    """The gate's admission for `fw.cast1`, and a Session for each admitted connection."""
+    """The gate's admission for `wl.cast1`, and a Session for each admitted connection."""
 
     def __init__(self, origin: str) -> None:
         self.origin = origin
@@ -500,8 +500,8 @@ class FakeAgent:
     def _admit(self, request: web.Request, offered: list[str]) -> int | None:
         """The HTTP status the upgrade is refused with, or None to admit it."""
         kinds = [p for p in offered if p in ("binary", SUBPROTOCOL)]
-        nonces = [p.removeprefix("fw.n1.") for p in offered if p.startswith("fw.n1.")]
-        tickets = [p for p in offered if p.startswith("fw.t1.")]
+        nonces = [p.removeprefix("wl.n1.") for p in offered if p.startswith("wl.n1.")]
+        tickets = [p for p in offered if p.startswith("wl.t1.")]
         if request.headers.get("Origin") != self.origin:
             return 403
         if kinds != [SUBPROTOCOL] or offered[0] != SUBPROTOCOL:

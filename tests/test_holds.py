@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from ferry_watch.holds import HoldLimits, HoldState, Notice, Release, evaluate
-from ferry_watch.protocol import MAX_HARD_S, MAX_SESSION_S, MAX_UNCLAIMED_S, MAX_VIEWER_GONE_S
+from waitlist.holds import HoldLimits, HoldState, Notice, Release, evaluate
+from waitlist.protocol import MAX_HARD_S, MAX_SESSION_S, MAX_UNCLAIMED_S, MAX_VIEWER_GONE_S
 
 MIN = 60.0
 LIMITS = HoldLimits()  # 30 min unclaimed, 30 min session, 10 min viewer gone, 60 min hard cap

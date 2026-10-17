@@ -1,5 +1,5 @@
 /**
- * Signing in to ferry-web (docs/multi-tenant/design-reference.md §6.2.2): the OIDC code flow with PKCE,
+ * Signing in to waitlist-web (docs/multi-tenant/design-reference.md §6.2.2): the OIDC code flow with PKCE,
  * done by the page itself. The whole window goes to the identity provider and comes back to
  * /auth/callback with the code in the URL fragment (never sent to a server, so never logged); the page
  * exchanges it for an app token, which lives in localStorage and goes in the Authorization header.
@@ -8,9 +8,9 @@
 
 import { myApi } from "./api";
 
-export const TOKEN_KEY = "fw.token";
-export const SIGNED_OUT_KEY = "fw.signedOut";
-export const FLOW_KEY = "fw.signin";
+export const TOKEN_KEY = "wl.token";
+export const SIGNED_OUT_KEY = "wl.signedOut";
+export const FLOW_KEY = "wl.signin";
 
 export interface AuthConfig {
   authorization_endpoint: string;

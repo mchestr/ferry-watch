@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1
 
 # Targets:
-#   control  ferry-watch-control: ferry-web and ferry-control (no browser libraries at all); the default
-#   browser  ferry-watch-browser: one browser pod (docs/multi-tenant/design-reference.md §5, §11.2)
+#   control  waitlist-control: waitlist-web and waitlist-control (no browser libraries at all); the default
+#   browser  waitlist-browser: one browser pod (docs/multi-tenant/design-reference.md §5, §11.2)
 
 # ---- frontend
 FROM node:22.11.0-alpine@sha256:b64ced2e7cd0a4816699fe308ce6e8a08ccba463c757c00c14cd372e3d2c763e AS web
@@ -65,12 +65,12 @@ FROM display AS browser
 # (COPY --chmod would also apply 0444 to the directories it creates, leaving them untraversable.)
 RUN --mount=source=docker/browser/chromium-policy.json,target=/run/policy.json \
     for dir in /etc/chromium /etc/opt/chrome_for_testing /etc/opt/chrome; do \
-      install -D -m 0444 -o root -g root /run/policy.json "${dir}/policies/managed/ferry-watch.json"; \
+      install -D -m 0444 -o root -g root /run/policy.json "${dir}/policies/managed/waitlist.json"; \
     done \
     && rm -rf /ms-playwright/firefox-* /ms-playwright/webkit-* /ms-playwright/ffmpeg-* /app/src
 USER 1001:1001
 EXPOSE 6080 8080
-ENTRYPOINT ["/usr/bin/tini", "--", "ferry-watch-agent"]
+ENTRYPOINT ["/usr/bin/tini", "--", "waitlist-agent"]
 
 # ---- the control plane (the default target, so last): python:3.12-slim (with tzdata, which models.py needs at
 # import), uid 65532
@@ -92,4 +92,4 @@ RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
 COPY --from=web /web/dist /app/static
 USER 65532:65532
 EXPOSE 8765 8766 9090
-CMD ["ferry-web", "run"]
+CMD ["waitlist-web", "run"]

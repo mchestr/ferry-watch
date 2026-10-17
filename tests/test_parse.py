@@ -6,10 +6,10 @@ from pathlib import Path
 import pytest
 from selectolax.parser import HTMLParser
 
-from ferry_watch.bcferries.errors import MarkupChanged, NotBookable
-from ferry_watch.bcferries.parse import parse_card, parse_sailings, parse_time
-from ferry_watch.bcferries.site import choose_fare
-from ferry_watch.models import Fare, FarePreference, SailingStatus
+from waitlist.bcferries.errors import MarkupChanged, NotBookable
+from waitlist.bcferries.parse import parse_card, parse_sailings, parse_time
+from waitlist.bcferries.site import choose_fare
+from waitlist.models import Fare, FarePreference, SailingStatus
 
 
 def test_sold_out_sailings(fixtures: Path) -> None:

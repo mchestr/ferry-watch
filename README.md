@@ -1,4 +1,4 @@
-# Ferry Watch
+# Waitlist
 
 Watches [BC Ferries](https://www.bcferries.com) for reservations on sold-out sailings. Each person signs in and
 watches their own trips. When a sailing opens it sends an alert (Web Push, and email for what matters most), and
@@ -20,7 +20,7 @@ each trip's checks run in a real Chromium, driven with Playwright. The design is
 [implementation.md](docs/multi-tenant/implementation.md).
 
 ```
- phone / laptop ──▶ ferry-web ──── Postgres ──── ferry-control ──▶ Kubernetes API (browser pods)
+ phone / laptop ──▶ waitlist-web ──── Postgres ──── waitlist-control ──▶ Kubernetes API (browser pods)
    (dashboard,      sign-in (OIDC), the API,        the hub the pods dial, the fleet loop
     Web Push)       the alert outbox                     ▲
         │                                                │ one WebSocket per pod (closed vocabulary)
@@ -29,24 +29,24 @@ each trip's checks run in a real Chromium, driven with Playwright. The design is
              (a one-time ticket)
 ```
 
-- **ferry-web** signs people in (OIDC, invite-only), serves the dashboard and each person's API, mints checkout
+- **waitlist-web** signs people in (OIDC, invite-only), serves the dashboard and each person's API, mints checkout
   tickets, and sends alerts (Web Push and email) from an outbox. It has no Kubernetes access.
-- **ferry-control** decides which trips get a browser, starts and reaps the browser pods, and runs the hub they
+- **waitlist-control** decides which trips get a browser, starts and reaps the browser pods, and runs the hub they
   dial. It's the only part that talks to the API server.
 - **A browser pod** runs the agent: one trip's watcher, its Chromium on a private Xvnc, and the gate that admits
   a checkout viewer with a ticket.
 - **vnc-edge** serves the checkout page (KasmVNC's web client, or the streamed viewer) and proxies its socket to
   the pod holding the cart. It holds no secrets.
 
-Code layout (`src/ferry_watch/`):
+Code layout (`src/waitlist/`):
 
 | Package or module | Responsibility |
 |---|---|
-| `models.py`, `polling.py`, `holds.py`, `protocol.py`, `tickets.py`, `versions.py` | The shared core: trips and their validation, the poll curve and quiet hours, the hold clocks, the agent ↔ ferry-control messages, checkout tickets |
+| `models.py`, `polling.py`, `holds.py`, `protocol.py`, `tickets.py`, `versions.py` | The shared core: trips and their validation, the poll curve and quiet hours, the hold clocks, the agent ↔ waitlist-control messages, checkout tickets |
 | `bcferries/` | Everything that knows bcferries.com: `site.py` (the browser flow), `parse.py` (pure HTML parsing), `urls.py`, `terminals.py`, `errors.py` |
 | `agent/` | The browser pod: the one-trip watcher, the hub link, the VNC gate, the streamed viewer, lockdown self-tests |
-| `control/` | ferry-control: migrations and grants, the hub, the fleet planner, the pod template |
-| `web/` | ferry-web: sign-in, the API, admin, the live socket, the alert outbox |
+| `control/` | waitlist-control: migrations and grants, the hub, the fleet planner, the pod template |
+| `web/` | waitlist-web: sign-in, the API, admin, the live socket, the alert outbox |
 
 The frontend (`web/`) is React, TypeScript, Vite, Tailwind, Radix UI and TanStack Query; the live UI is
 `web/src/mt/`. The trip form's route map is drawn from data bundled with the app (no map service sees where
@@ -58,22 +58,22 @@ CI builds three images and pushes them from `main` and version tags:
 
 | Image | What |
 |---|---|
-| `ghcr.io/mchestr/ferry-watch-control` (`Dockerfile` target `control`, the default) | `ferry-web` and `ferry-control`, with the dashboard; no browser libraries |
-| `ghcr.io/mchestr/ferry-watch-browser` (target `browser`) | One browser pod: `ferry-watch-agent`, KasmVNC's Xvnc, matchbox and Chromium |
-| `ghcr.io/mchestr/ferry-watch-vnc-edge` (`vnc-edge/Dockerfile`) | The checkout host: stock nginx with KasmVNC's web client |
+| `ghcr.io/mchestr/waitlist-control` (`Dockerfile` target `control`, the default) | `waitlist-web` and `waitlist-control`, with the dashboard; no browser libraries |
+| `ghcr.io/mchestr/waitlist-browser` (target `browser`) | One browser pod: `waitlist-agent`, KasmVNC's Xvnc, matchbox and Chromium |
+| `ghcr.io/mchestr/waitlist-vnc-edge` (`vnc-edge/Dockerfile`) | The checkout host: stock nginx with KasmVNC's web client |
 
 They're deployed with app-template as one HelmRelease in home-cluster. `deploy/helmrelease.yaml` and
 `deploy/externalsecret.yaml` are copies of it: CI renders the copy, runs kubeconform on it, and proves its
 admission policies and RBAC against a real API server (`tests/apiserver`), so change both copies together.
 
-- `ferry-web run` and `ferry-control run` read their `config.json` (rendered from the HelmRelease's `ferry.*`
-  values) and secrets from files. `ferry-control migrate` creates and migrates the database (the db hook Job).
-- `ferry-web keys` prints a fresh checkout key pair and Web Push key, for setting up.
+- `waitlist-web run` and `waitlist-control run` read their `config.json` (rendered from the HelmRelease's `waitlist.*`
+  values) and secrets from files. `waitlist-control migrate` creates and migrates the database (the db hook Job).
+- `waitlist-web keys` prints a fresh checkout key pair and Web Push key, for setting up.
 
-**Security model:** ferry-web is the only part on the internet that people sign in to; the checkout host's only
+**Security model:** waitlist-web is the only part on the internet that people sign in to; the checkout host's only
 credential is a one-minute ticket. Browser pods run in their own namespace behind default-deny network policies,
-and admission policies admit only the exact pod ferry-control builds; nobody can change or enter one afterwards.
-The protocol between the pods and ferry-control can't carry a URL, a script, a cookie or a screenshot.
+and admission policies admit only the exact pod waitlist-control builds; nobody can change or enter one afterwards.
+The protocol between the pods and waitlist-control can't carry a URL, a script, a cookie or a screenshot.
 
 ## Development
 
@@ -88,12 +88,12 @@ npm run dev                 # Vite on :5173, proxying /api (and the WebSocket) t
 npm run lint && npm run typecheck && npm test && npm run format:check && npm run build
 ```
 
-- The control plane's tests start a throwaway PostgreSQL if one is installed (or use `FW_TEST_PGHOST`); without
+- The control plane's tests start a throwaway PostgreSQL if one is installed (or use `WL_TEST_PGHOST`); without
   either they skip.
 - `pytest -m browser` runs the browser contract tests in Chromium; the checkout tests also need KasmVNC
-  (`FW_KASMVNC_WWW` pointing at its `www` directory, and `Xvnc`, `matchbox-window-manager`, `xrandr` and
-  `xsettingsd` on the path). `pytest -m apiserver` needs envtest's binaries (`FW_ENVTEST_BIN`) and helm
-  (`FW_HELM`). CI's workflow shows how it installs each.
+  (`WL_KASMVNC_WWW` pointing at its `www` directory, and `Xvnc`, `matchbox-window-manager`, `xrandr` and
+  `xsettingsd` on the path). `pytest -m apiserver` needs envtest's binaries (`WL_ENVTEST_BIN`) and helm
+  (`WL_HELM`). CI's workflow shows how it installs each.
 - `node --test vnc-edge/tests/*.test.mjs` runs the streamed viewer's DOM-free modules.
 
 Tests never touch bcferries.com:

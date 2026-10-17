@@ -1,6 +1,6 @@
 """A checkout in the streamed viewer, end to end (docs/multi-tenant/streamed-viewer/DESIGN.md §11, final integration).
 
-A ticket minted as ferry-web mints it, in the link ferry-web's checkout_url() makes for a user on the beta, opened
+A ticket minted as waitlist-web mints it, in the link waitlist-web's checkout_url() makes for a user on the beta, opened
 on a phone and on a computer: vnc-edge's landing page, the streamed viewer, the pod's gate and stream session, the
 pod's real screen (test_stream_midpoint.py's rig). One whole checkout: a province from the native picker, the card
 number typed into the payment provider's cross-site frame, the bank's 3-D Secure window with its one-time code, a
@@ -22,9 +22,6 @@ from typing import Any
 import pytest
 from playwright.async_api import Browser, Locator, Page
 
-from ferry_watch.agent.cast_protocol import CloseCode
-from ferry_watch.tickets import verify
-from ferry_watch.web.api import checkout_url
 from tests.browser import test_checkout_edge as edge
 from tests.browser import test_checkout_stream as stream
 from tests.browser import test_stream_midpoint as midpoint
@@ -42,6 +39,9 @@ from tests.browser.test_stream_midpoint import (
     wire,
 )
 from tests.browser.test_stream_viewer import Viewer
+from waitlist.agent.cast_protocol import CloseCode
+from waitlist.tickets import verify
+from waitlist.web.api import checkout_url
 
 pytestmark = [pytest.mark.browser, pytest.mark.timeout(240)]
 
@@ -165,7 +165,7 @@ class Visit:
         return self.hands.viewer.page
 
     async def opens(self, link: str, ticket: str) -> None:
-        """Ferry Watch's link: the landing page, then the streamed viewer, which draws the checkout."""
+        """Waitlist's link: the landing page, then the streamed viewer, which draws the checkout."""
         await self.page.goto(link)
         assert await self.page.text_content("#beta") == "Opens in the new checkout viewer (beta)."
         await self.hands.press("#open")
@@ -176,7 +176,7 @@ class Visit:
         await until(lambda: viewers.status(self.viewer), lambda s: not s["shown"])
         assert viewers.close_to(await viewers.pixel(self.viewer, width / 2, 16), HEADER), "the checkout isn't drawn"
         nonce = (await viewers.device_record(self.viewer))["n"]
-        assert sorted(self.checkout.offers[0]) == sorted(["fw.cast1", f"fw.n1.{nonce}", f"fw.t1.{ticket}"])
+        assert sorted(self.checkout.offers[0]) == sorted(["wl.cast1", f"wl.n1.{nonce}", f"wl.t1.{ticket}"])
 
     async def picks_a_province(self) -> None:
         """From the native picker over the select."""
@@ -265,7 +265,7 @@ class Visit:
         await self.hands.press("#menu-classic")
         await self.page.wait_for_url(f"{checkout.url}{edge.classic_url(touch=self.hands.touch)}")
         await self.page.wait_for_selector("html.noVNC_connected")
-        assert sorted(checkout.offers[-1]) == sorted(["binary", f"fw.n1.{nonce}"])
+        assert sorted(checkout.offers[-1]) == sorted(["binary", f"wl.n1.{nonce}"])
         assert (await viewers.device_record(self.viewer))["viewer_fallback"] is True
         assert checkout.rig.screen.current is None
         assert await checkout.tab("[devicePixelRatio, visualViewport.scale]") == [1, 1], "not the pod's own screen"
@@ -280,7 +280,7 @@ async def test_a_whole_checkout_in_the_streamed_viewer_then_the_classic_one(
     browser: Browser, checkout: Checkout, name: str
 ) -> None:
     await checkout.pod.at(f"{checkout.sites.shop}/index.html")
-    ticket = edge.ticket()  # tickets.mint, as ferry-web mints it
+    ticket = edge.ticket()  # tickets.mint, as waitlist-web mints it
     link = checkout_url(checkout.url, edge.TRIP, edge.GEN, ticket, "stream")
     assert link == f"{checkout.url}/t/{edge.TRIP}/g/{edge.GEN}/#v=s1&t={ticket}"
     hold = verify(ticket, {"k1": edge.KEY.public_key()}).disp
@@ -331,6 +331,6 @@ async def test_everyone_else_gets_0_6_4s_link_and_kasmvnc(browser: Browser, chec
         assert viewer.page.url == f"{checkout.url}{edge.classic_url(touch=True)}"
         record = await viewers.device_record(viewer)
         assert (record["viewer"], record["viewer_fallback"]) == ("classic", False)
-        assert sorted(checkout.offers[-1]) == sorted(["binary", f"fw.n1.{record['n']}", f"fw.t1.{issued}"])
+        assert sorted(checkout.offers[-1]) == sorted(["binary", f"wl.n1.{record['n']}", f"wl.t1.{issued}"])
         assert checkout.rig.screen.current is None
         assert await checkout.tab("devicePixelRatio") == 1

@@ -1,5 +1,5 @@
 /**
- * The dashboard's live socket on ferry-web: authenticates with its first message (a browser can't put a
+ * The dashboard's live socket on waitlist-web: authenticates with its first message (a browser can't put a
  * header on an upgrade, and the token never goes in a URL), then receives the user's own state on every
  * change. A 4401 close means the session no longer works: the next API call says why.
  */

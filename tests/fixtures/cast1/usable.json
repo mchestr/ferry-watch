@@ -1,5 +1,5 @@
 {
-  "protocol": "fw.cast1",
+  "protocol": "wl.cast1",
   "numbering": [
     {"id": "acks-unnumbered", "sec": "1", "sent": ["hello", "ack", "tap", "ack", "wheel"],
      "numbers": [1, null, 2, null, 3], "last_input": 3},

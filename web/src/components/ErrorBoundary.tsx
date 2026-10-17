@@ -19,7 +19,7 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   override componentDidCatch(error: Error, info: ErrorInfo) {
-    console.error("Ferry Watch crashed", error, info.componentStack);
+    console.error("Waitlist crashed", error, info.componentStack);
   }
 
   override render() {

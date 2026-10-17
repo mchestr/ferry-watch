@@ -22,7 +22,10 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from playwright.async_api import Error as PlaywrightError
 
-from ferry_watch.agent.lockdown import (
+from tests.fakes import FakeSite, sailing
+from tests.test_agent import FakeOperator
+from tests.test_gate import GREETING, FakeXvnc
+from waitlist.agent.lockdown import (
     EXIT_AFTER_FAILURE_S,
     EXPECTED_TCP,
     Lockdown,
@@ -31,21 +34,18 @@ from ferry_watch.agent.lockdown import (
     tcp_listeners,
     unix_listeners,
 )
-from ferry_watch.agent.main import Agent, termination_line
-from ferry_watch.agent.processes import MATCHBOX_ARGV, Processes, Spec, xvnc_argv
-from ferry_watch.agent.settings import AgentSettings, SettingsError
-from ferry_watch.agent.watch import Finish
-from ferry_watch.models import Trip
-from ferry_watch.protocol import Alert, Bye, Command, Configure, HoldLimits, TripSpec
-from ferry_watch.tickets import mint
-from tests.fakes import FakeSite, sailing
-from tests.test_agent import FakeOperator
-from tests.test_gate import GREETING, FakeXvnc
+from waitlist.agent.main import Agent, termination_line
+from waitlist.agent.processes import MATCHBOX_ARGV, Processes, Spec, xvnc_argv
+from waitlist.agent.settings import AgentSettings, SettingsError
+from waitlist.agent.watch import Finish
+from waitlist.models import Trip
+from waitlist.protocol import Alert, Bye, Command, Configure, HoldLimits, TripSpec
+from waitlist.tickets import mint
 
 KEY = Ed25519PrivateKey.generate()
 RAW_KEY = KEY.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
 TRIP_ID = "3f9c0a1b2c3d4e5f"
-ORIGIN = "https://ferry-checkout.chestr.dev"
+ORIGIN = "https://waitlist-checkout.chestr.dev"
 
 
 def b64(data: bytes) -> str:
@@ -53,21 +53,21 @@ def b64(data: bytes) -> str:
 
 
 ENV = {
-    "FW_TRIP_ID": TRIP_ID,
-    "FW_POD_NAME": f"fw-{TRIP_ID}-g3",
-    "FW_OWNER": "user-7",
-    "FW_DEADLINE_AT": "1790000000",
-    "FW_HUB_URL": "ws://ferry-control.ferry-watch.svc.cluster.local.:8766/agent/v1",
-    "FW_VNC_ORIGIN": ORIGIN,
-    "FW_VNC_PUBKEYS": f"k1:{b64(RAW_KEY)}",
+    "WL_TRIP_ID": TRIP_ID,
+    "WL_POD_NAME": f"wl-{TRIP_ID}-g3",
+    "WL_OWNER": "user-7",
+    "WL_DEADLINE_AT": "1790000000",
+    "WL_HUB_URL": "ws://waitlist-control.waitlist.svc.cluster.local.:8766/agent/v1",
+    "WL_VNC_ORIGIN": ORIGIN,
+    "WL_VNC_PUBKEYS": f"k1:{b64(RAW_KEY)}",
 }
 
 # ---- settings
 
 
 def test_settings_from_the_pod_spec() -> None:
-    settings = AgentSettings.from_env(ENV | {"FW_SANDBOX": "1"})
-    assert (settings.trip_id, settings.pod_name, settings.gen) == (TRIP_ID, f"fw-{TRIP_ID}-g3", 3)
+    settings = AgentSettings.from_env(ENV | {"WL_SANDBOX": "1"})
+    assert (settings.trip_id, settings.pod_name, settings.gen) == (TRIP_ID, f"wl-{TRIP_ID}-g3", 3)
     assert set(settings.vnc_keys) == {"k1"}
     assert settings.sandbox
     assert settings.rfb_socket == Path("/tmp/kasm/rfb.sock")
@@ -76,15 +76,15 @@ def test_settings_from_the_pod_spec() -> None:
 @pytest.mark.parametrize(
     "change",
     [
-        {"FW_TRIP_ID": ""},
-        {"FW_TRIP_ID": "../x"},
-        {"FW_POD_NAME": "fw-ffffffffffffffff-g3"},  # another trip's pod name
-        {"FW_OWNER": "User 7"},
-        {"FW_DEADLINE_AT": "tomorrow"},
-        {"FW_HUB_URL": "https://ferry-control/agent/v1"},
-        {"FW_VNC_ORIGIN": "http://ferry-checkout.chestr.dev"},
-        {"FW_VNC_ORIGIN": "https://ferry-checkout.chestr.dev/path"},
-        {"FW_VNC_PUBKEYS": "k1:short"},
+        {"WL_TRIP_ID": ""},
+        {"WL_TRIP_ID": "../x"},
+        {"WL_POD_NAME": "wl-ffffffffffffffff-g3"},  # another trip's pod name
+        {"WL_OWNER": "User 7"},
+        {"WL_DEADLINE_AT": "tomorrow"},
+        {"WL_HUB_URL": "https://waitlist-control/agent/v1"},
+        {"WL_VNC_ORIGIN": "http://waitlist-checkout.chestr.dev"},
+        {"WL_VNC_ORIGIN": "https://waitlist-checkout.chestr.dev/path"},
+        {"WL_VNC_PUBKEYS": "k1:short"},
     ],
 )
 def test_bad_settings_stop_the_agent(change: dict[str, str]) -> None:
@@ -305,7 +305,7 @@ async def test_a_pod_carts_opens_the_checkout_and_drains(aiohttp_server: Callabl
     xvnc.path.parent.mkdir()
     await xvnc.start()
     settings = replace(
-        AgentSettings.from_env(ENV | {"FW_HUB_URL": str(server.make_url("/agent/v1")).replace("http", "ws", 1)}),
+        AgentSettings.from_env(ENV | {"WL_HUB_URL": str(server.make_url("/agent/v1")).replace("http", "ws", 1)}),
         token_path=tmp_path / "token",
         deadline_at=1e12,
         tmp=tmp_path,
@@ -335,7 +335,7 @@ async def test_a_pod_carts_opens_the_checkout_and_drains(aiohttp_server: Callabl
             ticket = mint(KEY, "k1", sub="user-7", trip=TRIP_ID, pod=settings.pod_name, cart_id=cart.id)
             ws = await http.ws_connect(
                 f"http://127.0.0.1:{agent.gate_port}/ws",
-                protocols=["binary", f"fw.t1.{ticket}", "fw.n1." + "n" * 32],
+                protocols=["binary", f"wl.t1.{ticket}", "wl.n1." + "n" * 32],
                 origin=ORIGIN,
             )
             frame = await asyncio.wait_for(ws.receive(), 5)
@@ -373,7 +373,7 @@ async def test_the_operator_can_drain_and_revoke(aiohttp_server: Callable[..., A
     server: TestServer = await aiohttp_server(app)
     (tmp_path / "token").write_text(operator.token)
     settings = replace(
-        AgentSettings.from_env(ENV | {"FW_HUB_URL": str(server.make_url("/agent/v1")).replace("http", "ws", 1)}),
+        AgentSettings.from_env(ENV | {"WL_HUB_URL": str(server.make_url("/agent/v1")).replace("http", "ws", 1)}),
         token_path=tmp_path / "token",
         deadline_at=1e12,
         tmp=tmp_path,
@@ -396,14 +396,14 @@ async def test_the_agent_runs_a_streamed_viewer_only_while_the_operator_allows_i
     server: TestServer = await aiohttp_server(app)
     (tmp_path / "token").write_text(operator.token)
     settings = replace(
-        AgentSettings.from_env(ENV | {"FW_HUB_URL": str(server.make_url("/agent/v1")).replace("http", "ws", 1)}),
+        AgentSettings.from_env(ENV | {"WL_HUB_URL": str(server.make_url("/agent/v1")).replace("http", "ws", 1)}),
         token_path=tmp_path / "token",
         deadline_at=1e12,
         tmp=tmp_path,
         gate_port=0,
         probe_port=0,
     )
-    nonce = "fw.n1." + "s" * 32
+    nonce = "wl.n1." + "s" * 32
     async with aiohttp.ClientSession() as http:
         agent = Agent(
             settings, http, FakeSite(sailings=[sailing(9)]), lockdown=Lockdown(ok=True), agent_version="0.7.0"
@@ -417,8 +417,8 @@ async def test_the_agent_runs_a_streamed_viewer_only_while_the_operator_allows_i
             assert cart is not None
             ticket = mint(KEY, "k1", sub="user-7", trip=TRIP_ID, pod=settings.pod_name, cart_id=cart.id)
             url = f"http://127.0.0.1:{agent.gate_port}/ws"
-            ws = await http.ws_connect(url, protocols=["fw.cast1", f"fw.t1.{ticket}", nonce], origin=ORIGIN)
-            assert ws.protocol == "fw.cast1"
+            ws = await http.ws_connect(url, protocols=["wl.cast1", f"wl.t1.{ticket}", nonce], origin=ORIGIN)
+            assert ws.protocol == "wl.cast1"
             await ws.send_str('{"t": "hello", "v": 1, "w": 390, "h": 664, "dpr": 3}')
             assert (await asyncio.wait_for(ws.receive(), 5)).type == aiohttp.WSMsgType.CLOSE
             assert ws.close_code == 4000  # this stand-in site has no browser page to show
@@ -426,7 +426,7 @@ async def test_the_agent_runs_a_streamed_viewer_only_while_the_operator_allows_i
             # The kill switch: the next configure says no, and a stream isn't even admitted.
             agent.store.apply(configure(rev=2, cast_allowed=False))
             with pytest.raises(aiohttp.WSServerHandshakeError) as refused:
-                await http.ws_connect(url, protocols=["fw.cast1", nonce], origin=ORIGIN)
+                await http.ws_connect(url, protocols=["wl.cast1", nonce], origin=ORIGIN)
             assert refused.value.status == 400
         finally:
             agent.terminate()

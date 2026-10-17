@@ -11,7 +11,7 @@ from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF, HKDFExpand
 
-from ferry_watch.web.push import Vapid, _extract, _point, b64, encrypt, unb64
+from waitlist.web.push import Vapid, _extract, _point, b64, encrypt, unb64
 
 # RFC 8291 §5, "Push Message Encryption Example".
 PLAINTEXT = b"When I grow up, I want to be a watermelon"
@@ -66,7 +66,7 @@ def test_a_browser_can_read_what_we_send() -> None:
 
 
 def test_vapid_signs_for_the_push_service_origin() -> None:
-    vapid = Vapid.from_raw(AS_PRIVATE, "mailto:ferry-watch@chestr.dev")
+    vapid = Vapid.from_raw(AS_PRIVATE, "mailto:waitlist@chestr.dev")
     assert vapid.public_key == AS_PUBLIC
     header = vapid.authorization("https://fcm.googleapis.com/fcm/send/abc123", now=1_790_000_000)
     token, key_part = header.removeprefix("vapid t=").split(", k=")
@@ -76,7 +76,7 @@ def test_vapid_signs_for_the_push_service_origin() -> None:
     assert claims == {
         "aud": "https://fcm.googleapis.com",
         "exp": 1_790_000_000 + 12 * 3600,
-        "sub": "mailto:ferry-watch@chestr.dev",
+        "sub": "mailto:waitlist@chestr.dev",
     }
     raw = unb64(signature)
     der = encode_dss_signature(int.from_bytes(raw[:32], "big"), int.from_bytes(raw[32:], "big"))
