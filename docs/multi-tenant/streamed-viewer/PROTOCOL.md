@@ -964,9 +964,9 @@ from the end of that text, as many as the pod's Chromium needs to delete it (its
 Backspace deletes an emoji with its skin tone, keycap or ZWJ sequence, or a flag, whole, and other text one code point
 at a time; where that deletes more than the edit took, the rest is typed again), then the text it put there, by these
 rules (one code point on its own as `key` with `c`). Found on an iPhone: "mike" typed into an email field, then the
-keyboard's suggestion "mikeachester@gmail.com", gave "mikemikeachester@gmail.com", because the proxy of an email field
+keyboard's suggestion "mike@example.com", gave "mikemike@example.com", because the proxy of an email field
 held nothing for the suggestion to replace, so the whole word was sent as new text; it now sends `text`
-"achester@gmail.com".
+"@example.com".
 
 ### 8.8 Page-derived text
 
