@@ -17,6 +17,7 @@ import msgspec
 
 from waitlist.polling import PollPolicy, Tier
 from waitlist.protocol import MAX_HARD_S, MAX_SESSION_S, MAX_UNCLAIMED_S, MAX_VIEWER_GONE_S, HoldLimits
+from waitlist.providers import REGISTRY, Registry
 
 from .configure import HubSettings, StreamViewer
 from .db import Roles
@@ -24,6 +25,7 @@ from .limits import CEILINGS, DEFAULTS, LimitKey, Limits
 from .pods import NAMESPACE, PodParams
 
 _DURATION = re.compile(r"(\d+)(s|m|h|d)")
+_FETCHER_URL = re.compile(r"https?://[a-z0-9.-]+(:\d+)?")
 _UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
 
 
@@ -98,6 +100,18 @@ class CheckoutConfig(_Config, kw_only=True):
     stream_viewer: StreamViewer = "off"
 
 
+class FetcherClientConfig(_Config, kw_only=True):
+    """How waitlist-control reaches waitlist-fetcher (docs/waitlist/design.md §4.5): its Service, in-cluster."""
+
+    url: str  # ^https?://[a-z0-9.-]+(:\d+)?$, checked in ControlConfig.check()
+    timeout_seconds: Annotated[int, msgspec.Meta(ge=1, le=60)] = 20
+
+
+class HttpCheckConfig(_Config, kw_only=True):
+    # Distinct requests a minute to the provider's site; None: its budget's default.
+    requests_per_minute: Annotated[int, msgspec.Meta(ge=1, le=60)] | None = None
+
+
 class ControlConfig(_Config, kw_only=True):
     pod: PodConfig
     fleet: FleetConfig = msgspec.field(default_factory=FleetConfig)
@@ -112,6 +126,10 @@ class ControlConfig(_Config, kw_only=True):
     alert_only_vehicles: list[str] = []
     listen_port: int = 8766
     probe_port: int = 9090
+    # HTTP-checked providers (docs/waitlist/design.md §4.5). Both off by default: a config without them runs
+    # exactly as 0.7.1 did, BC Ferries only.
+    fetcher: FetcherClientConfig | None = None
+    http_checks: dict[str, HttpCheckConfig] = {}
 
     # ---- what the rest of waitlist-control is built from
 
@@ -162,7 +180,17 @@ class ControlConfig(_Config, kw_only=True):
     def db_roles(self) -> Roles:
         return Roles(web=self.roles.web, control=self.roles.control)
 
-    def check(self) -> ControlConfig:
+    def http_rates(self, registry: Registry = REGISTRY) -> dict[str, int]:
+        """Each HTTP-checked provider's budget, in requests a minute: exactly the providers the check loop checks."""
+        rates: dict[str, int] = {}
+        for provider_id, check in self.http_checks.items():
+            provider = registry.http_provider(provider_id)
+            if provider is None:
+                raise ConfigError(f"httpChecks.{provider_id}: not a provider checked over HTTP")
+            rates[provider_id] = check.requests_per_minute or provider.budget.default_per_minute
+        return rates
+
+    def check(self, registry: Registry = REGISTRY) -> ControlConfig:
         """Build everything once, so a bad value stops startup rather than a later pass."""
         try:
             self.pod_params()
@@ -171,6 +199,14 @@ class ControlConfig(_Config, kw_only=True):
             self.db_roles()
         except ValueError as e:
             raise ConfigError(str(e)) from None
+        if self.fetcher is not None and not _FETCHER_URL.fullmatch(self.fetcher.url):
+            raise ConfigError("fetcher.url must be http(s)://host[:port], with nothing after it")
+        if self.http_checks and self.fetcher is None:
+            raise ConfigError("httpChecks needs fetcher: the checks run through waitlist-fetcher")
+        for provider_id, rate in self.http_rates(registry).items():
+            ceiling = registry.http[provider_id].budget.max_per_minute
+            if rate > ceiling:
+                raise ConfigError(f"httpChecks.{provider_id}.requestsPerMinute is at most {ceiling}")
         return self
 
 

@@ -12,6 +12,7 @@ from typing import Literal
 
 LimitKey = Literal[
     "maxTrips",
+    "maxAlertOnlyWatches",
     "maxActiveBrowsers",
     "maxHoldsPerDay",
     "maxCartAttemptsPerDay",
@@ -23,7 +24,8 @@ LimitKey = Literal[
 Source = Literal["default", "override", "ceiling"]
 
 DEFAULTS: dict[LimitKey, int] = {
-    "maxTrips": 3,
+    "maxTrips": 3,  # BC Ferries trips
+    "maxAlertOnlyWatches": 6,  # watches on every alert-only provider together (docs/waitlist/design.md §6.2)
     "maxActiveBrowsers": 1,
     "maxHoldsPerDay": 4,
     "maxCartAttemptsPerDay": 6,
@@ -34,6 +36,7 @@ DEFAULTS: dict[LimitKey, int] = {
 }
 CEILINGS: dict[LimitKey, int] = {
     "maxTrips": 10,
+    "maxAlertOnlyWatches": 20,
     "maxActiveBrowsers": 3,
     "maxHoldsPerDay": 10,
     "maxCartAttemptsPerDay": 12,

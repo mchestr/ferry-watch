@@ -70,6 +70,33 @@ def test_bad_config(tmp_path: Path, change: dict[str, Any]) -> None:
         load(write(tmp_path, MINIMAL | change))
 
 
+def test_providers_are_off_unless_the_deployment_offers_them(tmp_path: Path) -> None:
+    assert load(write(tmp_path, MINIMAL)).offers() == {"buntzen": "off"}
+    for offer in ("off", "admins", "everyone"):
+        config = load(write(tmp_path, MINIMAL | {"providers": {"buntzen": {"offer": offer}}}))
+        assert config.offers() == {"buntzen": offer}
+    assert load(write(tmp_path, MINIMAL | {"providers": {"buntzen": {}}})).offers() == {"buntzen": "off"}
+
+
+@pytest.mark.parametrize(
+    "providers",
+    [
+        {"bcferries": {"offer": "everyone"}},  # always offered: not the config's to say
+        {"bcparks": {"offer": "admins"}},  # not a provider this build knows
+        *({"buntzen": {"offer": v}} for v in ("on", "Admins", False, None)),  # YAML's bare off is false: refused
+        {"buntzen": {"offer": "admins", "requestsPerMinute": 12}},  # waitlist-control's key
+    ],
+)
+def test_bad_provider_offers(tmp_path: Path, providers: dict[str, Any]) -> None:
+    with pytest.raises(ConfigError):
+        load(write(tmp_path, MINIMAL | {"providers": providers}))
+
+
+def test_alert_only_watches_are_a_limit(tmp_path: Path) -> None:
+    config = load(write(tmp_path, MINIMAL | {"limits": {"defaults": {"maxAlertOnlyWatches": 2}}}))
+    assert config.user_limits().value("maxAlertOnlyWatches", {}) == 2
+
+
 def test_the_client_id_may_come_from_its_own_file(tmp_path: Path) -> None:
     oidc = {k: v for k, v in MINIMAL["oidc"].items() if k != "clientId"}
     path = write(tmp_path, MINIMAL | {"oidc": oidc})
