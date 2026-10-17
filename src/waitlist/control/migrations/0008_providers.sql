@@ -28,7 +28,8 @@ COMMENT ON TABLE trips IS 'One watch per row, on any provider (trips.provider). 
 -- ---- 2. What only BC Ferries trips may have, and what only the others may
 
 -- Browser pods, cart claims and checkout tickets exist for BC Ferries trips only, whatever a bug in
--- waitlist-control or waitlist-web asks for. (They fire on INSERT: rows already there aren't re-checked.)
+-- waitlist-control or waitlist-web asks for. (They fire on INSERT and on a change of trip_id: rows already there
+-- aren't re-checked otherwise.)
 CREATE FUNCTION bcferries_trip_only() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM trips WHERE id = NEW.trip_id AND provider = 'bcferries') THEN
@@ -37,11 +38,11 @@ BEGIN
     RETURN NEW;
 END;
 $$;
-CREATE TRIGGER browser_pods_bcferries_only BEFORE INSERT ON browser_pods
+CREATE TRIGGER browser_pods_bcferries_only BEFORE INSERT OR UPDATE OF trip_id ON browser_pods
     FOR EACH ROW EXECUTE FUNCTION bcferries_trip_only();
 CREATE TRIGGER hold_claims_bcferries_only BEFORE INSERT OR UPDATE OF trip_id ON hold_claims
     FOR EACH ROW EXECUTE FUNCTION bcferries_trip_only();
-CREATE TRIGGER vnc_mints_bcferries_only BEFORE INSERT ON vnc_mints
+CREATE TRIGGER vnc_mints_bcferries_only BEFORE INSERT OR UPDATE OF trip_id ON vnc_mints
     FOR EACH ROW EXECUTE FUNCTION bcferries_trip_only();
 
 CREATE FUNCTION http_trip_only() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -71,7 +72,7 @@ CREATE TABLE check_results (
     error_since timestamptz,  -- the first failure of the current streak (NULL while checks succeed)
     updated_at timestamptz NOT NULL DEFAULT now()
 );
-CREATE TRIGGER check_results_http_only BEFORE INSERT ON check_results
+CREATE TRIGGER check_results_http_only BEFORE INSERT OR UPDATE OF trip_id ON check_results
     FOR EACH ROW EXECUTE FUNCTION http_trip_only();
 
 -- ---- 4. Two more fleet_state keys: the admin's per-provider pause, and the check loop's last report

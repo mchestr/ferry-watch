@@ -187,6 +187,36 @@ async def test_a_cart_claim_cant_move_to_another_providers_watch(seeded: Databas
         await as_role(seeded, ROLES.control, "UPDATE hold_claims SET trip_id = $1", PASS)
 
 
+async def test_a_browser_pod_cant_move_to_another_providers_watch(seeded: Database) -> None:
+    insert = (
+        "INSERT INTO browser_pods (name, trip_id, user_id, gen, mode, deadline_at)"
+        " VALUES ('wl-' || $1::text || '-g1', $1, $2, 1, 'warm', now())"
+    )
+    assert await as_role(seeded, ROLES.control, insert, FERRY, ANN) == "INSERT 0 1"
+    with pytest.raises(asyncpg.RaiseError, match="browser_pods rows are for BC Ferries trips only"):
+        await as_role(seeded, ROLES.control, "UPDATE browser_pods SET trip_id = $1", PASS)
+    assert await as_role(seeded, ROLES.control, "UPDATE browser_pods SET trip_id = $1", FERRY) == "UPDATE 1"
+
+
+async def test_a_checkout_ticket_cant_move_to_another_providers_watch(seeded: Database) -> None:
+    mint = "INSERT INTO vnc_mints (jti, user_id, trip_id, pod, aud) VALUES ('j1', $1, $2, $3, 'wl-vnc')"
+    assert await as_role(seeded, ROLES.web, mint, ANN, FERRY, f"wl-{FERRY}-g1") == "INSERT 0 1"
+    owner = await seeded.connect()
+    try:  # neither app may update a mint, and not even the owner can move one
+        with pytest.raises(asyncpg.RaiseError, match="vnc_mints rows are for BC Ferries trips only"):
+            await owner.execute("UPDATE vnc_mints SET trip_id = $1", PASS)
+    finally:
+        await owner.close()
+
+
+async def test_a_check_result_cant_move_to_a_bc_ferries_trip(seeded: Database) -> None:
+    insert = "INSERT INTO check_results (trip_id, search_hash) VALUES ($1, '0123456789abcdef')"
+    assert await as_role(seeded, ROLES.control, insert, PASS) == "INSERT 0 1"
+    with pytest.raises(asyncpg.RaiseError, match="check_results rows are for HTTP-checked watches only"):
+        await as_role(seeded, ROLES.control, "UPDATE check_results SET trip_id = $1", FERRY)
+    assert await as_role(seeded, ROLES.control, "UPDATE check_results SET trip_id = $1", PASS) == "UPDATE 1"
+
+
 async def test_checkout_tickets_are_for_bc_ferries_trips_only(seeded: Database) -> None:
     mint = "INSERT INTO vnc_mints (jti, user_id, trip_id, pod, aud) VALUES ($1, $2, $3, $4, 'wl-vnc')"
     with pytest.raises(asyncpg.RaiseError, match="vnc_mints rows are for BC Ferries trips only"):
