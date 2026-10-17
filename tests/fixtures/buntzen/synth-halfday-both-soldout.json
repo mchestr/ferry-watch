@@ -1,0 +1,12 @@
+{
+  "catalogItemExtendedResultLst": [
+    {
+      "catalogItemCategory": "Morning",
+      "catalogItemStatus": "Sold Out"
+    },
+    {
+      "catalogItemCategory": "Afternoon",
+      "catalogItemStatus": "Sold Out"
+    }
+  ]
+}

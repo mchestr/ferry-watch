@@ -1,0 +1,14 @@
+{
+  "content": {
+    "catalogItemExtendedResultLst": [
+      {
+        "catalogItemCategory": "Morning",
+        "catalogItemStatus": "Available"
+      },
+      {
+        "catalogItemCategory": "Afternoon",
+        "catalogItemStatus": "Sold Out"
+      }
+    ]
+  }
+}
