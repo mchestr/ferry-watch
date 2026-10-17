@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import functools
+import gzip
 import json
 import logging
 import re
 import socket
-from collections.abc import Awaitable, Callable, Mapping
+import tracemalloc
+import zlib
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast, get_args
@@ -180,7 +184,10 @@ async def test_a_fetch_replies_with_the_inventory(rig_factory: Callable[..., Awa
         request_body(v=2),
         request_body(id="not-hex"),
         request_body(id="5BE0D1C27F6A9E31"),
+        request_body(id=f"{ID}\n"),  # the wire's `$` lets a trailing newline through; it would split a log line
         request_body(provider="Bad Name"),
+        request_body(provider="buntzen\n"),
+        request_body(provider="nope\n"),
         request_body(url="https://evil.example/"),  # an extra field: refused, never a proxy
         request_body(headers={"x": "y"}),
         request_body(query="10672"),
@@ -363,10 +370,7 @@ class BigProvider:
 
 
 async def test_the_reply_size_is_capped(rig_factory: Callable[..., Awaitable[Rig]]) -> None:
-    provider = cast(HttpProvider[Any, Any, Any], BigProvider())
-    registry = Registry(metas=(provider.meta,), http={"bigprov": provider})
-    body = json.dumps({"v": 1, "id": ID, "provider": "bigprov", "query": {"n": 1}}).encode()
-    limits = {"bigprov": ProviderLimit(max_per_minute=30)}
+    registry, body, limits = big_rig_parts()
 
     for size, ok in ((60_000, True), (fetchwire.MAX_REPLY_BYTES, False)):
         fetcher = FakeFetcher(returns(BigInventory(blob="x" * size)), provider_id="bigprov", hosts=("big.example",))
@@ -377,6 +381,88 @@ async def test_the_reply_size_is_capped(rig_factory: Callable[..., Awaitable[Rig
         else:
             assert isinstance(reply, FetchFailed)
             assert reply.error == "too_large"
+
+
+def big_rig_parts() -> tuple[Registry, bytes, dict[str, ProviderLimit]]:
+    provider = cast(HttpProvider[Any, Any, Any], BigProvider())
+    registry = Registry(metas=(provider.meta,), http={"bigprov": provider})
+    body = json.dumps({"v": 1, "id": ID, "provider": "bigprov", "query": {"n": 1}}).encode()
+    return registry, body, {"bigprov": ProviderLimit(max_per_minute=30)}
+
+
+def taking(clocks: list[Clock], seconds: float, inventory: BigInventory) -> Callable[[Transport, Any], Awaitable[Any]]:
+    async def behaviour(transport: Transport, query: Any) -> Any:
+        clocks[0].now += seconds
+        return inventory
+
+    return behaviour
+
+
+async def test_the_reply_size_is_measured_with_the_elapsed_ms_it_is_sent_with(
+    rig_factory: Callable[..., Awaitable[Rig]],
+) -> None:
+    registry, body, limits = big_rig_parts()
+    empty = len(fetchwire.encode(FetchOk(id=ID, inventory={"blob": ""}, elapsed_ms=0)))
+    inventory = BigInventory(blob="x" * (fetchwire.MAX_REPLY_BYTES - 2 - empty))  # 2 bytes under, at elapsed_ms=0
+    # elapsed_ms 0 and 100 fit (100 is exactly the cap); 600000, and anything clamped to it, is 3 bytes over.
+    for seconds, elapsed, ok in ((0, 0, True), (0.1, 100, True), (600, 600_000, False), (5000, 600_000, False)):
+        clocks: list[Clock] = []
+        fetcher = FakeFetcher(taking(clocks, seconds, inventory), provider_id="bigprov", hosts=("big.example",))
+        rig = await rig_factory(providers=limits, fetcher=fetcher, registry=registry)
+        clocks.append(rig.clock)
+        _, reply = await rig.post(body)  # never more than MAX_REPLY_BYTES on the wire (Rig.post)
+        if ok:
+            assert isinstance(reply, FetchOk), seconds
+        else:
+            assert isinstance(reply, FetchFailed), seconds
+            assert reply.error == "too_large"
+        assert reply.elapsed_ms == elapsed
+
+
+@functools.cache
+def gzip_of_zeros(mib: int) -> bytes:
+    """A small gzip body that inflates to `mib` MiB."""
+    compressor = zlib.compressobj(9, zlib.DEFLATED, 31)
+    block = bytes(1 << 20)
+    return b"".join([*(compressor.compress(block) for _ in range(mib)), compressor.flush()])
+
+
+async def in_pieces(data: bytes) -> AsyncIterator[bytes]:
+    """A body sent chunked, with no Content-Length."""
+    for start in range(0, len(data), 16 * 1024):
+        yield data[start : start + 16 * 1024]
+
+
+async def test_a_compressed_request_is_400_and_never_inflated(rig_factory: Callable[..., Awaitable[Rig]]) -> None:
+    rig = await rig_factory()
+    for encoding, data in (
+        ("gzip", gzip.compress(request_body())),  # a valid request once inflated: still refused
+        ("GZIP", gzip.compress(request_body())),
+        ("deflate", zlib.compress(request_body())),
+        ("br", request_body()),
+        ("identity, gzip", gzip.compress(request_body())),
+    ):
+        headers = {"Content-Type": "application/json", "Content-Encoding": encoding}
+        resp = await rig.client.post(fetchwire.PATH, data=data, headers=headers)
+        assert (resp.status, await resp.read()) == (400, b""), encoding
+    assert rig.fetcher.calls == []
+    identity = {"Content-Type": "application/json", "Content-Encoding": "identity"}
+    resp = await rig.client.post(fetchwire.PATH, data=request_body(), headers=identity)
+    assert resp.status == 200  # identity is no encoding at all
+    assert len(rig.fetcher.calls) == 1
+    bomb = gzip_of_zeros(250)  # about 250 KB that inflates to 250 MiB, over the pod's 192Mi limit
+    headers = {"Content-Type": "application/json", "Content-Encoding": "gzip", "Connection": "close"}
+    tracemalloc.start()
+    try:
+        sent: tuple[bytes | AsyncIterator[bytes], ...] = (bomb, in_pieces(bomb))  # then chunked, with no length
+        for each in sent:
+            resp = await rig.client.post(fetchwire.PATH, data=each, headers=headers)
+            assert (resp.status, await resp.read()) == (400, b"")
+        _now, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < 8 << 20, f"peak {peak} bytes"  # aiohttp inflating it itself peaks at about 250 MiB
+    assert len(rig.fetcher.calls) == 1
 
 
 async def test_only_three_routes_exist(rig_factory: Callable[..., Awaitable[Rig]]) -> None:
@@ -477,6 +563,7 @@ async def test_the_production_transports_and_session() -> None:
     async with upstream_session(config) as session:
         assert isinstance(session.cookie_jar, aiohttp.DummyCookieJar)
         assert session.trust_env is False
+        assert session.auto_decompress is False  # AiohttpTransport inflates within its cap instead
         assert session.timeout.total == 7
         transport = aiohttp_transports(session, config)(frozenset({"api.yodelpass.com"}))
         assert isinstance(transport, AiohttpTransport)

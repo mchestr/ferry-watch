@@ -98,7 +98,7 @@ Each response becomes `tests/fixtures/buntzen/captured-<full|half>-<date>-<UTC t
 isn't JSON) with a `.meta.json` beside it holding the status, content type, the request and what the parser made
 of it. No response header is stored. The script waits at least 5 s between requests and goes through
 waitlist-fetcher's own transport (https to `api.yodelpass.com` only, public addresses, no redirects, no
-cookies, 256 KiB at most).
+cookies, 256 KiB at most, counted after a compressed body is inflated).
 
 Then:
 

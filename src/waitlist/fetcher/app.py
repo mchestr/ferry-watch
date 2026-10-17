@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass, field
@@ -27,7 +28,7 @@ from aiohttp import web
 from waitlist import fetchwire
 from waitlist.fetchwire import FetchFailed, FetchOk, FetchRequest
 from waitlist.providers import REGISTRY, Registry
-from waitlist.providers.base import Fetcher, FetchError, FetchErrorKind, HttpProvider, Transport
+from waitlist.providers.base import PROVIDER_ID, Fetcher, FetchError, FetchErrorKind, HttpProvider, Transport
 
 from .config import ConfigError, FetcherConfig
 from .registry import FETCHERS
@@ -39,6 +40,9 @@ log = logging.getLogger("waitlist.fetcher")
 GRACE_SECONDS: Final = 2.0
 MAX_ELAPSED_MS: Final = 600_000
 FETCH_ERROR_KINDS: Final[frozenset[str]] = frozenset(get_args(FetchErrorKind))
+# The wire's own patterns end in `$`, which lets a trailing newline through; these keep every logged id and
+# provider on one line.
+REQUEST_ID: Final = re.compile(r"[a-f0-9]{16}")
 
 TransportFactory = Callable[[frozenset[str]], Transport]
 """Makes the transport for one fetcher, from the hosts it declares."""
@@ -47,12 +51,14 @@ TransportFactory = Callable[[frozenset[str]], Transport]
 def upstream_session(config: FetcherConfig) -> aiohttp.ClientSession:
     """The one shared session to the providers' sites: public addresses only, no cookies, no proxy from the
     environment, default TLS verification, the upstream timeout. Every request it makes passes
-    allow_redirects=False (AiohttpTransport)."""
+    allow_redirects=False (AiohttpTransport). Bodies arrive as sent (auto_decompress=False): aiohttp would
+    inflate each read whole before any cap saw it, so AiohttpTransport inflates them itself, within its cap."""
     return aiohttp.ClientSession(
         connector=aiohttp.TCPConnector(resolver=PublicOnlyResolver(), limit=8, ttl_dns_cache=60),
         cookie_jar=aiohttp.DummyCookieJar(),
         trust_env=False,
         timeout=aiohttp.ClientTimeout(total=config.upstream_timeout_seconds),
+        auto_decompress=False,
     )
 
 
@@ -136,9 +142,13 @@ class FetchService:
 
     async def fetch(self, request: web.Request) -> web.Response:
         started = self._clock()
-        try:
-            req = fetchwire.decode_request(await request.read())
-        except (web.HTTPRequestEntityTooLarge, fetchwire.WireError):
+        req: FetchRequest | None = None
+        if _plain_body(request):
+            try:
+                req = fetchwire.decode_request(await request.read())
+            except (web.HTTPRequestEntityTooLarge, fetchwire.WireError):
+                req = None
+        if req is None or not REQUEST_ID.fullmatch(req.id) or not PROVIDER_ID.fullmatch(req.provider):
             log.warning("fetch refused a request that isn't a valid FetchRequest")
             return web.Response(status=400)
         route = self.routes.get(req.provider)
@@ -180,14 +190,15 @@ class FetchService:
         builtins = _checked_inventory(req, route, inventory)
         if builtins is None:
             return FetchFailed(id=req.id, error="unexpected")
-        reply = FetchOk(id=req.id, inventory=builtins, elapsed_ms=0)
-        if len(fetchwire.encode(reply)) > fetchwire.MAX_REPLY_BYTES:
-            return FetchFailed(id=req.id, error="too_large")
-        return reply
+        return FetchOk(id=req.id, inventory=builtins, elapsed_ms=0)  # its size is checked as sent, in _reply
 
     def _reply(self, req: FetchRequest, reply: FetchOk | FetchFailed, started: float) -> web.Response:
         elapsed = min(max(int((self._clock() - started) * 1000), 0), MAX_ELAPSED_MS)
         reply = msgspec.structs.replace(reply, elapsed_ms=elapsed)
+        body = fetchwire.encode(reply)
+        if isinstance(reply, FetchOk) and len(body) > fetchwire.MAX_REPLY_BYTES:  # measured with its real elapsed_ms
+            reply = FetchFailed(id=req.id, error="too_large", elapsed_ms=elapsed)
+            body = fetchwire.encode(reply)
         failed = reply if isinstance(reply, FetchFailed) else None
         log.info(
             "fetch provider=%s id=%s result=%s error=%s http_status=%s elapsed_ms=%d",
@@ -198,7 +209,7 @@ class FetchService:
             failed.http_status if failed and failed.http_status is not None else "-",
             elapsed,
         )
-        return web.Response(body=fetchwire.encode(reply), content_type="application/json")
+        return web.Response(body=body, content_type="application/json")
 
 
 def build(
@@ -227,13 +238,22 @@ def build(
         yield
         app[READY]["ready"] = False
 
-    app = web.Application(client_max_size=fetchwire.MAX_REQUEST_BYTES)
+    # auto_decompress off: aiohttp would inflate a compressed request whole before client_max_size is checked.
+    app = web.Application(client_max_size=fetchwire.MAX_REQUEST_BYTES, handler_args={"auto_decompress": False})
     app[READY] = {"ready": False}
     app.cleanup_ctx.append(readiness)
     app.router.add_post(fetchwire.PATH, service.fetch)
     app.router.add_get("/livez", service.livez, allow_head=False)
     app.router.add_get("/readyz", service.readyz, allow_head=False)
     return app
+
+
+def _plain_body(request: web.Request) -> bool:
+    """No Content-Encoding (or identity), and no declared length over MAX_REQUEST_BYTES: refused before reading."""
+    encoding = request.headers.get("Content-Encoding", "").strip().lower()
+    if encoding not in ("", "identity"):
+        return False
+    return request.content_length is None or request.content_length <= fetchwire.MAX_REQUEST_BYTES
 
 
 def _checked_inventory(req: FetchRequest, route: Route, inventory: object) -> dict[str, Any] | None:
