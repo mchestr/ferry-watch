@@ -8,7 +8,10 @@ when one opens: one dashboard for every watch, whatever system it's on.
   own account. Each deployment chooses who is offered it (`waitlist.providers.buntzen.offer`).
 
 Each person signs in and watches their own things. Alerts arrive by Web Push, and by email for what matters
-most. The provider framework's design contract is [docs/waitlist/design.md](docs/waitlist/design.md). Waitlist was called Ferry Watch until October 2026; the design record in
+most. The provider framework's design contract is [docs/waitlist/design.md](docs/waitlist/design.md) (its
+amendments come first); running the Buntzen Lake provider is
+[docs/providers/buntzen.md](docs/providers/buntzen.md).
+Waitlist was called Ferry Watch until October 2026; the design record in
 [docs/multi-tenant/](docs/multi-tenant/README.md) still uses the old names, and each of its files starts with
 the mapping.
 
@@ -30,7 +33,9 @@ checkout in that same browser, from any device, through the checkout viewer.
 Passes for a day go on sale at 7:00 am Pacific the day before, and popular ones sell out in seconds. A Buntzen
 watch is a date and the passes that would do (all day, morning, afternoon). Waitlist reminds you at 6:55, checks
 from 7:00:02 (every 30 s for 20 minutes, then every minute, every 30 minutes out of season), and alerts once a
-wanted pass is open; the alert opens the watch's page, whose first button books it on Yodel.
+wanted pass is open; the alert opens the watch's page, whose first button books it on Yodel. Waitlist holds no
+Yodel account. How it's checked, how an answer is read and what still has to be confirmed with real captures
+are in [docs/providers/buntzen.md](docs/providers/buntzen.md).
 
 ## How it works
 
@@ -79,6 +84,9 @@ Code layout (`src/waitlist/`):
 | `control/` | waitlist-control: migrations and grants, the hub, the fleet planner, the pod template, the HTTP check loop (`checkplan.py`, `checks.py`, `fetch.py`) |
 | `web/` | waitlist-web: sign-in, the API (`watches.py` for every provider), admin, the live socket, the alert outbox |
 
+`scripts/capture_yodel.py` captures Yodel's real answers as parser fixtures (the owner runs it, never CI), and
+`scripts/build_route_map.py` builds the BC Ferries route map's data.
+
 The frontend (`web/`) is React, TypeScript, Vite, Tailwind, Radix UI and TanStack Query; the live UI is
 `web/src/mt/`. The trip form's route map is drawn from data bundled with the app (no map service sees where
 anyone is going): see [the BC Ferries route map](#the-bc-ferries-route-map). The checkout host is `vnc-edge/`.
@@ -111,18 +119,49 @@ CI builds three images and pushes them from `main` and version tags:
 
 | Image | What |
 |---|---|
-| `ghcr.io/mchestr/waitlist-control` (`Dockerfile` target `control`, the default) | `waitlist-web` and `waitlist-control`, with the dashboard; no browser libraries |
+| `ghcr.io/mchestr/waitlist-control` (`Dockerfile` target `control`, the default) | `waitlist-web`, `waitlist-control` and `waitlist-fetcher`, with the dashboard; no browser libraries |
 | `ghcr.io/mchestr/waitlist-browser` (target `browser`) | One browser pod: `waitlist-agent`, KasmVNC's Xvnc, matchbox and Chromium |
 | `ghcr.io/mchestr/waitlist-vnc-edge` (`vnc-edge/Dockerfile`) | The checkout host: stock nginx with KasmVNC's web client |
 
-They're deployed with app-template as one HelmRelease in home-cluster. `deploy/helmrelease.yaml` and
+They're deployed with app-template as one HelmRelease in home-cluster
+(`kubernetes/apps/waitlist/waitlist/`, whose README is the runbook). `deploy/helmrelease.yaml` and
 `deploy/externalsecret.yaml` are copies of it: CI renders the copy, runs kubeconform on it, and proves its
 admission policies and RBAC against a real API server (`tests/apiserver`), so change both copies together.
+The release runs waitlist-web, waitlist-control, waitlist-fetcher and vnc-edge as Deployments, and
+`waitlist-control migrate` as the db hook Job, which creates and migrates the `waitlist` database.
 
-- `waitlist-web run` and `waitlist-control run` read their `config.json` (rendered from the HelmRelease's
-  `waitlist.*` values) and secrets from files. `waitlist-control migrate` creates and migrates the database (the
-  db hook Job).
-- `waitlist-web keys` prints a fresh checkout key pair and Web Push key, for setting up.
+## Configuration
+
+Each process reads one `config.json`, rendered from the HelmRelease's `waitlist.*` values into a ConfigMap, and
+takes its secrets from mounted files. A setting shared by several processes (the providers, the streamed viewer)
+is set once, at the top of `waitlist.*`; the render refuses it written into one process's own section.
+
+| Process | Config | Secrets and other environment |
+|---|---|---|
+| `waitlist-web run` | `WL_WEB_CONFIG` (default `/etc/waitlist-web/config.json`; `src/waitlist/web/config.py`) | `WL_OIDC_CLIENT_ID_FILE`, `WL_OIDC_CLIENT_SECRET_FILE`, `WL_CHECKOUT_KEY_FILE`, `WL_VAPID_KEY_FILE`; the database from the libpq variables |
+| `waitlist-control run`, `migrate` | `WL_CONTROL_CONFIG` (default `/etc/waitlist-control/config.json`; `src/waitlist/control/config.py`) | The database from the libpq variables; the API server from its ServiceAccount |
+| `waitlist-fetcher run` | `WL_FETCHER_CONFIG` (default `/etc/waitlist-fetcher/config.json`; `src/waitlist/fetcher/config.py`) | None: no database, no token, no secret |
+
+All three take `WL_LOG_LEVEL`. A browser pod's environment (`WL_TRIP_ID`, `WL_OWNER`, `WL_HUB_URL`, ...) is
+set by waitlist-control and pinned by the admission policy, never by hand.
+
+The values a deployment chooses (`deploy/helmrelease.yaml` documents each):
+
+- `waitlist.hosts`: the dashboard (`waitlist.chestr.dev`) and checkout (`waitlist-checkout.chestr.dev`) hosts.
+- `waitlist.browserImage` and each controller's image: every tag pins its digest (`<version>@sha256:<digest>`).
+- `waitlist.checkout.streamViewer`: who is offered the streamed checkout viewer, `"off"`, `"admins"` or
+  `"everyone"`.
+- `waitlist.providers.buntzen`: `offer` (`"off"`, the default, `"admins"` or `"everyone"`), `requestsPerMinute`
+  (waitlist-control's budget, 1-30) and `fetcherPerMinute` (waitlist-fetcher's own hard cap). With `"off"` the
+  configs carry nothing about the provider. BC Ferries is always on.
+- `waitlist.control.*` (the browser pods, the fleet, hold clocks, polling, limits) and `waitlist.web.*` (sign-in,
+  invitations, links, email).
+
+The secrets come from 1Password through `deploy/externalsecret.yaml`: `WAITLIST_CHECKOUT_KEY` and
+`WAITLIST_VAPID_KEY` from the `waitlist` item, `WAITLIST_OAUTH_CLIENT_ID` and `WAITLIST_OAUTH_CLIENT_SECRET`
+from `authelia`, and the two database passwords from `cloudnative-pg`. `waitlist-web keys` prints a fresh
+`WAITLIST_CHECKOUT_KEY=` and `WAITLIST_VAPID_KEY=` for setting up a deployment; `waitlist.control.pod.vncPubkeys`
+carries the checkout key's public half.
 
 **Security model:** waitlist-web is the only part on the internet that people sign in to; the checkout host's
 only credential is a one-minute ticket. Browser pods run in their own namespace behind default-deny network
@@ -133,9 +172,14 @@ screenshot.
 ## Development
 
 ```sh
-uv sync                     # Python 3.12 environment from uv.lock
+uv sync --locked            # Python 3.12 environment from uv.lock
+uv run ruff format --check && uv run ruff check && uv run mypy && uv run lint-imports
 uv run pytest -m "not browser and not apiserver"
-uv run ruff format && uv run ruff check && uv run mypy && uv run lint-imports
+uv run pytest -m browser    # Chromium (and KasmVNC for the checkout tests; see below)
+uv run pytest -m apiserver  # envtest's API server, helm and app-template
+uv run python -m tests.deploy > rendered.yaml   # the deploy copy, rendered as CI renders it for kubeconform
+uv run python scripts/capture_yodel.py --dry-run  # the exact Yodel request, sent nowhere
+node --test vnc-edge/tests/*.test.mjs             # the streamed viewer's DOM-free modules
 
 cd web
 npm ci
@@ -147,14 +191,18 @@ npm run lint && npm run typecheck && npm test && npm run format:check && npm run
   either they skip.
 - `pytest -m browser` runs the browser contract tests in Chromium; the checkout tests also need KasmVNC
   (`WL_KASMVNC_WWW` pointing at its `www` directory, and `Xvnc`, `matchbox-window-manager`, `xrandr` and
-  `xsettingsd` on the path). `pytest -m apiserver` needs envtest's binaries (`WL_ENVTEST_BIN`) and helm
-  (`WL_HELM`). CI's workflow shows how it installs each.
-- `node --test vnc-edge/tests/*.test.mjs` runs the streamed viewer's DOM-free modules.
+  `xsettingsd` on the path).
+- `pytest -m apiserver` and `tests.deploy` need helm (`WL_HELM`) and app-template, fetched by helm or taken
+  from a local chart (`WL_APP_TEMPLATE`); `pytest -m apiserver` also needs envtest's binaries
+  (`WL_ENVTEST_BIN`). CI's workflow shows how it installs each, and the kubeconform flags it uses.
+- `WL_HOME_CLUSTER`, pointed at a home-cluster checkout, adds the check that its HelmRelease and ExternalSecret
+  are this repo's copies.
 
-Tests never touch bcferries.com:
-- The parsers are tested against saved copies of its pages (`tests/fixtures`).
+Tests never touch bcferries.com or Yodel:
+- The parsers are tested against saved copies of their pages and answers (`tests/fixtures`).
 - The browser contract tests (`tests/browser`) run the real booking-flow code in Chromium against
   a local fake site serving those pages. Chromium can't resolve any real hostname there.
+- waitlist-fetcher's transport is tested against a local server, and the HTTP check loop against fakes.
 
 CI runs all of it, builds the images, smoke-tests each one read-only and unprivileged, and only pushes from
 `main` and version tags. The Playwright package in `uv.lock` must match the version of the
