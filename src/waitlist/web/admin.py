@@ -20,10 +20,12 @@ from aiohttp import web
 from waitlist import __version__
 from waitlist.control.limits import CEILINGS, Limits
 from waitlist.models import PACIFIC
+from waitlist.providers import REGISTRY, Registry
 
 from .accounts import INVITE_DAYS, IdentityPolicy, SignedIn
 from .auth import ACCOUNTS, signed_in
 from .http import ApiError, json_body
+from .watches import OFFERS, REGISTRY_KEY
 
 POOL = web.AppKey("admin_pool", asyncpg.Pool)
 LIMITS = web.AppKey("admin_limits", Limits)
@@ -39,7 +41,19 @@ DELIVERY_FAILING_AFTER = 3  # attempts
 ATTENTION_ALERTS = {  # alerts that are an admin's business, in plain words
     "release_unverified": "A released cart couldn't be confirmed empty",
     "checkout_blocked": "A checkout hit a blocked page",
+    "site_changed": "A provider's site changed shape; its checks are failing",
+    "checker_down": "waitlist-fetcher isn't answering; HTTP checks are on hold",
 }
+SWITCHES = ("maintenance", "pause_carting", "breaker")
+
+
+def _registry(request: web.Request) -> Registry:
+    return request.app.get(REGISTRY_KEY, REGISTRY)
+
+
+def _paused(value: Any) -> list[str]:
+    """fleet_state.paused_providers as stored: a sorted JSON array of provider ids."""
+    return sorted({p for p in value if isinstance(p, str)}) if isinstance(value, list) else []
 
 
 def admin(request: web.Request) -> SignedIn:
@@ -204,6 +218,10 @@ async def overview(request: web.Request) -> web.Response:
     switches = {r["key"]: json.loads(r["value"]) for r in await pool.fetch("SELECT key, value FROM fleet_state")}
     fleet = switches.pop("fleet_report", None)  # what waitlist-control's last pass knew; not a switch
     fleet = fleet if isinstance(fleet, dict) else None
+    checks = switches.pop("check_report", None)  # what its HTTP check loop last reported; not a switch either
+    checks = checks if isinstance(checks, dict) else None
+    paused = _paused(switches.get("paused_providers"))
+    offers = request.app.get(OFFERS, {})
     queued = await pool.fetchval("SELECT count(*) FROM trip_runtime WHERE queue_position IS NOT NULL")
     outcomes = await pool.fetch(
         "SELECT outcome, count(*) AS n FROM hold_outcomes WHERE created_at > now() - interval '7 days' GROUP BY 1"
@@ -235,6 +253,16 @@ async def overview(request: web.Request) -> web.Response:
             "control_seen": _control_seen(switches.get("control_alive_at"), fleet),
             "attention": await _attention(pool),
             "versions": _versions(fleet, browsers),
+            "checks": checks,
+            "providers": [
+                {
+                    "id": provider_id,
+                    "name": provider.meta.name,
+                    "offer": offers.get(provider_id, "off"),
+                    "paused": switches.get("maintenance") is True or provider_id in paused,
+                }
+                for provider_id, provider in _registry(request).http.items()
+            ],
         }
     )
 
@@ -244,9 +272,16 @@ async def list_users(request: web.Request) -> web.Response:
     pool, limits, policy = request.app[POOL], request.app[LIMITS], request.app[POLICY]
     users = await pool.fetch(
         "SELECT u.id, u.username, u.email, u.state, u.is_admin, u.created_at, u.last_seen_at,"
-        " (SELECT count(*) FROM trips t WHERE t.user_id = u.id AND t.archived_at IS NULL) AS trips"
-        " FROM users u ORDER BY u.created_at"
+        " (SELECT count(*) FROM trips t WHERE t.user_id = u.id AND t.archived_at IS NULL AND t.provider = 'bcferries')"
+        " AS trips FROM users u ORDER BY u.created_at"
     )
+    live: dict[tuple[str, str], int] = {
+        (r["user_id"], r["provider"]): r["n"]
+        for r in await pool.fetch(
+            "SELECT user_id, provider, count(*) AS n FROM trips WHERE archived_at IS NULL GROUP BY 1, 2"
+        )
+    }
+    providers = [m.id for m in _registry(request).metas]
     overrides: dict[str, dict[str, int]] = {}
     for r in await pool.fetch("SELECT user_id, key, value FROM user_limits"):
         overrides.setdefault(r["user_id"], {})[r["key"]] = r["value"]
@@ -283,7 +318,8 @@ async def list_users(request: web.Request) -> web.Response:
                     "state": u["state"],
                     "is_admin": u["is_admin"],
                     "paused": False,  # for a release, for the old dashboard: trips are paused one at a time now
-                    "trips": u["trips"],
+                    "trips": u["trips"],  # BC Ferries trips, as before
+                    "watches": {p: live.get((u["id"], p), 0) for p in providers},  # live watches by provider
                     "created_at": u["created_at"].timestamp(),
                     "last_seen_at": u["last_seen_at"].timestamp() if u["last_seen_at"] else None,
                     "limits": {
@@ -529,13 +565,15 @@ async def set_limit(request: web.Request) -> web.Response:
 
 
 async def set_switch(request: web.Request) -> web.Response:
-    """Maintenance (no browsers) and pause carting (alerts only, no carts) on or off; and closing the breaker,
-    which only waitlist-control opens."""
+    """Maintenance (no browsers) and pause carting (alerts only, no carts) on or off; closing the breaker, which
+    only waitlist-control opens; and pausing an HTTP-checked provider's checks (`pause_provider`)."""
     actor = admin(request)
     body = await json_body(request)
     reason = _reason(body)
     key, on = body.get("switch"), body.get("on")
-    if key not in ("maintenance", "pause_carting", "breaker") or not isinstance(on, bool):
+    if key == "pause_provider":
+        return await _pause_provider(request, actor, body, reason)
+    if key not in SWITCHES or not isinstance(on, bool):
         raise ApiError(400, "maintenance, pause_carting or breaker, on or off", "switch")
     if key == "breaker" and on:
         raise ApiError(400, "Only waitlist-control opens the breaker", "switch")
@@ -543,6 +581,31 @@ async def set_switch(request: web.Request) -> web.Response:
     async with request.app[POOL].acquire() as conn, conn.transaction():
         await conn.execute("UPDATE fleet_state SET value = $2 WHERE key = $1", key, json.dumps(value))
         await _audit(conn, actor, "set_switch", "fleet", key, reason, after={key: value})
+    return web.json_response({"ok": True})
+
+
+async def _pause_provider(request: web.Request, actor: SignedIn, body: dict[str, Any], reason: str) -> web.Response:
+    """{"switch": "pause_provider", "provider", "on", "reason"}: the provider's checks stop (or resume) at
+    waitlist-control's next tick, with no deploy. Its watches stay, waiting."""
+    provider_id, on = body.get("provider"), body.get("on")
+    if not isinstance(provider_id, str) or provider_id not in _registry(request).http:
+        raise ApiError(400, "Not a provider whose checks can be paused", "provider")
+    if not isinstance(on, bool):
+        raise ApiError(400, "On or off?", "on")
+    async with request.app[POOL].acquire() as conn, conn.transaction():
+        current = await conn.fetchval("SELECT value FROM fleet_state WHERE key = 'paused_providers' FOR UPDATE")
+        paused = set(_paused(json.loads(current) if current else []))
+        after = sorted(paused | {provider_id} if on else paused - {provider_id})
+        await conn.execute("UPDATE fleet_state SET value = $1 WHERE key = 'paused_providers'", json.dumps(after))
+        await _audit(
+            conn,
+            actor,
+            "set_switch",
+            "fleet",
+            f"pause_provider:{provider_id}",
+            reason,
+            after={"paused_providers": after},
+        )
     return web.json_response({"ok": True})
 
 

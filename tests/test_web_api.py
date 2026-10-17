@@ -1299,3 +1299,76 @@ async def test_an_invitation_with_an_email_is_sent(rig: Rig) -> None:
     assert (await rig.call("POST", "/api/admin/invites", json=body)).status == 201
     rows = await rig.sql("SELECT kind, to_email, user_id FROM notifications")
     assert [tuple(r) for r in rows] == [("invited", "cat@example.com", None)]
+
+
+# ---- admin: other providers (docs/waitlist/design.md §6.6)
+
+
+async def test_the_overview_has_the_check_report_and_the_providers(rig: Rig) -> None:
+    await make_admin(rig)
+    overview = await (await rig.call("GET", "/api/admin/overview")).json()
+    assert overview["checks"] is None
+    assert overview["providers"] == [{"id": "buntzen", "name": "Buntzen Lake", "offer": "off", "paused": False}]
+    assert overview["switches"]["paused_providers"] == []
+    report = {"at": 1_814_365_907.0, "version": "1.0.0", "providers": {"buntzen": {"running": True, "fetcher": "ok"}}}
+    await rig.sql("INSERT INTO fleet_state (key, value) VALUES ('check_report', $1)", json.dumps(report))
+    overview = await (await rig.call("GET", "/api/admin/overview")).json()
+    assert overview["checks"] == report
+    assert "check_report" not in overview["switches"]  # what the loop reported: not a switch
+    await rig.sql("UPDATE fleet_state SET value = 'true' WHERE key = 'maintenance'")
+    overview = await (await rig.call("GET", "/api/admin/overview")).json()
+    assert overview["providers"][0]["paused"] is True
+
+
+async def test_pausing_a_providers_checks(rig: Rig) -> None:
+    await make_admin(rig)
+    body = {"switch": "pause_provider", "provider": "buntzen", "on": True, "reason": "Yodel asked"}
+    assert (await rig.call("POST", "/api/admin/switches", json=body)).status == 200
+    assert (await rig.call("POST", "/api/admin/switches", json=body)).status == 200  # already paused: still one
+    overview = await (await rig.call("GET", "/api/admin/overview")).json()
+    assert overview["switches"]["paused_providers"] == ["buntzen"]
+    assert overview["providers"][0]["paused"] is True
+    state = await (await rig.call("GET", "/api/state")).json()
+    assert [(p["id"], p["paused"]) for p in state["providers"]] == [("bcferries", False), ("buntzen", True)]
+    assert (await rig.call("POST", "/api/admin/switches", json=body | {"on": False, "reason": "OK now"})).status == 200
+    rows = await rig.sql(
+        "SELECT action, target_kind, target_id, after, reason FROM audit_log WHERE action = 'set_switch' ORDER BY id"
+    )
+    assert [(r["target_kind"], r["target_id"], json.loads(r["after"]), r["reason"]) for r in rows] == [
+        ("fleet", "pause_provider:buntzen", {"paused_providers": ["buntzen"]}, "Yodel asked"),
+        ("fleet", "pause_provider:buntzen", {"paused_providers": ["buntzen"]}, "Yodel asked"),
+        ("fleet", "pause_provider:buntzen", {"paused_providers": []}, "OK now"),
+    ]
+    for bad, field in [
+        (body | {"provider": "bcferries"}, "provider"),  # its pods have their own switches
+        (body | {"provider": "bcparks"}, "provider"),
+        (body | {"on": "yes"}, "on"),
+        ({k: v for k, v in body.items() if k != "reason"}, "reason"),
+    ]:
+        response = await rig.call("POST", "/api/admin/switches", json=bad)
+        assert (response.status, (await response.json())["field"]) == (400, field)
+    assert (await rig.call("POST", "/api/admin/switches", BOB, json=body)).status == 403
+
+
+async def test_users_list_their_watches_by_provider(rig: Rig) -> None:
+    await make_admin(rig)
+    await rig.add()
+    for watch_id in ("b" * 16, "c" * 16):
+        await rig.sql("INSERT INTO trips (id, user_id, provider, spec) VALUES ($1, $2, 'buntzen', '{}')", watch_id, ANN)
+    await rig.sql("UPDATE trips SET archived_at = now() WHERE id = $1", "c" * 16)
+    users = {u["id"]: u for u in (await (await rig.call("GET", "/api/admin/users")).json())["users"]}
+    assert (users[ANN]["trips"], users[ANN]["watches"]) == (1, {"bcferries": 1, "buntzen": 1})
+    assert (users[BOB]["trips"], users[BOB]["watches"]) == (0, {"bcferries": 0, "buntzen": 0})
+    assert users[ANN]["limits"]["maxAlertOnlyWatches"] == {"value": 6, "source": "default"}
+
+
+async def test_a_providers_trouble_needs_an_admin(rig: Rig) -> None:
+    await make_admin(rig)
+    await rig.sql(
+        "INSERT INTO notifications (user_id, kind, params) VALUES ($1, 'site_changed', '{\"provider\": \"buntzen\"}')",
+        ANN,
+    )  # (as the owner: waitlist-control queues these)
+    attention = (await (await rig.call("GET", "/api/admin/overview")).json())["attention"]
+    assert [(a["kind"], a["detail"]) for a in attention] == [
+        ("site_changed", "A provider's site changed shape; its checks are failing")
+    ]

@@ -710,6 +710,16 @@ async def test_the_budget_holds_across_ticks(rig: Rig) -> None:
     assert third.deferred == {}
 
 
+async def test_archived_and_bc_ferries_rows_are_never_read(rig: Rig) -> None:
+    await rig.add()
+    await rig.add(W2, BOB)
+    await rig.sql("UPDATE trips SET archived_at = now() WHERE id = $1", W2)
+    await rig.sql("INSERT INTO trips (id, user_id, provider, spec) VALUES ($1, $2, 'bcferries', '{}')", W3, BOB)
+    plan = await rig.tick()
+    assert plan.states == {W1: "pending"}
+    assert {j.watch_ids for j in plan.jobs} == {(W1,)}
+
+
 async def test_the_loop_wakes_when_something_is_due_survives_a_bad_tick_and_stops(rig: Rig) -> None:
     await rig.add()
     # 07:00 PT the day before, less 0.3 s: its first check (the release, plus 2 s) is 2.3 s off.
