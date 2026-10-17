@@ -140,6 +140,12 @@ card's Check now is now enabled for `quiet` as well.
   you to check out." over "Can hold a sailing in a cart for you"). A tile now shows the description's first
   sentence, what the provider is ("Sailing reservations."), and the tagline chip, what it does. The catalog
   (`ProviderMeta.description`, `GET /api/providers`) is unchanged.
+- **A DNS or egress failure is the fetcher's `network` or `timeout`, never `fetcher_unavailable`.** §8.7 Phase S
+  step 3 sent the operator looking for "Checks not running" when DNS or the `toFQDNs` rule breaks. The fetcher
+  still answers waitlist-control then, with `FetchFailed(error="network")` or `"timeout"`, so Fetcher stays `OK`,
+  the card goes to "Problem" after `BACKOFF_AFTER` failures and the owner is alerted after `FAILING_ALERT_AFTER`.
+  `fetcher_unavailable` means waitlist-control can't reach the fetcher (or the fetcher's own cap). The
+  home-cluster runbook, which restates Phase S, says so.
 - **The floating New watch never hides a card.** On phones the dashboard's bottom padding is the button's own
   offset, `max(1rem, env(safe-area-inset-bottom))`, plus 4rem, so scrolled to the end the last card's actions
   sit above the button on a phone with a home indicator too.
