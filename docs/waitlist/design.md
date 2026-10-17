@@ -41,6 +41,51 @@ are listed in §11 with the default the engineers implement.
 
 ---
 
+## Amendments after the contract
+
+These amend the contract below, and win where they disagree with it. The rest of the document is as it was
+when the workstreams started.
+
+### Amendment 1 (owner): nuke and pave
+
+Nobody uses Ferry Watch, so nothing carries over. Waitlist is deployed fresh with an empty `waitlist` database
+(the db hook's `waitlist-control migrate` creates the schema, 0001 to 0008), and the same home-cluster change
+that adds `kubernetes/apps/waitlist/` deletes `kubernetes/apps/ferry-watch/`. The runbook is home-cluster's
+`kubernetes/apps/waitlist/waitlist/README.md`.
+
+- No `pg_dump`/restore of the `ferrywatch` database, no freeze of either app, no smoke-test database to
+  replace and no verification SQL against restored rows.
+- One home-cluster change instead of PR-A, PR-C and PR-D. No `legacy-redirects.yaml`: `ferry.chestr.dev` and
+  `ferry-checkout.chestr.dev` go away with Ferry Watch, and nothing redirects them.
+- No `moved` notification. The kind is gone from `web/messages.py` (`EMAIL_KINDS`, `GENERIC_KINDS` and its
+  message) and from `tests/test_outbox.py`. Nothing queues it, and waitlist-web's insert policy never allowed it.
+- No push continuity. `WAITLIST_VAPID_KEY` is a new key from `waitlist-web keys`, not a copy of Ferry Watch's,
+  and no subscription carries over: people sign in at `waitlist.chestr.dev` and turn alerts on there.
+- `tests/test_cutover_restore.py` is deleted, with the flow it rehearsed.
+- Kept: migration 0007, which lets browser pods be named `wl-` (on a new database it only relaxes 0001's
+  check), and the user-id hash `"fw/v1|iss|sub"` in `web/identity.py`.
+
+Superseded: the "What was verified" bullet about the cutover flow; §0's Cutover row; §3.5 in full; the `moved`
+kind in §6.5; the legacy redirects in §8.1 and §8.2; §8.4's copied `WAITLIST_VAPID_KEY`; §8.6's PR-C and PR-D
+(and "Ferry Watch is untouched" in PR-A); in §8.7, every dump, restore, freeze, redirect and `moved` step
+(Phase S step 1's comparison with `ferrywatch`, C1-C9, R1-R2, PR-D's subscription cleanup), while Phase 0's
+release steps and the rest of Phase S's smoke tests still apply as the home-cluster runbook restates them; the
+tail of §9.6 after the images; §10's `test_cutover_restore.py` row, the `moved` line of the `test_outbox.py`
+row, PR-C/PR-D in the W4 criteria and acceptance item 4; and the continuity concerns of §11 Q3 (with an empty
+database every user is new, so a different Authelia subject changes nothing) and Q4.
+
+### Amendment 2 (W2): waitlist-fetcher inflates compressed bodies itself, inside the byte cap
+
+§4.4's shared upstream session adds `auto_decompress=False`: aiohttp inflated each read whole before any cap
+saw it, so a small gzip body could inflate past the pod's memory limit. `AiohttpTransport` asks for
+`Accept-Encoding: gzip, deflate` (unless the provider's client sets its own), and inflates a `gzip`, `x-gzip`
+or `deflate` body as it streams in, never past `max_bytes` of output; past that it is `too_large`, as
+an uncompressed body is. Any other `Content-Encoding`, or a stream that doesn't inflate whole,
+is `site_changed`. The fetcher's own server likewise leaves request bodies as sent and refuses a compressed
+request, or one declared over `MAX_REQUEST_BYTES`, before reading it.
+
+---
+
 ## 0. Decisions at a glance
 
 | Question | Decision |

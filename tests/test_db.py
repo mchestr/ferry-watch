@@ -304,8 +304,8 @@ async def test_0006_gives_everyone_the_classic_viewer(pg_server: Server) -> None
 
 
 async def test_0007_names_new_pods_wl_and_keeps_the_fw_ones(pg_server: Server) -> None:
-    """The rename: a database restored from Ferry Watch has pods named fw-<trip>-g<gen>, live and ended. They stay
-    as they are, the next pod for a trip is wl-<trip>-g<gen+1>, and nothing else is a pod's name."""
+    """The rename: a database from before it has pods named fw-<trip>-g<gen>, live and ended. They stay as they
+    are, the next pod for a trip is wl-<trip>-g<gen+1>, and nothing else is a pod's name."""
     async with migrated_up_to(pg_server, "0007") as owner:
         await owner.execute("INSERT INTO users (id, username) VALUES ($1, 'ann')", USER)
         await owner.execute("INSERT INTO trips (id, user_id, spec) VALUES ($1, $2, '{}')", TRIP, USER)
@@ -315,7 +315,7 @@ async def test_0007_names_new_pods_wl_and_keeps_the_fw_ones(pg_server: Server) -
         )
         await owner.execute(insert, f"fw-{TRIP}-g1", TRIP, USER, 1)
         await owner.execute("UPDATE browser_pods SET ended_at = now(), phase = 'gone'")
-        await owner.execute(insert, f"fw-{TRIP}-g2", TRIP, USER, 2)  # live when the database was copied
+        await owner.execute(insert, f"fw-{TRIP}-g2", TRIP, USER, 2)  # live at the rename
         with pytest.raises(asyncpg.CheckViolationError):
             await owner.execute(insert, f"wl-{TRIP}-g9", TRIP, USER, 9)  # before 0007: fw- only
 

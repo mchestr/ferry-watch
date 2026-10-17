@@ -464,8 +464,9 @@ def _namespace_names(selector: dict[str, Any]) -> set[str]:
 
 
 def admission_policies_reach_only_waitlist(rendered: dict[tuple[str, str], dict[str, Any]]) -> None:
-    """Both releases run side by side during the cutover: nothing cluster-scoped may share a name with Ferry
-    Watch's, and no admission policy may reach a ferry* namespace."""
+    """The change that adds Waitlist also deletes Ferry Watch, and Flux may apply one before it prunes the other:
+    nothing cluster-scoped may share a name with Ferry Watch's, and no admission policy may reach a ferry*
+    namespace."""
     assert all(kind in CLUSTER_SCOPED for (kind, _), o in rendered.items() if "namespace" not in o["metadata"])
     cluster_scoped = [name for (kind, name) in rendered if kind in CLUSTER_SCOPED]
     assert cluster_scoped

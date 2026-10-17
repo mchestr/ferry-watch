@@ -28,7 +28,7 @@ COMMENT ON TABLE trips IS 'One watch per row, on any provider (trips.provider). 
 -- ---- 2. What only BC Ferries trips may have, and what only the others may
 
 -- Browser pods, cart claims and checkout tickets exist for BC Ferries trips only, whatever a bug in
--- waitlist-control or waitlist-web asks for. (Rows restored from Ferry Watch predate these triggers.)
+-- waitlist-control or waitlist-web asks for. (They fire on INSERT: rows already there aren't re-checked.)
 CREATE FUNCTION bcferries_trip_only() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM trips WHERE id = NEW.trip_id AND provider = 'bcferries') THEN

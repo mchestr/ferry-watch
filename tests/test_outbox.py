@@ -355,20 +355,6 @@ async def test_a_providers_trouble_goes_to_admins_only(rig: Rig, kind: str, body
     assert rig.mailer.sent == []
 
 
-async def test_the_moved_notice_is_generic_and_emailed(rig: Rig) -> None:
-    await rig.sql("INSERT INTO notifications (user_id, kind, dedup_key) VALUES ($1, 'moved', 'moved:' || $1)", ANN)
-    await rig.outbox.deliver_due()
-    (message,) = rig.pushed()
-    assert message == {
-        "title": "Ferry Watch is now Waitlist",
-        "body": "Same app, new address: waitlist.chestr.dev. Sign in there, add it to your home screen again and turn"
-        " alerts on for each device. Your BC Ferries trips came with you.",
-        "url": "https://waitlist.chestr.dev/",
-    }
-    assert rig.push.received[0][0]["TTL"] == "86400"
-    assert [subject for _, subject, _ in rig.mailer.sent] == ["Ferry Watch is now Waitlist"]
-
-
 def test_an_invitation_says_waitlist_watches_reservations() -> None:
     message = Messages("https://waitlist.chestr.dev", lambda: None).render("invited", {}, None)
     assert message is not None
