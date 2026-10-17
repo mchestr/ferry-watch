@@ -1,13 +1,16 @@
-/** How a trip reads on the dashboard (docs/multi-tenant/design-reference.md §10, item 5). */
+/** How a trip reads on the dashboard (docs/multi-tenant/design-reference.md §10, item 5; docs/waitlist/design.md §7.2). */
 import type { Sailing, Terminal } from "@/lib/schema";
-import { longDate } from "@/lib/time";
+import { longDate, parseIsoDate, todayInPacific } from "@/lib/time";
 import type { MyTrip, SailingInfo } from "./schema";
 
-export type Tone = "success" | "warning" | "danger" | "soft" | "outline";
+/** A BC Ferries trip's badge tones: the Badge variants of the same names. */
+export type TripTone = "success" | "warning" | "danger" | "soft" | "outline";
+/** Every watch's badge tones: a trip's, plus an outlined success ("Watching") and a plain muted one. */
+export type Tone = TripTone | "success-outline" | "muted";
 
 export interface TripBadge {
   text: string;
-  tone: Tone;
+  tone: TripTone;
 }
 
 /** "Tsawwassen → Swartz Bay", or the codes until the terminal list has loaded. */
@@ -18,6 +21,15 @@ export function routeTitle(trip: MyTrip, terminals: readonly Terminal[] | undefi
 
 export const tripTitle = (trip: MyTrip, terminals: readonly Terminal[] | undefined): string =>
   `${routeTitle(trip, terminals)}, ${longDate(trip.trip.date) ?? trip.trip.date}`;
+
+/** "Sat Jul 3" for a "YYYY-MM-DD" date, as a card's provider line says it; the input if it isn't one. */
+export function shortDate(iso: string): string {
+  const date = parseIsoDate(iso);
+  if (!date) return iso;
+  const part = (options: Intl.DateTimeFormatOptions) =>
+    date.toLocaleDateString("en-US", { ...options, timeZone: "UTC" });
+  return `${part({ weekday: "short" })} ${part({ month: "short" })} ${part({ day: "numeric" })}`;
+}
 
 /** A trip's status in a word or two. The card says the rest (the question, the cart, what's bookable). */
 export function tripBadge(trip: MyTrip): TripBadge {
@@ -102,6 +114,16 @@ export function notHeldReason(trip: MyTrip): string {
   if (cart?.status === "failed") return "We tried to hold it, but BC Ferries didn't let us.";
   const reason = trip.hold.reason;
   return reason ? (NOT_HELD[reason] ?? "We couldn't hold it.") : "We couldn't hold it this time.";
+}
+
+/** The dashboard section a trip belongs in (docs/waitlist/design.md §7.2). `now` is epoch milliseconds. */
+export function tripGroup(trip: MyTrip, now: number = Date.now()): "now" | "watching" | "paused" | "ended" {
+  const cart = trip.browser.cart;
+  if (cart?.status === "adding" || cart?.status === "ready") return "now";
+  if (trip.paused_reason === "after_checkout" || unheld(trip).length > 0) return "now";
+  if (trip.trip.date < todayInPacific(new Date(now))) return "ended";
+  if (!trip.trip.enabled || trip.paused_reason !== null) return "paused";
+  return "watching";
 }
 
 /** Whole minutes from now until `deadline` (epoch seconds), never negative. */

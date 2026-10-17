@@ -1,15 +1,25 @@
 /** waitlist-web's API, for the signed-in user. Every call carries the bearer token (see auth.ts). */
 import { z } from "zod";
 import { request } from "@/lib/api";
-import { TerminalListSchema, type Terminal, type TripSettings } from "@/lib/schema";
-import { CheckoutSchema, MyStateSchema, type CheckoutViewer, type MyState, type QuietHours } from "./schema";
+import { TerminalListSchema, type Terminal } from "@/lib/schema";
+import { CheckoutSchema, type CheckoutViewer, type QuietHours } from "./schema";
+import {
+  CreatedWatchSchema,
+  ProvidersResponseSchema,
+  WaitlistStateSchema,
+  type NewWatchRequest,
+  type WaitlistState,
+  type WatchPatchRequest,
+} from "./watch-schema";
 
+/** The signed-in user's whole state (GET /api/state), as every mutation and the live socket also send it. */
 export const MY_STATE_KEY = ["my-state"] as const;
 
 const OkSchema = z.object({}).passthrough();
-const tripPath = (id: string) => `/api/trips/${encodeURIComponent(id)}`;
-const mutate = (method: "POST" | "PATCH" | "DELETE", path: string, body: object = {}): Promise<MyState> =>
-  request(path, { method, body, schema: MyStateSchema });
+const watchPath = (id: string) => `/api/watches/${encodeURIComponent(id)}`;
+const tripPath = (id: string) => `/api/trips/${encodeURIComponent(id)}`; // BC Ferries actions only
+const mutate = (method: "POST" | "PATCH" | "DELETE", path: string, body: object = {}): Promise<WaitlistState> =>
+  request(path, { method, body, schema: WaitlistStateSchema });
 
 export type BookedReason =
   | "needed_account"
@@ -29,13 +39,19 @@ export type BookedAnswer = { booked: true } | { booked: false; reason?: BookedRe
 export const endsTrip = (answer: BookedAnswer): boolean => answer.booked || "stop" in answer;
 
 export const myApi = {
-  state: (signal?: AbortSignal): Promise<MyState> => request("/api/state", { schema: MyStateSchema, signal }),
+  state: (signal?: AbortSignal): Promise<WaitlistState> =>
+    request("/api/state", { schema: WaitlistStateSchema, signal }),
+  providers: (signal?: AbortSignal) => request("/api/providers", { schema: ProvidersResponseSchema, signal }),
   terminals: async (signal?: AbortSignal): Promise<Terminal[]> =>
     (await request("/api/terminals", { schema: TerminalListSchema, signal })).terminals,
-  addTrip: (settings: TripSettings) => mutate("POST", "/api/trips", settings),
-  updateTrip: (id: string, patch: Partial<TripSettings>) => mutate("PATCH", tripPath(id), patch),
-  removeTrip: (id: string) => mutate("DELETE", tripPath(id)),
-  checkNow: (id: string) => mutate("POST", `${tripPath(id)}/check`),
+  /** A new watch on any provider: its id, and the caller's whole state. */
+  addWatch: (body: NewWatchRequest) => request("/api/watches", { method: "POST", body, schema: CreatedWatchSchema }),
+  /** `spec` is partial, over the current one. */
+  updateWatch: (id: string, patch: WatchPatchRequest) => mutate("PATCH", watchPath(id), patch),
+  removeWatch: (id: string) => mutate("DELETE", watchPath(id)),
+  checkWatch: (id: string) => mutate("POST", `${watchPath(id)}/check`),
+  /** "I booked it", for an alert-only watch: it's archived. */
+  doneWatch: (id: string) => mutate("POST", `${watchPath(id)}/done`),
   /** "Hold it for me": check now, and hold a bookable sailing even overnight or with auto-hold off. */
   hold: (id: string) => mutate("POST", `${tripPath(id)}/hold`),
   release: (id: string, cartId: string) => mutate("POST", `${tripPath(id)}/cart/release`, { cart_id: cartId }),

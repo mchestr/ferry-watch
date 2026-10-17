@@ -32,10 +32,14 @@ import { Sheet, SheetBody, SheetFooter, SheetHeader } from "./ui/sheet";
 import { Switch } from "./ui/switch";
 
 export type SheetMode = { kind: "closed" } | { kind: "adding" } | { kind: "editing"; tripId: string };
-type OpenMode = Exclude<SheetMode, { kind: "closed" }>;
+export type OpenMode = Exclude<SheetMode, { kind: "closed" }>;
 
-/** Every request the sheet makes carries this key, so the sheet knows when one is in flight. */
-const SHEET_MUTATION = ["trip-sheet"] as const;
+/**
+ * Every request the sheet makes carries this key, so the sheet knows when one is in flight. The New watch sheet,
+ * which embeds this form (TripSheetForm), shares it for every provider's form.
+ */
+export const SHEET_MUTATION_KEY = "trip-sheet";
+const SHEET_MUTATION = [SHEET_MUTATION_KEY] as const;
 
 const modeKey = (mode: OpenMode) => (mode.kind === "editing" ? `trip:${mode.tripId}` : "new");
 
@@ -109,20 +113,39 @@ export function TripSheet({ mode, onClose, source }: { mode: SheetMode; onClose:
         if (!open && !busy) onClose();
       }}
     >
-      {shown && (
-        // The content unmounts once the sheet has closed, and the key changes with the trip, so the
-        // draft is always built fresh on mount.
-        <TripForm
-          key={modeKey(shown)}
-          mode={shown}
-          open={mode.kind !== "closed"}
-          trip={shown.kind === "editing" ? source.trips.find((t) => t.id === shown.tripId) : undefined}
-          source={source}
-          busy={busy}
-          onClose={onClose}
-        />
-      )}
+      {shown && <TripSheetForm mode={shown} open={mode.kind !== "closed"} source={source} onClose={onClose} />}
     </Sheet>
+  );
+}
+
+/**
+ * The trip form alone (header, fields, footer), for a sheet someone else opens and closes: the New watch sheet.
+ * `open` is false while that sheet animates closed.
+ */
+export function TripSheetForm({
+  mode,
+  open,
+  source,
+  onClose,
+}: {
+  mode: OpenMode;
+  open: boolean;
+  source: TripSource;
+  onClose: () => void;
+}) {
+  const busy = useIsMutating({ mutationKey: SHEET_MUTATION }) > 0;
+  return (
+    // The content unmounts once the sheet has closed, and the key changes with the trip, so the
+    // draft is always built fresh on mount.
+    <TripForm
+      key={modeKey(mode)}
+      mode={mode}
+      open={open}
+      trip={mode.kind === "editing" ? source.trips.find((t) => t.id === mode.tripId) : undefined}
+      source={source}
+      busy={busy}
+      onClose={onClose}
+    />
   );
 }
 
@@ -563,6 +586,8 @@ function TripForm({
       </SheetFooter>
       {trip && (
         <RemoveTripDialog
+          title="Remove this trip?"
+          confirmLabel="Remove trip"
           trip={trip}
           open={confirmingRemove}
           onOpenChange={setConfirmingRemove}

@@ -9,7 +9,7 @@ import { parseJson } from "@/lib/api";
 import { backoffDelay, socketUrl } from "@/lib/live";
 import { MY_STATE_KEY } from "./api";
 import { token } from "./auth";
-import { LiveMessageSchema } from "./schema";
+import { WaitlistLiveMessageSchema } from "./watch-schema";
 
 export const CLOSE_UNAUTHORIZED = 4401;
 
@@ -31,7 +31,9 @@ export function useMyLive(): boolean {
       socket = ws;
       ws.onopen = () => ws.send(JSON.stringify({ type: "auth", token: current }));
       ws.onmessage = (event: MessageEvent<unknown>) => {
-        const message = LiveMessageSchema.safeParse(typeof event.data === "string" ? parseJson(event.data) : undefined);
+        const message = WaitlistLiveMessageSchema.safeParse(
+          typeof event.data === "string" ? parseJson(event.data) : undefined,
+        );
         if (!message.success) return;
         failures = 0;
         setLive(true);
