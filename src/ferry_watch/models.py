@@ -5,7 +5,7 @@ from __future__ import annotations
 import enum
 import re
 import uuid
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import date, datetime, time
 from typing import Any, Self
 from zoneinfo import ZoneInfo
@@ -13,11 +13,8 @@ from zoneinfo import ZoneInfo
 # BC Ferries runs on Pacific time; "today" and "has this date passed" are judged there.
 PACIFIC = ZoneInfo("America/Vancouver")
 
-MAX_TRIPS = 6
 # BC Ferries books at most nine passengers online.
 MAX_PASSENGERS = 9
-MIN_INTERVAL_SECONDS = 15
-MAX_INTERVAL_SECONDS = 3600
 
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _HHMM_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
@@ -278,7 +275,7 @@ _FIELDS = (
 
 @dataclass(frozen=True, slots=True)
 class Config:
-    """Everything the user configures; persisted to config.json."""
+    """A browser pod's trips and settings, as the operator last configured them (agent/store.py)."""
 
     enabled: bool = True
     interval_seconds: int = 30
@@ -286,20 +283,3 @@ class Config:
 
     def trip(self, trip_id: str) -> Trip | None:
         return next((t for t in self.trips if t.id == trip_id), None)
-
-    def with_settings(self, data: dict[str, Any]) -> Config:
-        if not isinstance(data, dict):
-            raise ValidationError("settings", "Expected a JSON object")
-        unknown = set(data) - {"enabled", "interval_seconds"}
-        if unknown:
-            raise ValidationError(sorted(unknown)[0], "Unknown field")
-        return replace(
-            self,
-            enabled=_parse_bool("enabled", data.get("enabled", self.enabled)),
-            interval_seconds=_parse_int(
-                "interval_seconds",
-                data.get("interval_seconds", self.interval_seconds),
-                MIN_INTERVAL_SECONDS,
-                MAX_INTERVAL_SECONDS,
-            ),
-        )

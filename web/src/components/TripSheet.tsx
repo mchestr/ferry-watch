@@ -1,14 +1,13 @@
 import * as Collapsible from "@radix-ui/react-collapsible";
-import { useIsMutating, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useIsMutating, useMutation } from "@tanstack/react-query";
 import { Car, ChevronRight, Footprints, Loader2, Trash2, Truck } from "lucide-react";
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { toast } from "sonner";
-import { api, errorMessage, hasStatus } from "@/lib/api";
+import { errorMessage, hasStatus } from "@/lib/api";
 import { reportError, useTerminals } from "@/lib/hooks";
-import type { Fare, State, Terminal, Trip, TripSettings, Vehicle } from "@/lib/schema";
+import type { Fare, Terminal, TripSettings, Vehicle } from "@/lib/schema";
 import { destinations, origins } from "@/lib/terminals";
 import type { CartSummary } from "@/lib/trip";
-import { STATE_KEY, writeState } from "@/lib/state";
 import { todayInPacific } from "@/lib/time";
 import {
   DRAFT_FIELDS,
@@ -64,15 +63,23 @@ export type SaveRequest =
   | { kind: "add"; settings: TripSettings }
   | { kind: "update"; id: string; patch: Partial<TripSettings> };
 
+/** The places a trip's terminals are in, for labelling a terminal that's no longer in BC Ferries' list. */
+export interface TripRoute {
+  from_place: string;
+  from_area: string;
+  to_place: string;
+  to_area: string;
+}
+
 /** A trip the sheet can edit. */
 export interface EditableTrip extends TripSettings {
   id: string;
   title: string;
-  route?: Trip["route"];
+  route?: TripRoute;
   cart: CartSummary | null;
 }
 
-/** Where the sheet's trips come from and go to: the single-container app, or ferry-web. */
+/** Where the sheet's trips come from and go to (ferry-web's API, in MtApp). */
 export interface TripSource {
   defaults: TripSettings;
   trips: readonly EditableTrip[];
@@ -85,42 +92,11 @@ export interface TripSource {
   addedMessage: string;
 }
 
-/** The single-container app's trips: every response is the full new State, written to the cache. */
-function useLegacySource(state: State): TripSource {
-  const qc = useQueryClient();
-  return {
-    defaults: state.trip_defaults,
-    trips: state.trips,
-    save: async (request) => {
-      const next =
-        request.kind === "add" ? await api.addTrip(request.settings) : await api.updateTrip(request.id, request.patch);
-      writeState(qc, next);
-    },
-    remove: async (id) => {
-      try {
-        writeState(qc, await api.removeTrip(id));
-      } catch (error) {
-        if (hasStatus(error, 404)) void qc.invalidateQueries({ queryKey: STATE_KEY });
-        throw error;
-      }
-    },
-    autoCartHint: state.login_configured
-      ? "Logs in and holds the sailing in a browser you can finish checkout in."
-      : "Holds the sailing in a guest cart, in a browser you can finish checkout in.",
-    addedMessage: "Trip added. Opening a booking session…",
-  };
-}
-
-/** The add/edit trip panel for the single-container app. */
-export function TripSheet({ mode, onClose, state }: { mode: SheetMode; onClose: () => void; state: State }) {
-  return <TripSheetView mode={mode} onClose={onClose} source={useLegacySource(state)} />;
-}
-
 /**
  * The add/edit trip panel. `mode` says what's open; while the sheet animates closed it keeps
  * showing the last trip, and each open starts a fresh form.
  */
-export function TripSheetView({ mode, onClose, source }: { mode: SheetMode; onClose: () => void; source: TripSource }) {
+export function TripSheet({ mode, onClose, source }: { mode: SheetMode; onClose: () => void; source: TripSource }) {
   const [lastOpen, setLastOpen] = useState<OpenMode | null>(null);
   if (mode.kind !== "closed" && (lastOpen === null || modeKey(lastOpen) !== modeKey(mode))) setLastOpen(mode);
   const shown = mode.kind === "closed" ? lastOpen : mode;
@@ -219,14 +195,13 @@ function TripForm({
   const [confirmingRemove, setConfirmingRemove] = useState(false);
   const inFlight = useRef(false);
 
-  const qc = useQueryClient();
   const save = useMutation({
     mutationKey: SHEET_MUTATION,
     mutationFn: source.save,
     onSuccess: () => toast.success(editing ? "Trip saved" : source.addedMessage),
     onError: (error) => {
       // Shown inline, or handled below by closing the sheet.
-      if (inlineErrorField(error) === null && !hasStatus(error, 404)) reportError(qc, error);
+      if (inlineErrorField(error) === null && !hasStatus(error, 404)) reportError(error);
     },
   });
   const tripId = editing ? mode.tripId : "";
@@ -236,7 +211,7 @@ function TripForm({
     onSuccess: () => toast.success("Trip removed"),
     onError: (error) => {
       if (hasStatus(error, 404)) toast.info("That trip was already removed.");
-      else reportError(qc, error);
+      else reportError(error);
     },
   });
 

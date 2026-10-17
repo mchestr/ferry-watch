@@ -1,108 +1,86 @@
 # Ferry Watch
 
-Watches [BC Ferries](https://www.bcferries.com) for reservations on sold-out sailings. When
-one opens it sends a Pushover alert, and can put the sailing in your BC Ferries cart straight
-away. You finish checkout in that same browser, from any device, through a built-in remote viewer.
+Watches [BC Ferries](https://www.bcferries.com) for reservations on sold-out sailings. Each person signs in and
+watches their own trips. When a sailing opens it sends an alert (Web Push, and email for what matters most), and
+can put the sailing in a BC Ferries cart straight away, in a browser kept for that trip. You finish checkout in
+that same browser, from any device, through the checkout viewer.
 
-- Watch up to six trips at once (route, date, travellers, vehicle, departure window).
-- Each trip re-checks every 30 seconds by default, on its own schedule (up to three at once, so
-  one stuck in BC Ferries' queue doesn't hold up the others); a check takes about 3 seconds.
-- Auto-cart: an opened sailing in your window goes into the cart within seconds, with the fare
-  you prefer. The trip pauses until you release the cart, close the checkout window, or the hold
-  time (an hour by default) runs out and the spot is handed back.
-- A web dashboard with live updates over a WebSocket, usable on a phone.
+- Each trip is watched by its own browser pod. A trip that's soon is re-checked every couple of minutes; one
+  further out gets a short check every few hours. A check takes a few seconds.
+- Auto-cart: an opened sailing in your window goes into the cart within seconds, with the fare you prefer. The
+  hold ends when you check out, release it, or its clocks run out, and the spot is handed back.
+- Quiet hours (each person's own, 10 pm to 5 am until they change them): no checks or holds overnight.
+- A web dashboard with live updates, usable on a phone, and an admin page for invitations, limits and the fleet.
 
 ## How it works
 
-bcferries.com sits behind a Queue-it waiting room and keeps each booking search in a
-server-side session, so Ferry Watch drives a real Chromium with Playwright:
+bcferries.com sits behind a Queue-it waiting room and keeps each booking search in a server-side session, so
+each trip's checks run in a real Chromium, driven with Playwright. The design is in
+[docs/multi-tenant/](docs/multi-tenant/README.md); what's built is in
+[implementation.md](docs/multi-tenant/implementation.md).
 
 ```
-                    ┌──────────────── one asyncio event loop ────────────────┐
-browser ── HTTP ──▶ │ aiohttp: REST API, WebSocket push, the React dashboard  │
-          + WS      │    ▲ state changes                                       │
-                    │ Watcher ── one Chromium, one browser context per trip ─┼──▶ bcferries.com
-                    │    │                                                     │
-                    │    └── alerts (retried in the background) ─────────────┼──▶ Pushover
-                    └──────────────────────────────────────────────────────────┘
-KasmVNC (:6080) shows that Chromium's screen in your browser, sized to your device.
+ phone / laptop ──▶ ferry-web ──── Postgres ──── ferry-control ──▶ Kubernetes API (browser pods)
+   (dashboard,      sign-in (OIDC), the API,        the hub the pods dial, the fleet loop
+    Web Push)       the alert outbox                     ▲
+        │                                                │ one WebSocket per pod (closed vocabulary)
+        │                                                │
+        └── checkout ──▶ vnc-edge ──▶ browser pod (one per trip): the agent, Xvnc, Chromium ──▶ bcferries.com
+             (a one-time ticket)
 ```
 
-- Each trip's session walks the booking form once. The date and route come pre-filled from the
-  URL. After that, the watcher reloads the results page, which BC Ferries re-runs with fresh
-  availability.
-- When a sailing in the trip's window opens and auto-cart is on, the same page selects a fare.
-  BC Ferries puts it in that session's cart, and the alert links to the remote viewer.
-- The cart belongs to that browser session, not your account, which is why checkout happens in
-  the same browser. Releasing a cart from the dashboard empties it, so the spot goes back
-  straight away.
+- **ferry-web** signs people in (OIDC, invite-only), serves the dashboard and each person's API, mints checkout
+  tickets, and sends alerts (Web Push and email) from an outbox. It has no Kubernetes access.
+- **ferry-control** decides which trips get a browser, starts and reaps the browser pods, and runs the hub they
+  dial. It's the only part that talks to the API server.
+- **A browser pod** runs the agent: one trip's watcher, its Chromium on a private Xvnc, and the gate that admits
+  a checkout viewer with a ticket.
+- **vnc-edge** serves the checkout page (KasmVNC's web client, or the streamed viewer) and proxies its socket to
+  the pod holding the cart. It holds no secrets.
 
 Code layout (`src/ferry_watch/`):
 
-| Module | Responsibility |
+| Package or module | Responsibility |
 |---|---|
-| `models.py` | Trips, sailings, fares, and every validation rule |
-| `store.py` | The configuration: in memory, validated, written atomically, versioned |
-| `state.py` | Runtime state for the dashboard, the cart state machine, alert memory |
-| `watcher.py` | The watch loop: sessions, checks, back-off, carts, alerts |
-| `bcferries/` | Everything that knows bcferries.com: `site.py` (the browser flow), `parse.py` (pure HTML parsing), `terminals.py`, `errors.py` |
-| `notify.py` | Alert wording and Pushover delivery with retries |
-| `server.py`, `views.py` | The HTTP API, WebSocket hub and security headers; the JSON shapes ([docs/api.md](docs/api.md)) |
-| `settings.py`, `__main__.py` | Environment configuration and the entry point |
+| `models.py`, `polling.py`, `holds.py`, `protocol.py`, `tickets.py`, `versions.py` | The shared core: trips and their validation, the poll curve and quiet hours, the hold clocks, the agent ↔ ferry-control messages, checkout tickets |
+| `bcferries/` | Everything that knows bcferries.com: `site.py` (the browser flow), `parse.py` (pure HTML parsing), `urls.py`, `terminals.py`, `errors.py` |
+| `agent/` | The browser pod: the one-trip watcher, the hub link, the VNC gate, the streamed viewer, lockdown self-tests |
+| `control/` | ferry-control: migrations and grants, the hub, the fleet planner, the pod template |
+| `web/` | ferry-web: sign-in, the API, admin, the live socket, the alert outbox |
 
-The frontend (`web/`) is React, TypeScript, Vite, Tailwind, Radix UI and TanStack Query.
-The trip form's route map is drawn from data bundled with the app (no map service sees where
-anyone is going): see [the route map](#the-route-map).
+The frontend (`web/`) is React, TypeScript, Vite, Tailwind, Radix UI and TanStack Query; the live UI is
+`web/src/mt/`. The trip form's route map is drawn from data bundled with the app (no map service sees where
+anyone is going): see [the route map](#the-route-map). The checkout host is `vnc-edge/`.
 
-## Configuration
+## Deployment
 
-Environment variables:
+CI builds three images and pushes them from `main` and version tags:
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `BCF_HOST`, `BCF_PORT` | `127.0.0.1`, `8765` | Where the web server listens |
-| `BCF_CONFIG` | `config.json` | Where trips are stored. `alerted.json` and `terminals.json` go next to it |
-| `BCF_STATIC` | (none) | The built frontend (`web/dist`); the image sets `/app/static` |
-| `BCF_USER`, `BCF_PASS` | (none) | Your BC Ferries login (optional). With it, auto-cart logs in so saved cards are available at checkout; without it, carts are guest carts |
-| `PUSHOVER_TOKEN`, `PUSHOVER_USER_KEY` | (none) | Pushover alerts. Without them, alerts only go to the log |
-| `BCF_VNC_URL` | (none) | The remote viewer's address, linked from cart alerts |
-| `BCF_CART_HOLD_MINUTES` | `60` | How long a cart nobody checks out is held before it's handed back. `0` holds it until released |
-| `BCF_HEADLESS` | (off) | `1` runs Chromium without a window (local development) |
-| `BCF_DEBUG_DIR` | `$TMPDIR/ferry-watch` | Screenshots of failed checks, newest 20 kept. Empty disables them |
-| `SCREEN_WIDTH`, `SCREEN_HEIGHT` | `1280`, `1000` | Initial size of the virtual screen (the viewer resizes it) |
-| `LOG_LEVEL` | `INFO` | Python log level |
+| Image | What |
+|---|---|
+| `ghcr.io/mchestr/ferry-watch-control` (`Dockerfile` target `control`, the default) | `ferry-web` and `ferry-control`, with the dashboard; no browser libraries |
+| `ghcr.io/mchestr/ferry-watch-browser` (target `browser`) | One browser pod: `ferry-watch-agent`, KasmVNC's Xvnc, matchbox and Chromium |
+| `ghcr.io/mchestr/ferry-watch-vnc-edge` (`vnc-edge/Dockerfile`) | The checkout host: stock nginx with KasmVNC's web client |
 
-Everything else (trips, check frequency, the global on/off switch) is set in the dashboard.
+They're deployed with app-template as one HelmRelease in home-cluster. `deploy/helmrelease.yaml` and
+`deploy/externalsecret.yaml` are copies of it: CI renders the copy, runs kubeconform on it, and proves its
+admission policies and RBAC against a real API server (`tests/apiserver`), so change both copies together.
 
-## Running
+- `ferry-web run` and `ferry-control run` read their `config.json` (rendered from the HelmRelease's `ferry.*`
+  values) and secrets from files. `ferry-control migrate` creates and migrates the database (the db hook Job).
+- `ferry-web keys` prints a fresh checkout key pair and Web Push key, for setting up.
 
-The container (`ghcr.io/mchestr/ferry-watch`) runs KasmVNC (the virtual screen and its web
-viewer on port 6080 under `/vnc`), a window manager, and the app on port 8765.
-
-**Security model:**
-- Ferry Watch has no login of its own, and the remote viewer has no password. **Only run it
-  behind an authenticating proxy** (Authelia, oauth2-proxy, ...), and restrict network access so
-  only that proxy can reach ports 8765 and 6080.
-- The API refuses cross-origin and non-JSON writes, the WebSocket checks its Origin, and the
-  page is served with a strict Content-Security-Policy.
-- Credentials never reach logs, alerts or the dashboard. Failure screenshots are viewport-only
-  and stay out of the config directory.
-- The image runs as a non-root user and works with a read-only root filesystem, given a
-  writable `/tmp` and `/config`.
-
-To run locally with a real browser window (secrets from 1Password if the CLI is signed in):
-
-```sh
-scripts/run-local.sh        # http://localhost:8765
-```
+**Security model:** ferry-web is the only part on the internet that people sign in to; the checkout host's only
+credential is a one-minute ticket. Browser pods run in their own namespace behind default-deny network policies,
+and admission policies admit only the exact pod ferry-control builds; nobody can change or enter one afterwards.
+The protocol between the pods and ferry-control can't carry a URL, a script, a cookie or a screenshot.
 
 ## Development
 
 ```sh
 uv sync                     # Python 3.12 environment from uv.lock
-uv run pytest               # unit, API and browser contract tests (no network access)
-uv run pytest -m "not browser"
-uv run ruff format && uv run ruff check && uv run mypy
+uv run pytest -m "not browser and not apiserver"
+uv run ruff format && uv run ruff check && uv run mypy && uv run lint-imports
 
 cd web
 npm ci
@@ -110,13 +88,21 @@ npm run dev                 # Vite on :5173, proxying /api (and the WebSocket) t
 npm run lint && npm run typecheck && npm test && npm run format:check && npm run build
 ```
 
+- The control plane's tests start a throwaway PostgreSQL if one is installed (or use `FW_TEST_PGHOST`); without
+  either they skip.
+- `pytest -m browser` runs the browser contract tests in Chromium; the checkout tests also need KasmVNC
+  (`FW_KASMVNC_WWW` pointing at its `www` directory, and `Xvnc`, `matchbox-window-manager`, `xrandr` and
+  `xsettingsd` on the path). `pytest -m apiserver` needs envtest's binaries (`FW_ENVTEST_BIN`) and helm
+  (`FW_HELM`). CI's workflow shows how it installs each.
+- `node --test vnc-edge/tests/*.test.mjs` runs the streamed viewer's DOM-free modules.
+
 Tests never touch bcferries.com:
 - The parsers are tested against saved copies of its pages (`tests/fixtures`).
 - The browser contract tests (`tests/browser`) run the real booking-flow code in Chromium against
   a local fake site serving those pages. Chromium can't resolve any real hostname there.
 
-CI runs all of it, builds the image, smoke-tests the container, and only pushes from `main` and
-version tags. The Playwright package in `uv.lock` must match the version of the
+CI runs all of it, builds the images, smoke-tests each one read-only and unprivileged, and only pushes from
+`main` and version tags. The Playwright package in `uv.lock` must match the version of the
 `mcr.microsoft.com/playwright/python` image (CI checks this). Bump them together.
 
 ### The route map
@@ -134,10 +120,8 @@ nearest shore.
 
 ## Things to know about BC Ferries
 
-- Checking while logged in means your account is visibly refreshing the site. Keep the interval
-  reasonable. A rejected login pauses auto-cart logins for 30 minutes instead of retrying.
-- BC Ferries' login page won't accept a login while a guest cart exists, so the watcher logs in
-  first and then adds to the cart.
+- Carts are guest carts: the cart belongs to the browser session, not anyone's account, which is why checkout
+  happens in the same browser. Releasing a cart empties it, so the spot goes back straight away.
 - When BC Ferries changes its markup, the parsers fail loudly ("BC Ferries probably changed their
   site") rather than reporting nothing as bookable. Recapture the fixtures (see
   `tests/fixtures/README.md`) and update the selectors.

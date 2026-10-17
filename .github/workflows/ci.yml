@@ -172,8 +172,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - target: app # today's single-container app
-            suffix: ""
           - target: control # ferry-web and ferry-control
             suffix: -control
           - target: browser # one browser pod
@@ -203,19 +201,7 @@ jobs:
           # Only trusted pushes write the shared build cache; pull requests just read it.
           cache-to: ${{ env.PUBLISH == 'true' && format('type=gha,mode=max,scope={0}', matrix.target) || '' }}
       - name: Smoke test
-        if: matrix.target == 'app'
-        run: |
-          docker run -d --name smoke -p 8765:8765 -p 6080:6080 ferry-watch-app:ci
-          for _ in $(seq 30); do curl -fsS localhost:8765/healthz && break; sleep 2; done
-          curl -fsS localhost:8765/ | grep -q '<div id="root">'
-          curl -fsS localhost:8765/api/state | python3 -c 'import json, sys; assert json.load(sys.stdin)["trips"] == []'
-          curl -fsS -o /dev/null localhost:6080/vnc/vnc.html
-      - name: Smoke test
-        if: matrix.target != 'app'
         run: docker/${{ matrix.target }}/smoke-test.sh ferry-watch-${{ matrix.target }}:ci
-      - name: Smoke test logs
-        if: always() && matrix.target == 'app'
-        run: docker logs smoke || true
       - if: env.PUBLISH == 'true'
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:

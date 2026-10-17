@@ -1,32 +1,85 @@
-import { skipToken, useQuery, type QueryClient } from "@tanstack/react-query";
+import { skipToken, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { useMemo } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
+import { request } from "@/lib/api";
 import { TERMINALS_KEY } from "@/lib/hooks";
-import type { State } from "@/lib/schema";
-import { STATE_KEY, writeState, type Snapshot } from "@/lib/state";
-import { NOW, TERMINALS, makeCart, makeSettings, makeState, makeTrip } from "@/test/fixtures";
+import type { TripSettings } from "@/lib/schema";
+import { NOW, TERMINALS, makeSettings } from "@/test/fixtures";
 import { createTestQueryClient, deferred, jsonResponse, mockFetch, renderWithProviders } from "@/test/render";
-import { TripSheet, type SheetMode } from "./TripSheet";
+import { TripSheet, type EditableTrip, type SheetMode, type TripSource } from "./TripSheet";
 
 const EDIT_T1: SheetMode = { kind: "editing", tripId: "t1" };
 
-/** Like App: the sheet gets its state from the query cache, so mutation responses flow back in. */
-function Harness({ mode, onClose }: { mode: SheetMode; onClose: () => void }) {
-  const { data } = useQuery<Snapshot>({ queryKey: STATE_KEY, queryFn: skipToken });
-  return data ? <TripSheet mode={mode} onClose={onClose} state={data.state} /> : null;
+/** What the harness's source holds: the trips and defaults a server would give it. */
+interface SheetState {
+  defaults: TripSettings;
+  trips: EditableTrip[];
+  autoCartHint: string;
 }
 
-function renderSheet({ mode = EDIT_T1, state = makeState() }: { mode?: SheetMode; state?: State } = {}) {
+function makeTrip(overrides: Partial<EditableTrip> = {}): EditableTrip {
+  return { ...makeSettings(), id: "t1", title: "Swartz Bay → Tsawwassen · Mon Oct 12", cart: null, ...overrides };
+}
+
+function makeSheetState(overrides: Partial<SheetState> = {}): SheetState {
+  return {
+    defaults: makeSettings(),
+    trips: [makeTrip()],
+    autoCartHint: "Holds the sailing in a cart; you check out in a browser we keep for you.",
+    ...overrides,
+  };
+}
+
+const SHEET_KEY = ["sheet-state"] as const;
+/** Every response carries the trips as they now are, which the source writes back (as MtApp's does). */
+const TripsResponse = z.object({ trips: z.array(z.custom<EditableTrip>()) });
+
+/** Like MtApp: the sheet's source reads the query cache, so responses and pushes flow back in. */
+function Harness({ mode, onClose }: { mode: SheetMode; onClose: () => void }) {
+  const qc = useQueryClient();
+  const { data } = useQuery<SheetState>({ queryKey: SHEET_KEY, queryFn: skipToken });
+  const source = useMemo((): TripSource | null => {
+    if (!data) return null;
+    const write = ({ trips }: z.infer<typeof TripsResponse>) =>
+      qc.setQueryData<SheetState>(SHEET_KEY, (current) => current && { ...current, trips });
+    const path = (id: string) => `/api/trips/${encodeURIComponent(id)}`;
+    return {
+      defaults: data.defaults,
+      trips: data.trips,
+      save: async (r) => {
+        write(
+          r.kind === "add"
+            ? await request("/api/trips", { method: "POST", body: r.settings, schema: TripsResponse })
+            : await request(path(r.id), { method: "PATCH", body: r.patch, schema: TripsResponse }),
+        );
+      },
+      remove: async (id) => {
+        write(await request(path(id), { method: "DELETE", body: {}, schema: TripsResponse }));
+      },
+      autoCartHint: data.autoCartHint,
+      addedMessage: "Trip added. It'll be checked shortly.",
+    };
+  }, [data, qc]);
+  return source ? <TripSheet mode={mode} onClose={onClose} source={source} /> : null;
+}
+
+function renderSheet({ mode = EDIT_T1, state = makeSheetState() }: { mode?: SheetMode; state?: SheetState } = {}) {
   const queryClient: QueryClient = createTestQueryClient();
   queryClient.setQueryData(TERMINALS_KEY, TERMINALS);
-  writeState(queryClient, state);
+  queryClient.setQueryData<SheetState>(SHEET_KEY, state);
   const onClose = vi.fn();
   const view = renderWithProviders(<Harness mode={mode} onClose={onClose} />, { queryClient });
   return {
     ...view,
     onClose,
     setMode: (next: SheetMode) => view.rerender(<Harness mode={next} onClose={onClose} />),
-    push: (next: State) => act(() => writeState(queryClient, next)),
+    push: (next: SheetState) => {
+      act(() => {
+        queryClient.setQueryData<SheetState>(SHEET_KEY, next);
+      });
+    },
   };
 }
 
@@ -64,9 +117,9 @@ describe("TripSheet", () => {
   });
 
   it("PATCHes only the changed fields, then closes", async () => {
-    const { requests } = mockFetch(() => jsonResponse(makeState({ seq: 2 })));
+    const { requests } = mockFetch(() => jsonResponse({ trips: [makeTrip()] }));
     const { user, onClose } = renderSheet({
-      state: makeState({ trips: [makeTrip({ earliest: "06:00", latest: "20:00" })] }),
+      state: makeSheetState({ trips: [makeTrip({ earliest: "06:00", latest: "20:00" })] }),
     });
     setValue("Latest", "21:00");
     await user.click(saveButton());
@@ -78,7 +131,7 @@ describe("TripSheet", () => {
   });
 
   it("just closes when nothing changed", async () => {
-    const { requests } = mockFetch(() => jsonResponse(makeState()));
+    const { requests } = mockFetch(() => jsonResponse({ trips: [makeTrip()] }));
     const { user, onClose } = renderSheet();
     await user.click(saveButton());
     expect(onClose).toHaveBeenCalledTimes(1);
@@ -87,7 +140,7 @@ describe("TripSheet", () => {
 
   describe("departure window", () => {
     it("blocks Save on a blank time, with the error on the field", async () => {
-      const { requests } = mockFetch(() => jsonResponse(makeState()));
+      const { requests } = mockFetch(() => jsonResponse({ trips: [makeTrip()] }));
       const { user, onClose } = renderSheet();
       const earliest = setValue("Earliest", "");
       await user.click(saveButton());
@@ -99,7 +152,7 @@ describe("TripSheet", () => {
     });
 
     it("blocks Save when earliest is after latest", async () => {
-      const { requests } = mockFetch(() => jsonResponse(makeState()));
+      const { requests } = mockFetch(() => jsonResponse({ trips: [makeTrip()] }));
       const { user } = renderSheet();
       setValue("Earliest", "10:00");
       const latest = setValue("Latest", "08:00");
@@ -112,7 +165,7 @@ describe("TripSheet", () => {
 
   describe("vehicle height", () => {
     it("keeps the text as typed, validates on blur and on Save, and sends a valid height", async () => {
-      const { requests } = mockFetch(() => jsonResponse(makeState({ seq: 2 })));
+      const { requests } = mockFetch(() => jsonResponse({ trips: [makeTrip()] }));
       const { user, onClose } = renderSheet();
       await user.click(screen.getByRole("radio", { name: "Over 7 ft" }));
       const height = screen.getByLabelText("Total height (ft)");
@@ -158,7 +211,7 @@ describe("TripSheet", () => {
 
   describe("passengers", () => {
     it("allows zero adults when there's a senior", async () => {
-      const { requests } = mockFetch(() => jsonResponse(makeState({ seq: 2 })));
+      const { requests } = mockFetch(() => jsonResponse({ trips: [makeTrip()] }));
       const { user, onClose } = renderSheet();
       const removeAdult = screen.getByRole("button", { name: "Remove adult" });
       await user.click(removeAdult);
@@ -176,7 +229,7 @@ describe("TripSheet", () => {
     });
 
     it("allows at most 9 in total", async () => {
-      const { requests } = mockFetch(() => jsonResponse(makeState()));
+      const { requests } = mockFetch(() => jsonResponse({ trips: [makeTrip()] }));
       const { user } = renderSheet();
       const addAdult = screen.getByRole("button", { name: "Add adult" });
       for (let i = 0; i < 9; i++) await user.click(addAdult);
@@ -196,7 +249,7 @@ describe("TripSheet", () => {
     const blank = () =>
       renderSheet({
         mode: { kind: "adding" },
-        state: makeState({ trip_defaults: makeSettings({ from: "", to: "" }) }),
+        state: makeSheetState({ defaults: makeSettings({ from: "", to: "" }) }),
       });
     const choose = async (user: ReturnType<typeof renderSheet>["user"], label: string, option: string) => {
       await user.click(screen.getByRole("combobox", { name: label }));
@@ -229,7 +282,7 @@ describe("TripSheet", () => {
     });
 
     it("still flags an empty To on Save", async () => {
-      const { requests } = mockFetch(() => jsonResponse(makeState()));
+      const { requests } = mockFetch(() => jsonResponse({ trips: [makeTrip()] }));
       const { user } = blank();
       await user.click(screen.getByRole("button", { name: "Add trip" }));
       const to = screen.getByRole("combobox", { name: "To" });
@@ -241,7 +294,7 @@ describe("TripSheet", () => {
 
   describe("date", () => {
     it("can't be in the past", async () => {
-      const { requests } = mockFetch(() => jsonResponse(makeState()));
+      const { requests } = mockFetch(() => jsonResponse({ trips: [makeTrip()] }));
       const { user } = renderSheet();
       const date = setValue("Departure date", "2026-10-01");
       expect(date).toHaveAttribute("min", "2026-10-11");
@@ -251,7 +304,7 @@ describe("TripSheet", () => {
     });
 
     it("flags a trip whose date has passed as soon as it opens", () => {
-      renderSheet({ state: makeState({ trips: [makeTrip({ date: "2026-10-01", past: true })] }) });
+      renderSheet({ state: makeSheetState({ trips: [makeTrip({ date: "2026-10-01" })] }) });
       expect(screen.getByLabelText("Departure date")).toHaveAccessibleDescription("This date has passed.");
     });
   });
@@ -271,7 +324,7 @@ describe("TripSheet", () => {
     await user.keyboard("{Escape}");
     expect(onClose).not.toHaveBeenCalled();
 
-    response.resolve(jsonResponse(makeState({ seq: 2 })));
+    response.resolve(jsonResponse({ trips: [makeTrip()] }));
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
     expect(requests).toHaveLength(1);
   });
@@ -291,7 +344,7 @@ describe("TripSheet", () => {
 
   it("closes with a notice when the trip is removed elsewhere", async () => {
     const { onClose, push } = renderSheet();
-    push(makeState({ seq: 2, trips: [] }));
+    push(makeSheetState({ trips: [] }));
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
     expect(await screen.findByText("This trip was removed elsewhere.")).toBeInTheDocument();
   });
@@ -303,7 +356,7 @@ describe("TripSheet", () => {
     const { user, onClose, push } = renderSheet();
     setValue("Latest", "21:00");
     await user.click(saveButton());
-    push(makeState({ seq: 2, trips: [] }));
+    push(makeSheetState({ trips: [] }));
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
 
     response.resolve(jsonResponse({ error: "No such trip", field: null }, 404));
@@ -314,9 +367,9 @@ describe("TripSheet", () => {
   });
 
   it("asks before removing, naming the sailing held in the cart", async () => {
-    const { requests } = mockFetch(() => jsonResponse(makeState({ seq: 2, trips: [] })));
+    const { requests } = mockFetch(() => jsonResponse({ trips: [] }));
     const { user, onClose } = renderSheet({
-      state: makeState({ trips: [makeTrip({ cart: makeCart({ status: "ready", depart: "07:00" }) })] }),
+      state: makeSheetState({ trips: [makeTrip({ cart: { status: "ready", depart: "07:00" } })] }),
     });
     await user.click(screen.getByRole("button", { name: "Remove" }));
     const dialog = screen.getByRole("alertdialog", { name: "Remove this trip?" });
@@ -330,10 +383,10 @@ describe("TripSheet", () => {
     expect(screen.queryByText("This trip was removed elsewhere.")).not.toBeInTheDocument();
   });
 
-  it("adds a trip starting from the server's trip_defaults", async () => {
+  it("adds a trip starting from the source's defaults", async () => {
     const defaults = makeSettings({ from: "TSA", to: "SWB", adults: 2, auto_cart: false, fare: "saver" });
-    const { requests } = mockFetch(() => jsonResponse(makeState({ seq: 2 })));
-    const { user, onClose } = renderSheet({ mode: { kind: "adding" }, state: makeState({ trip_defaults: defaults }) });
+    const { requests } = mockFetch(() => jsonResponse({ trips: [makeTrip()] }));
+    const { user, onClose } = renderSheet({ mode: { kind: "adding" }, state: makeSheetState({ defaults }) });
     expect(screen.getByRole("dialog", { name: "Add a trip" })).toBeInTheDocument();
     expect(screen.getByRole("switch", { name: "Add open sailings to my cart" })).not.toBeChecked();
     await user.click(screen.getByRole("button", { name: "Add trip" }));
@@ -341,8 +394,13 @@ describe("TripSheet", () => {
     expect(requests).toEqual([expect.objectContaining({ method: "POST", url: "/api/trips", body: defaults })]);
   });
 
-  it("offers auto-cart as a guest cart when there's no BC Ferries login", () => {
-    renderSheet({ state: makeState({ login_configured: false, trips: [makeTrip({ auto_cart: true })] }) });
+  it("describes auto-cart in the source's words", () => {
+    renderSheet({
+      state: makeSheetState({
+        autoCartHint: "Holds the sailing in a guest cart.",
+        trips: [makeTrip({ auto_cart: true })],
+      }),
+    });
     const autoCart = screen.getByRole("switch", { name: "Add open sailings to my cart" });
     expect(autoCart).toBeEnabled();
     expect(autoCart).toBeChecked();

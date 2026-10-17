@@ -36,7 +36,7 @@ function QuietHoursSetting({ saved }: { saved: QuietHours }) {
       qc.setQueryData(MY_STATE_KEY, next);
       toast.success(`Quiet hours: ${timeLabel(quiet.start)} to ${timeLabel(quiet.end)}`);
     },
-    onError: (error) => reportError(qc, error),
+    onError: (error) => reportError(error),
   });
   const blank = parseTimeOfDay(draft.start) === null || parseTimeOfDay(draft.end) === null;
   const error = blank
@@ -98,7 +98,7 @@ function CheckoutViewerSetting({ saved }: { saved: CheckoutViewer }) {
       qc.setQueryData(MY_STATE_KEY, next);
       toast.success(viewer === "stream" ? "Checkouts open in the new viewer" : "Checkouts open in the classic viewer");
     },
-    onError: (error) => reportError(qc, error),
+    onError: (error) => reportError(error),
   });
   const viewer = save.isPending ? save.variables : saved;
   return (
@@ -125,7 +125,7 @@ function CheckoutViewerSetting({ saved }: { saved: CheckoutViewer }) {
 
 export function AccountCard({ state }: { state: MyState }) {
   const qc = useQueryClient();
-  const onError = (error: unknown) => reportError(qc, error);
+  const onError = (error: unknown) => reportError(error);
   const enable = useMutation({
     mutationFn: async () => {
       const key = state.push.key;

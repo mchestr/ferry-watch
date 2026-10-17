@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from ferry_watch.models import Config, FarePreference, Trip, ValidationError, Vehicle, format_time
+from ferry_watch.models import FarePreference, Trip, ValidationError, Vehicle, format_time
 
 BASE: dict[str, Any] = {"from": "SWB", "to": "TSA", "date": "2026-10-12"}
 
@@ -111,21 +111,6 @@ def test_in_window_is_inclusive() -> None:
     assert trip.in_window(time(17, 0))
     assert not trip.in_window(time(8, 59))
     assert not trip.in_window(time(17, 1))
-
-
-def test_settings_validation() -> None:
-    config = Config()
-    assert config.with_settings({"interval_seconds": 60}).interval_seconds == 60
-    assert config.with_settings({"enabled": False}).enabled is False
-    for bad in (
-        {"interval_seconds": 5},
-        {"interval_seconds": 10**10},
-        {"interval_seconds": "30"},
-        {"enabled": 1},
-        {"x": 1},
-    ):
-        with pytest.raises(ValidationError):
-            config.with_settings(bad)
 
 
 @pytest.mark.parametrize(

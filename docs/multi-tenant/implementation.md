@@ -6,9 +6,9 @@ where it departs from the plan's wording and why, and what's still to do.
 
 Everything is in one distribution, `ferry-watch`, split into packages whose boundaries
 import-linter holds (`lint-imports` in CI). Three entrypoints: `ferry-watch-agent` (a browser pod),
-`ferry-control` (the operator) and `ferry-web` (the internet-facing app). Today's single-container
-app (`ferry-watch`, `server.py`, `watcher.py`) is untouched apart from shared groundwork, and keeps
-running until cutover.
+`ferry-control` (the operator) and `ferry-web` (the internet-facing app). The single-container app
+(`ferry-watch`, `server.py`, `watcher.py` and the old dashboard) served until the cutover on 2026-10-13
+and was then removed; it's in git history before the removal.
 
 ## Built
 
@@ -119,7 +119,9 @@ Each is a two-way door.
   import-linter. Playwright and selectolax are a `browser` extra and asyncpg and PyJWT a `control` extra,
   so the control-plane image installs neither browser library.
 - **The one-trip watcher is a new module** (`agent/watch.py`) rather than edits to `watcher.py`, which
-  serves the single-container app until cutover (§5.2). The disabled login path isn't ported yet.
+  served the single-container app until cutover (§5.2). The disabled login path was never ported; it went
+  with the single-container app (`SiteSession.login`, in git history), and only the `login_failed` error
+  class remains in the protocol.
 - **A small Kubernetes client on aiohttp** instead of lightkube (§6.6): ferry-control makes five calls
   (TokenReview, and list, create, delete and label-patch of pods), behind a `Cluster` protocol.
 - **Protocol field names**: `configure.trip_spec` and `ack.acked` (the envelope already has `trip` and
@@ -140,8 +142,8 @@ Each is a two-way door.
   `user_settings`.
 - **ferry-web loads BC Ferries' public terminal list** for route names in alerts and the trip editor:
   one more egress host for ferry-web (`www.bcferries.com:443`), not in §7.6 yet.
-- **The SPA picks its shell at runtime**: `/auth/config` answers on ferry-web and not on the single-container
-  app, so one build serves both until cutover.
+- **The SPA picked its shell at runtime** until cutover (`/auth/config` answers on ferry-web and not on the
+  single-container app), so one build served both. With that app gone it's ferry-web's alone (`web/src/mt/`).
 - **No chart; app-template in home-cluster** (§7.10, owner's call): the guard rails are `rawResources` in
   one HelmRelease, and the planned helm-unittest suites are the render and envtest tests above. Two app
   changes came with it: the browser image may carry a tag before its digest, so Renovate can bump it, and
@@ -168,8 +170,7 @@ Each is a two-way door.
   `vncPubkeys` (its README lists the 1Password fields to create first). Then: the PrometheusRule, PodMonitors
   and GrafanaDashboard once there are metrics; kind-lite (the positive pod-lock cases that need a kubelet,
   and the egress flip on a running pod); the `agent-e2e` and `fake-bcferries` images and the compose job.
-- **Agent follow-ups**: the smoke trip, the page watchdog (`checkout_host_blocked`), porting the
-  disabled login path; `/readyz` reporting the display, Chromium, the loop and lockdown (it answers 200 as
+- **Agent follow-ups**: the smoke trip, the page watchdog (`checkout_host_blocked`); `/readyz` reporting the display, Chromium, the loop and lockdown (it answers 200 as
   soon as the probe server is up).
 - **ferry-web follow-ups**: `DELETE /api/me` (delete my data), the session list, pre-auth rate limits
   on `/auth/*`, "self-book" (release, then the search link), and the `failing` suppression while the

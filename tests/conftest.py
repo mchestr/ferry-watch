@@ -24,9 +24,8 @@ def terminals() -> Terminals:
 
 @pytest.fixture(autouse=True)
 def frozen_today(monkeypatch: pytest.MonkeyPatch) -> date:
-    """Pin "today" (Pacific) everywhere it's used, so date rules are deterministic."""
-    for module in ("ferry_watch.models", "ferry_watch.watcher", "ferry_watch.views", "ferry_watch.server"):
-        monkeypatch.setattr(f"{module}.today", lambda: TODAY)
+    """Pin "today" (Pacific), so date rules are deterministic."""
+    monkeypatch.setattr("ferry_watch.models.today", lambda: TODAY)
     return TODAY
 
 

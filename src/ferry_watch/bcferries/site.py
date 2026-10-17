@@ -1,8 +1,8 @@
 """Driving bcferries.com in a real browser.
 
 The site sits behind a Queue-it waiting room and keeps the booking search in a server-side
-session, so we drive Chromium with Playwright. One `SiteBrowser` owns the browser; each watched
-trip gets its own `SiteSession` (a browser context with its own cookies, hence its own search and
+session, so we drive Chromium with Playwright. A browser pod's `PodBrowser` owns its Chromium; the
+pod's one trip gets a `SiteSession` (a browser context with its own cookies, hence its own search and
 cart). Interactions use the controls a person would use (labels, buttons by role), scoped to the
 element they belong to, and every navigation is verified by URL.
 """
@@ -13,13 +13,12 @@ import logging
 import re
 import shutil
 import urllib.parse
-import weakref
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, datetime, time
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
-from playwright.async_api import Browser, BrowserContext, Locator, Page, Playwright, async_playwright
+from playwright.async_api import BrowserContext, Locator, Page, Playwright, async_playwright
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import TimeoutError as PlaywrightTimeout
 
@@ -28,7 +27,6 @@ from ferry_watch.models import Fare, FarePreference, Sailing, Trip, Vehicle, for
 from .errors import (
     BookingError,
     CartMismatch,
-    LoginFailed,
     MarkupChanged,
     NotBookable,
     QueueTimeout,
@@ -37,7 +35,7 @@ from .errors import (
 )
 from .parse import parse_sailings, parse_time
 from .terminals import Terminals
-from .urls import BASE_URL, QUEUE_HOST, USER_AGENT, CheckoutView, Credentials, checkout_view, search_url
+from .urls import BASE_URL, QUEUE_HOST, USER_AGENT, CheckoutView, checkout_view, search_url
 
 if TYPE_CHECKING:
     from ferry_watch.protocol import ReleaseCheck
@@ -74,83 +72,6 @@ def choose_fare(fares: tuple[Fare, ...], preference: FarePreference) -> Fare:
         if preferred:
             return preferred
     return min(bookable, key=lambda f: f.amount)
-
-
-class SiteBrowser:
-    """The single Chromium instance (headed on a virtual display in production, so it can be watched)."""
-
-    def __init__(
-        self,
-        terminals: TerminalProvider,
-        *,
-        headless: bool,
-        window_size: tuple[int, int],
-        debug_dir: Path | None,
-        base_url: str = BASE_URL,
-    ) -> None:
-        self._terminals = terminals
-        self._base_url = base_url
-        self._headless = headless
-        self._window_size = window_size
-        self._debug_dir = debug_dir
-        self._playwright: Playwright | None = None
-        self._browser: Browser | None = None
-        self._sessions: weakref.WeakSet[SiteSession] = weakref.WeakSet()
-
-    async def start(self) -> None:
-        self._playwright = await async_playwright().start()
-
-    async def stop(self) -> None:
-        if self._browser:
-            try:
-                await self._browser.close()
-            except PlaywrightError:
-                log.debug("Browser was already gone")
-            self._browser = None
-        if self._playwright:
-            await self._playwright.stop()
-            self._playwright = None
-
-    async def _ensure_browser(self) -> Browser:
-        if self._browser and self._browser.is_connected():
-            return self._browser
-        try:
-            return await self._launch()
-        except PlaywrightError:
-            # The Playwright driver itself may have died; restart it once before giving up.
-            log.warning("Couldn't launch Chromium; restarting Playwright", exc_info=True)
-            await self.stop()
-            await self.start()
-            return await self._launch()
-
-    async def _launch(self) -> Browser:
-        if self._playwright is None:
-            raise RuntimeError("SiteBrowser.start() hasn't been called")
-        width, height = self._window_size
-        log.info("Launching Chromium (%s)", "headless" if self._headless else "headed")
-        browser = await self._playwright.chromium.launch(
-            headless=self._headless,
-            args=[f"--window-size={width},{height}", "--window-position=0,0"],
-        )
-        browser.on("disconnected", lambda _: self._browser_died())
-        self._browser = browser
-        return browser
-
-    def _browser_died(self) -> None:
-        log.warning("Chromium disconnected")
-        for session in list(self._sessions):
-            session.mark_lost()
-
-    async def new_session(self, name: str) -> SiteSession:
-        browser = await self._ensure_browser()
-        context = await browser.new_context(user_agent=USER_AGENT, no_viewport=True)
-        page = await context.new_page()
-        page.set_default_timeout(ACTION_TIMEOUT_MS)
-        page.set_default_navigation_timeout(NAVIGATION_TIMEOUT_MS)
-        session = SiteSession(name, context, page, self._terminals, self._debug_dir, base_url=self._base_url)
-        await session.install_handlers()
-        self._sessions.add(session)
-        return session
 
 
 # Chromium's cache lives in memory-backed /tmp in a pod, so it's capped (with the managed policy's DiskCacheSize).
@@ -260,8 +181,6 @@ class SiteSession:
     ) -> None:
         self.name = name
         self._base_url = base_url.rstrip("/")
-        self.opened_at = datetime.now(UTC).timestamp()
-        self.logged_in = False
         self._context = context
         self._page = page
         self._terminals = terminals
@@ -269,7 +188,7 @@ class SiteSession:
         self._closed = False
         self._lost = False
         # "close": the user closed the window (e.g. over noVNC) or the context was closed.
-        # "crash": the tab's renderer died. Chromium dying altogether is reported by SiteBrowser.
+        # "crash": the tab's renderer died.
         page.on("close", lambda _: self._mark_closed())
         page.on("crash", lambda _: self.mark_lost())
 
@@ -345,39 +264,6 @@ class SiteSession:
         await self._page.add_locator_handler(accept, lambda: accept.click(), times=None)
 
     # ---- the booking flow
-
-    async def login(self, credentials: Credentials) -> None:
-        """Log in to the owner's account (for saved payment cards at checkout).
-
-        Playwright's error messages include an action's call log, which for fill() contains the
-        value typed. So nothing from Playwright escapes this method: every failure becomes a
-        LoginFailed with a message we wrote, and the original error is dropped (`from None`).
-        """
-        page = self._page
-        await self._goto(f"{self._base_url}/login")
-        form = page.locator("form").filter(has=page.locator("#j_password"))
-        try:
-            await form.locator("#email").fill(credentials.username)
-            await form.locator("#j_password").fill(credentials.password)
-            filled = bool(await form.locator("#email").input_value()) and bool(
-                await form.locator("#j_password").input_value()
-            )
-        except PlaywrightError:
-            raise LoginFailed("Couldn't fill in BC Ferries' login form") from None
-        if not filled:
-            # The site clears the form in some states (e.g. while a guest cart exists).
-            raise LoginFailed("BC Ferries' login form wouldn't accept the credentials")
-        try:
-            await form.get_by_role("button", name="Log in", exact=True).click()
-            await page.wait_for_url(lambda url: "/login" not in urllib.parse.urlsplit(url).path, wait_until="load")
-        except PlaywrightError:
-            alert = page.locator(".alert-danger, .alert-error, .fe-error, [role=alert]").filter(visible=True)
-            try:
-                reason = (await alert.first.inner_text(timeout=2_000)).strip() if await alert.count() else ""
-            except PlaywrightError:
-                reason = ""
-            raise LoginFailed(f"BC Ferries login failed{': ' + reason if reason else ''}") from None
-        self.logged_in = True
 
     async def search(self, trip: Trip) -> list[Sailing]:
         """Walk the booking form for `trip` and return the sailings on the results page."""
@@ -495,10 +381,6 @@ class SiteSession:
             frame.url for page in self._context.pages for frame in page.frames if frame is not self._page.main_frame
         ]
         return checkout_view(self._page.url, others, base_url=self._base_url)
-
-    async def show(self) -> None:
-        """Raise this session's window, so it's what's on screen over noVNC."""
-        await self._page.bring_to_front()
 
     async def save_debug_snapshot(self, reason: str) -> Path | None:
         """Screenshot the page for troubleshooting (kept outside backed-up storage, oldest pruned)."""

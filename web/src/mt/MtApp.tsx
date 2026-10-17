@@ -5,7 +5,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Loader2, LogOut, Plus, Settings, Shield, Ship } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { TripSheetView, type SheetMode, type TripSource } from "@/components/TripSheet";
+import { TripSheet, type SheetMode, type TripSource } from "@/components/TripSheet";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { configureBearerAuth, errorMessage, hasStatus, type AuthReason } from "@/lib/api";
@@ -221,7 +221,7 @@ function SignedIn() {
           </div>
         )}
       </main>
-      <TripSheetView mode={sheet} onClose={closeSheet} source={source} />
+      <TripSheet mode={sheet} onClose={closeSheet} source={source} />
     </div>
   );
 }

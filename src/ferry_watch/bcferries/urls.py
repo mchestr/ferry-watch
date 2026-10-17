@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import urllib.parse
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from ferry_watch.models import Trip
 
@@ -24,12 +24,6 @@ SIGN_IN_PATHS = ("/login",)
 USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0 Safari/537.36"
 )
-
-
-@dataclass(frozen=True, slots=True)
-class Credentials:
-    username: str
-    password: str = field(repr=False)
 
 
 def search_url(trip: Trip, terminals: Terminals, base_url: str = BASE_URL) -> str:

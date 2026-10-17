@@ -29,7 +29,7 @@ export default defineConfig({
     },
   },
   server: {
-    // `npm run dev` talks to a watcher running locally (./run.sh). Leave `changeOrigin` off:
+    // `npm run dev` proxies the API (and its WebSocket) to a server on :8765. Leave `changeOrigin` off:
     // the server refuses cross-origin requests, so the proxied Host must stay the dev server's.
     proxy: { "/api": { target: "http://localhost:8765", ws: true } },
   },

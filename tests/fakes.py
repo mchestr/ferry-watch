@@ -1,8 +1,7 @@
-"""Test doubles for the browser layer and alerts."""
+"""Test doubles for the browser layer."""
 
 from __future__ import annotations
 
-import asyncio
 import inspect
 from dataclasses import dataclass, field
 from datetime import time
@@ -10,12 +9,9 @@ from pathlib import Path
 from typing import Any
 
 from ferry_watch.bcferries.errors import SessionExpired
-from ferry_watch.bcferries.urls import CheckoutView, Credentials
+from ferry_watch.bcferries.urls import CheckoutView
 from ferry_watch.models import Fare, FarePreference, Sailing, SailingStatus, Trip
-from ferry_watch.notify import Message
 from ferry_watch.protocol import ReleaseCheck
-
-PASSWORD = "hunter2-secret"
 
 
 def sailing(hour: int, *, available: bool = True) -> Sailing:
@@ -35,10 +31,7 @@ class FakeSession:
     def __init__(self, site: FakeSite, name: str) -> None:
         self.site = site
         self.name = name
-        self.opened_at = 1_000.0
-        self.logged_in = False
         self.calls: list[str] = []
-        self.logged_in_as: str | None = None
         self.preferences: list[FarePreference] = []
         self.snapshots: list[str] = []
         self._closed = False
@@ -51,19 +44,6 @@ class FakeSession:
     @property
     def lost(self) -> bool:
         return self._lost
-
-    async def login(self, credentials: Credentials) -> None:
-        self.calls.append("login")
-        self.site.logging_in += 1
-        self.site.most_logging_in = max(self.site.most_logging_in, self.site.logging_in)
-        try:
-            await asyncio.sleep(0.01)  # a login takes a moment; long enough for another to overlap it
-            if self.site.login_error:
-                raise self.site.login_error
-        finally:
-            self.site.logging_in -= 1
-        self.logged_in = True
-        self.logged_in_as = credentials.username
 
     async def search(self, trip: Trip) -> list[Sailing]:
         self.calls.append("search")
@@ -94,9 +74,6 @@ class FakeSession:
     def checkout_view(self) -> CheckoutView:
         return self.site.view
 
-    async def show(self) -> None:
-        self.calls.append("show")
-
     async def save_debug_snapshot(self, reason: str) -> Path | None:
         self.calls.append("snapshot")
         self.snapshots.append(reason)
@@ -119,7 +96,6 @@ class FakeSession:
 class FakeSite:
     sailings: list[Sailing] = field(default_factory=list)
     error: Exception | None = None
-    login_error: Exception | None = None
     cart_error: Exception | None = None
     expire_next_refresh: bool = False
     empty_check: ReleaseCheck = "landing_url"
@@ -128,8 +104,6 @@ class FakeSite:
     sessions: list[FakeSession] = field(default_factory=list)
     search_hook: Any = None
     cart_hook: Any = None
-    logging_in: int = 0  # logins in progress right now
-    most_logging_in: int = 0
 
     async def new_session(self, name: str) -> FakeSession:
         session = FakeSession(self, name)
@@ -157,15 +131,3 @@ class FakeSite:
     @property
     def session(self) -> FakeSession:
         return self.sessions[-1]
-
-
-class RecordingAlerts:
-    def __init__(self) -> None:
-        self.sent: list[Message] = []
-
-    def submit(self, message: Message) -> None:
-        self.sent.append(message)
-
-    @property
-    def titles(self) -> list[str]:
-        return [m.title for m in self.sent]

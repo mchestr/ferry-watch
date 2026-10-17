@@ -28,7 +28,7 @@ function useMyMutation<A>(fn: (arg: A) => Promise<MyState>, success?: string | (
       qc.setQueryData(MY_STATE_KEY, state);
       if (success) toast.success(typeof success === "string" ? success : success(arg));
     },
-    onError: (error) => reportError(qc, error),
+    onError: (error) => reportError(error),
   });
 }
 
@@ -92,7 +92,7 @@ function RemoveButton({ trip, title }: { trip: MyTrip; title: string }) {
       if (hasStatus(error, 404)) {
         toast.info("That trip was already removed.");
         void qc.invalidateQueries({ queryKey: MY_STATE_KEY });
-      } else reportError(qc, error);
+      } else reportError(error);
     },
   });
   return (

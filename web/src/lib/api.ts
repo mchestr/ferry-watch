@@ -1,12 +1,5 @@
 import type { z } from "zod";
-import {
-  ErrorBodySchema,
-  StateSchema,
-  TerminalListSchema,
-  type State,
-  type Terminal,
-  type TripSettings,
-} from "./schema";
+import { ErrorBodySchema, TerminalListSchema, type Terminal } from "./schema";
 
 export const REQUEST_TIMEOUT_MS = 15_000;
 export const SESSION_EXPIRED_MESSAGE = "Your sign-in expired";
@@ -25,7 +18,7 @@ export type ApiErrorKind =
   /** JSON that doesn't match the API contract. */
   | "schema";
 
-/** Why the server refused a session (multi-tenant): sign in again quietly, or show the signed-out screen. */
+/** Why the server refused a session: sign in again quietly, or show the signed-out screen. */
 export type AuthReason = "missing" | "expired" | "reverify" | "revoked";
 
 export class ApiError extends Error {
@@ -50,10 +43,7 @@ export class ApiError extends Error {
   }
 }
 
-/**
- * The bearer token for every request, when the app signs in itself (ferry-web). The single-container app
- * sits behind an authenticating proxy instead, and sends none.
- */
+/** The bearer token for every request (ferry-web's sign-in, mt/auth.ts); none until it's configured. */
 let bearerToken: () => string | null = () => null;
 let onUnauthorized: (reason: AuthReason) => void = () => undefined;
 
@@ -202,30 +192,7 @@ export function describeIssues(error: z.ZodError): string {
   return `${where}${first.message}${rest.length ? ` (and ${rest.length} more)` : ""}`;
 }
 
-export interface SettingsPatch {
-  enabled?: boolean;
-  interval_seconds?: number;
+/** BC Ferries' terminals, as the server lists them (GET /api/terminals). */
+export async function fetchTerminals(signal?: AbortSignal): Promise<Terminal[]> {
+  return (await request("/api/terminals", { schema: TerminalListSchema, signal })).terminals;
 }
-
-export type TripPatch = Partial<TripSettings>;
-
-const tripPath = (id: string) => `/api/trips/${encodeURIComponent(id)}`;
-
-/** Every mutation sends JSON and gets the full new State back. */
-const mutation = (method: Exclude<Method, "GET">, path: string, body: object = {}): Promise<State> =>
-  request(path, { method, body, schema: StateSchema });
-
-export const api = {
-  state: (signal?: AbortSignal): Promise<State> => request("/api/state", { schema: StateSchema, signal }),
-  terminals: async (signal?: AbortSignal): Promise<Terminal[]> =>
-    (await request("/api/terminals", { schema: TerminalListSchema, signal })).terminals,
-  updateSettings: (patch: SettingsPatch) => mutation("PATCH", "/api/settings", patch),
-  addTrip: (settings: TripSettings) => mutation("POST", "/api/trips", settings),
-  /** Send only the fields that changed. */
-  updateTrip: (id: string, patch: TripPatch) => mutation("PATCH", tripPath(id), patch),
-  removeTrip: (id: string) => mutation("DELETE", tripPath(id)),
-  releaseCart: (id: string, cartId: string) => mutation("POST", `${tripPath(id)}/cart/release`, { cart_id: cartId }),
-  dismissCart: (id: string, cartId: string) => mutation("POST", `${tripPath(id)}/cart/dismiss`, { cart_id: cartId }),
-  checkNow: () => mutation("POST", "/api/check"),
-  testAlert: () => mutation("POST", "/api/alerts/test"),
-};

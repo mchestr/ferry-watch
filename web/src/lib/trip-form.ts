@@ -1,6 +1,6 @@
 /**
  * The trip sheet's form model: a draft of TripSettings, its validation (the same rules the server
- * applies, see docs/api.md) and the PATCH of changed fields.
+ * applies) and the PATCH of changed fields.
  */
 import { ApiError } from "./api";
 import { TRIP_SETTINGS_FIELDS, type TripSettings } from "./schema";
@@ -23,7 +23,7 @@ export type DraftErrors = Partial<Record<DraftField, string>>;
 /** In form order, for focusing the first problem. */
 export const DRAFT_FIELDS: readonly DraftField[] = ["from", "to", "date", "passengers", "height", "earliest", "latest"];
 
-/** Just the settings, from a Trip or anything else that has them. */
+/** Just the settings, from a trip or anything else that has them. */
 export function pickSettings(t: TripSettings): TripSettings {
   const {
     enabled,

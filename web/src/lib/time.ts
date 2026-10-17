@@ -3,12 +3,11 @@
  * null for anything they can't read, so the UI never shows "12:undefined am" or a silent 0.
  */
 
-/** Where the ferries run. The server decides `past` and `trip_defaults.date` in this zone too. */
+/** Where the ferries run. The server judges dates (today, a date that has passed) in this zone too. */
 export const FERRY_TIME_ZONE = "America/Vancouver";
 
 const TIME_OF_DAY = /^([01]\d|2[0-3]):([0-5]\d)$/;
 const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
-const DAY_MS = 86_400_000;
 
 const pad2 = (n: number) => String(n).padStart(2, "0");
 
@@ -84,25 +83,6 @@ export function todayInPacific(now: Date = new Date()): string {
   return `${part("year")}-${part("month")}-${part("day")}`;
 }
 
-/** Tomorrow's date in Pacific time. */
-export function tomorrowInPacific(now: Date = new Date()): string {
-  const today = todayInPacific(now);
-  return addDays(today, 1) ?? today;
-}
-
-/** "Today", "Tomorrow", "In 3 days", "2 days ago"... relative to `today` (both "YYYY-MM-DD"). */
-export function relativeDay(iso: string, today: string): string | null {
-  const date = parseIsoDate(iso);
-  const base = parseIsoDate(today);
-  if (!date || !base) return null;
-  // Both are UTC midnights, so the difference is a whole number of days.
-  const days = Math.round((date.getTime() - base.getTime()) / DAY_MS);
-  if (days === 0) return "Today";
-  if (days === 1) return "Tomorrow";
-  if (days === -1) return "Yesterday";
-  return days > 0 ? `In ${days} days` : `${-days} days ago`;
-}
-
 /** "Monday, October 12" for a "YYYY-MM-DD" date; null if it isn't one. */
 export function longDate(iso: string): string | null {
   const date = parseIsoDate(iso);
@@ -130,29 +110,3 @@ export function ago(ms: number, now: number): string {
   if (hours < 24) return `${hours}h ago`;
   return new Date(ms).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
-
-/** Seconds left -> "2:05", or "1:00:00" from an hour up. Negative clamps to "0:00"; NaN gives "". */
-export function countdown(seconds: number): string {
-  if (!Number.isFinite(seconds)) return "";
-  const total = Math.max(0, Math.ceil(seconds));
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = total % 60;
-  return h ? `${h}:${pad2(m)}:${pad2(s)}` : `${m}:${pad2(s)}`;
-}
-
-/** Interval in seconds -> "30 seconds", "1 minute", "5 minutes". */
-export function everyLabel(seconds: number): string {
-  if (seconds < 60) return `${seconds} seconds`;
-  if (seconds === 60) return "1 minute";
-  return `${Math.round(seconds / 60)} minutes`;
-}
-
-/**
- * Server timestamps are epoch seconds on the server's clock. `skew` is the client clock minus the
- * server clock, in seconds, measured when the state arrived (see state.ts).
- */
-export const serverToClientMs = (serverSeconds: number, skew: number): number => (serverSeconds + skew) * 1000;
-
-/** The server's clock right now, in epoch seconds. */
-export const serverNow = (skew: number, clientMs: number = Date.now()): number => clientMs / 1000 - skew;

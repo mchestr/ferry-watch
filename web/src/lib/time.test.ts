@@ -3,19 +3,13 @@ import {
   addDays,
   ago,
   clock,
-  countdown,
   duration,
-  everyLabel,
   fmt12,
   longDate,
   parseIsoDate,
   parseTimeOfDay,
-  relativeDay,
-  serverNow,
-  serverToClientMs,
   timeLabel,
   todayInPacific,
-  tomorrowInPacific,
 } from "./time";
 
 const DAY_MS = 86_400_000;
@@ -112,39 +106,15 @@ describe("addDays", () => {
   });
 });
 
-describe("today and tomorrow (Pacific)", () => {
+describe("today (Pacific)", () => {
   it("uses Pacific time, not UTC", () => {
     expect(todayInPacific(new Date("2026-10-12T06:59:00Z"))).toBe("2026-10-11"); // 11:59 pm PDT
     expect(todayInPacific(new Date("2026-10-12T07:00:00Z"))).toBe("2026-10-12"); // midnight PDT
   });
-
-  it("is tomorrow on the 25-hour day, where adding 24 h stays on the same date", () => {
-    const night = new Date("2026-11-01T00:30:00-07:00"); // before the 2 am fall-back
-    expect(new Date(night.getTime() + DAY_MS).getDate()).toBe(1); // the old bug (tests run on Pacific time)
-    expect(tomorrowInPacific(night)).toBe("2026-11-02");
-  });
-
-  it("is tomorrow on the 23-hour day, where adding 24 h skips a date", () => {
-    const night = new Date("2026-03-07T23:30:00-08:00");
-    expect(new Date(night.getTime() + DAY_MS).getDate()).toBe(9); // the old bug
-    expect(tomorrowInPacific(night)).toBe("2026-03-08");
-  });
 });
 
-describe("relativeDay and longDate", () => {
-  it.each([
-    ["2026-10-11", "Today"],
-    ["2026-10-12", "Tomorrow"],
-    ["2026-10-10", "Yesterday"],
-    ["2026-10-14", "In 3 days"],
-    ["2026-10-08", "3 days ago"],
-    ["2026-11-02", "In 22 days"], // across the fall-back
-  ])("%s relative to 2026-10-11 is %s", (iso, expected) => {
-    expect(relativeDay(iso, "2026-10-11")).toBe(expected);
-  });
-
+describe("longDate", () => {
   it("returns null for invalid dates", () => {
-    expect(relativeDay("2026-02-30", "2026-10-11")).toBeNull();
     expect(longDate("someday")).toBeNull();
   });
 
@@ -154,7 +124,7 @@ describe("relativeDay and longDate", () => {
   });
 });
 
-describe("clock, ago and countdown", () => {
+describe("clock and ago", () => {
   it("formats wall-clock time like the sailings", () => {
     expect(clock(new Date("2026-10-11T15:05:00-07:00").getTime())).toBe("3:05 pm");
     expect(clock(new Date("2026-10-11T00:00:00-07:00").getTime())).toBe("12:00 am");
@@ -170,31 +140,9 @@ describe("clock, ago and countdown", () => {
     expect(ago(now + 60_000, now)).toBe("just now"); // a future timestamp (clock skew) isn't negative
   });
 
-  it("counts down in m:ss, and h:mm:ss from an hour", () => {
-    expect(countdown(125)).toBe("2:05");
-    expect(countdown(0.2)).toBe("0:01");
-    expect(countdown(3600)).toBe("1:00:00");
-    expect(countdown(-5)).toBe("0:00");
-  });
-
   it("never prints NaN", () => {
     expect(clock(NaN)).toBe("");
     expect(ago(NaN, Date.now())).toBe("");
     expect(ago(Date.now(), Infinity)).toBe("");
-    expect(countdown(NaN)).toBe("");
-  });
-
-  it("labels check intervals", () => {
-    expect(everyLabel(15)).toBe("15 seconds");
-    expect(everyLabel(60)).toBe("1 minute");
-    expect(everyLabel(300)).toBe("5 minutes");
-  });
-});
-
-describe("server clock conversion", () => {
-  it("maps server timestamps onto the client clock with the measured skew", () => {
-    // The client clock runs 5 s ahead of the server's.
-    expect(serverToClientMs(1_000, 5)).toBe(1_005_000);
-    expect(serverNow(5, 1_005_000)).toBe(1_000);
   });
 });

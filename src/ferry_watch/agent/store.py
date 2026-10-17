@@ -12,7 +12,7 @@ from ferry_watch.protocol import Configure, ProtocolError
 
 
 class OneTripStore:
-    """What the watcher reads in a pod: the same `.config` and `.subscribe` as ConfigStore, for one trip.
+    """What the watcher reads in a pod: a `.config` with its one trip, and `.subscribe` for changes.
 
     Each `configure` replaces the trip and its settings. The trip is validated again here, with the same
     rules as the dashboard, and must be the trip this pod was started for.

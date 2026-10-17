@@ -20,7 +20,7 @@ export function useRelease(tripId: string, cart: CartInfo | null | undefined) {
       qc.setQueryData(MY_STATE_KEY, state);
       toast.success("Releasing the cart");
     },
-    onError: (error) => reportError(qc, error),
+    onError: (error) => reportError(error),
   });
   // Every release asked for, here or on the other page (a mutation outlives the page that ran it). The filter
   // stays fixed: useMutationState only looks again when a mutation changes, not when the cart does.

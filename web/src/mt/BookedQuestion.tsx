@@ -39,7 +39,7 @@ function Question({ trip, onAnswered }: Props) {
       if ("stop" in a) toast.success("Stopped watching");
       onAnswered?.(a);
     },
-    onError: (error) => reportError(qc, error),
+    onError: (error) => reportError(error),
   });
   return (
     <div className="space-y-3 rounded-xl border border-warning bg-warning-soft p-4">
