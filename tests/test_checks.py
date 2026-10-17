@@ -38,7 +38,6 @@ DAY = date(2027, 7, 1)
 NOON = datetime.combine(DAY, time(12, 0), tzinfo=PACIFIC).timestamp()
 CLOSES = datetime.combine(DAY, time(18, 0), tzinfo=PACIFIC).timestamp()
 REMIND = datetime.combine(DAY - timedelta(days=1), time(6, 55), tzinfo=PACIFIC).timestamp()
-STUB = type(BUNTZEN).__name__ == "_NotYet"
 
 
 class FakeClient(FetchClient):
@@ -762,7 +761,6 @@ async def test_the_loop_wakes_when_something_is_due_survives_a_bad_tick_and_stop
 # ---- with the real Buntzen provider (W2)
 
 
-@pytest.mark.skipif(STUB, reason="buntzen.PROVIDER is still the contract stub (W2 replaces it)")
 async def test_a_half_day_answer_failing_never_stops_an_all_day_opening(rig: Rig) -> None:
     rig.checks = rig.loop(REGISTRY)
     spec = {"date": DAY.isoformat(), "passes": ["full_day", "morning", "afternoon"], "release_reminder": True}

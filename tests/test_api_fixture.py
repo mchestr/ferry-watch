@@ -17,7 +17,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from tests.fakes import FakeHttpProvider, FakeSpec, fake_registry
 from tests.postgres import ROLES, Database
-from tests.test_web_watches import ANN, STUB, Rig, make_rig, watches
+from tests.test_web_watches import ANN, Rig, make_rig, watches
 from waitlist.control.limits import Limits
 from waitlist.polling import PollPolicy
 from waitlist.providers import REGISTRY
@@ -204,7 +204,6 @@ async def buntzen(db: Database, aiohttp_client: Callable[..., Any]) -> AsyncIter
         yield r
 
 
-@pytest.mark.skipif(STUB, reason="buntzen.PROVIDER is still the contract stub (W2 replaces it)")
 async def test_buntzen_entries_have_the_fixtures_shape(buntzen: Rig) -> None:
     rig = buntzen
     await rig.report()

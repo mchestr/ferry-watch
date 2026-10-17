@@ -39,7 +39,6 @@ ANN, BOB = "a" * 20, "b" * 20
 DAY = date(2027, 7, 1)
 NOW = datetime.combine(DAY - timedelta(days=1), time(12, 0), tzinfo=PACIFIC).timestamp()  # noon PT, Wed Jun 30
 POLICY = PollPolicy(horizon=timedelta(days=45))  # a deployment's polling.horizonDays: 45
-STUB = type(BUNTZEN).__name__ == "_NotYet"
 
 
 @dataclass
@@ -637,7 +636,6 @@ async def buntzen(db: Database, aiohttp_client: Callable[..., Any]) -> AsyncIter
         yield r
 
 
-@pytest.mark.skipif(STUB, reason="buntzen.PROVIDER is still the contract stub (W2 replaces it)")
 async def test_buntzen_watches_end_to_end(buntzen: Rig) -> None:
     rig = buntzen
     spec = {"date": DAY.isoformat(), "passes": ["morning", "afternoon"], "release_reminder": True}
@@ -651,7 +649,6 @@ async def test_buntzen_watches_end_to_end(buntzen: Rig) -> None:
     assert (status, body["field"]) == (400, "passes")
 
 
-@pytest.mark.skipif(STUB, reason="buntzen.PROVIDER is still the contract stub (W2 replaces it)")
 async def test_changing_only_the_passes_keeps_alert_memory_and_re_marks_the_options(buntzen: Rig) -> None:
     rig = buntzen
     spec = {"date": DAY.isoformat(), "passes": ["morning"], "release_reminder": True}

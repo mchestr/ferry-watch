@@ -6,8 +6,6 @@ for a local chart), so they carry the apiserver mark: CI's apiserver job has hel
 
 from __future__ import annotations
 
-import importlib
-import importlib.util
 import ipaddress
 import json
 import os
@@ -32,10 +30,9 @@ from tests.deploy import (
     with_provider,
 )
 from waitlist.control import config as control_config
-from waitlist.control.config import ControlConfig
+from waitlist.fetcher import config as fetcher_config
 from waitlist.providers.buntzen.meta import HOSTS
 from waitlist.web import config as web_config
-from waitlist.web.config import WebConfig
 
 
 def test_flux_substitutes_nothing() -> None:
@@ -137,16 +134,6 @@ def test_home_cluster_runs_this_copy(ours: Path) -> None:
 # ---- the render (helm and app-template)
 
 render_test = pytest.mark.apiserver
-
-# The config classes the render must satisfy. W1 adds ControlConfig.fetcher/http_checks and WebConfig.providers,
-# and W2 adds waitlist.fetcher.config (design §9.4). Until this branch is rebased onto them, the tests that load
-# a provider's keys skip, with these reasons; once rebased they run, and must pass.
-_W1 = {"fetcher", "http_checks"} <= set(ControlConfig.__struct_fields__) and "providers" in WebConfig.__struct_fields__
-_W2 = importlib.util.find_spec("waitlist.fetcher.config") is not None
-needs_w1 = pytest.mark.skipif(
-    not _W1, reason="W1's ControlConfig.fetcher/httpChecks and WebConfig.providers aren't here yet (design §9.4)"
-)
-needs_w2 = pytest.mark.skipif(not _W2, reason="W2's waitlist.fetcher.config isn't here yet (design §9.4)")
 
 FETCHER_URL = f"http://waitlist-fetcher.{NAMESPACE}.svc.cluster.local.:8767"
 CONFIGS = ("waitlist-control-config", "waitlist-migrate-config", "waitlist-web-config", "waitlist-fetcher-config")
@@ -269,8 +256,7 @@ def _load_web(path: Path) -> dict[str, Any]:
 
 
 def _load_fetcher(path: Path) -> dict[str, Any]:
-    module = importlib.import_module("waitlist.fetcher.config")
-    loaded: dict[str, Any] = msgspec.to_builtins(module.load(path))
+    loaded: dict[str, Any] = msgspec.to_builtins(fetcher_config.load(path))
     return loaded
 
 
@@ -288,7 +274,6 @@ def test_the_off_configs_load_as_the_apps_read_them(
 
 
 @render_test
-@needs_w2
 @pytest.mark.parametrize("offer", ["off", "admins"])
 def test_the_fetcher_config_loads(helm: Path, tmp_path: Path, offer: str) -> None:
     rendered = objects(render(helm, with_provider(offer=offer)))
@@ -298,7 +283,6 @@ def test_the_fetcher_config_loads(helm: Path, tmp_path: Path, offer: str) -> Non
 
 
 @render_test
-@needs_w1
 @pytest.mark.parametrize("offer", ["admins", "everyone"])
 def test_the_provider_configs_load_as_the_apps_read_them(helm: Path, tmp_path: Path, offer: str) -> None:
     rendered = objects(render(helm, with_provider(offer=offer)))
