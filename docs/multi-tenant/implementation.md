@@ -1,5 +1,29 @@
 # Multi-tenant Ferry Watch: what's built
 
+> **Naming note (October 2026).** This was started when the product was called Ferry Watch. It is now
+> Waitlist; what follows keeps the old names except where the status changed, so read them as the new ones. The single-container
+> app it mentions was removed after the 2026-10-13 cutover. BC Ferries' own names (`bcferries/`, `BCF_*`) and
+> "trip" are unchanged.
+>
+> | Written here | Now |
+> |---|---|
+> | Ferry Watch; the repo `mchestr/ferry-watch`; the distribution `ferry-watch` | Waitlist; `mchestr/waitlist`; `waitlist` |
+> | the package `ferry_watch`, `src/ferry_watch/x.py` | `waitlist`, `src/waitlist/x.py` |
+> | `ferry-web`, `ferry-control`, `ferry-watch-agent`, the `ferry-db` hook Job | `waitlist-web`, `waitlist-control`, `waitlist-agent`, `waitlist-db` |
+> | images `ghcr.io/mchestr/ferry-watch-control`, `-browser`, `-vnc-edge` | `ghcr.io/mchestr/waitlist-control`, `-browser`, `-vnc-edge` |
+> | namespaces `ferry-watch`, `ferry-watch-browsers`; `ferry-browser` (pod label, ServiceAccount, PriorityClass) | `waitlist`, `waitlist-browsers`; `waitlist-browser` |
+> | env vars `FW_*`, `FERRY_WATCH_*` | `WL_*`, `WAITLIST_*` |
+> | label and annotation keys `ferry-watch.io/*` | `waitlist.chestr.dev/*` |
+> | every `fw-`, `fw_`, `fw.` and `fw:` name: pods `fw-<trip>-g<gen>`, policies `fw-browser-pod`, `fw-browser-pod-lock`, `fw-ns-objects`, tickets `fw1.…`, the `fw.cast1` subprotocol, `fw.n1.`/`fw.t1.` offers, `fw_user` | `wl-`, `wl_`, `wl.`, `wl:`: `wl-<trip>-g<gen>`, `wl-browser-pod`, …, `wl1.…`, `wl.cast1`, `wl.n1.`/`wl.t1.`, `wl_user` |
+> | vnc-edge's `site/fw/` and `/fw/…` URLs | `site/wl/`, `/wl/…` |
+> | database `ferrywatch`, roles `ferrywatch_web`, `ferrywatch_control` | `waitlist`, `waitlist_web`, `waitlist_control` |
+> | `ferry.chestr.dev`, `ferry-checkout.chestr.dev` | `waitlist.chestr.dev`, `waitlist-checkout.chestr.dev` |
+> | helm values `ferry.*` (`ferry.control.pod.vncPubkeys`, `ferry.web.*`, …) | `waitlist.*` |
+> | the OIDC client, Authelia policy and lldap group `ferry-watch`; the 1Password item `ferry-watch` | `waitlist`; `waitlist` |
+>
+> Kept on purpose: user ids hash `"fw/v1|iss|sub"` (every stored id depends on it), and migrations 0001 to
+> 0006 are as they were (0007 lets `browser_pods.name` be `fw-` or `wl-`).
+
 This tracks the implementation against the plan ([README.md](README.md),
 [design-reference.md](design-reference.md), [decisions.md](decisions.md)). It lists what exists,
 where it departs from the plan's wording and why, and what's still to do.
@@ -36,7 +60,7 @@ and was then removed; it's in git history before the removal.
 
 | Module | What |
 |---|---|
-| `migrations/0001_init.sql` … `0005_quiet_hours.sql`, `db.py` | The schema (expand only), and per-role grants with row-level security (§6.4). 0004 adds `user_settings` (quiet hours), `trip_runtime.quiet_lifted_until` and `browser_pods.agent_version`, and moves "pause all" onto each trip. 0005 gives everyone quiet hours: 22:00-05:00 where they had none (no times, which a 0.6.3 ferry-web can still store during the rollout, read as the default; a later release makes them NOT NULL). |
+| `migrations/0001_init.sql` … `0007_waitlist_names.sql`, `db.py` | The schema (expand only), and per-role grants with row-level security (§6.4). 0004 adds `user_settings` (quiet hours), `trip_runtime.quiet_lifted_until` and `browser_pods.agent_version`, and moves "pause all" onto each trip. 0005 gives everyone quiet hours: 22:00-05:00 where they had none (no times, which a 0.6.3 ferry-web can still store during the rollout, read as the default; a later release makes them NOT NULL). 0006 adds each user's checkout viewer. 0007 (the rename) names new pods `wl-<trip>-g<gen>` and keeps the `fw-` rows restored from the Ferry Watch database. |
 | `hub.py`, `store.py` | The hub endpoint: TokenReview binding, idempotent recording, cart claims (one hold per user), configure pushes (`active=false` in the user's quiet hours unless lifted), commands, NOTIFY on change. A viewed hold asks "Did you book it?" unless it was released on request. |
 | `planner.py`, `fleet.py`, `pods.py`, `kube.py` | The fleet loop: warm and short-check pods (none in a user's quiet hours, unless lifted for the trip), admission and fairness, reaping timers, hold egress, the pod template, and `fleet_report` (with ferry-control's version) for the admin page. |
 | `configure.py`, `limits.py`, `config.py`, `main.py` | Cart gating (with the user's quiet hours), the curve with the budget stretch, per-user limits, the deployment's config (`polling.quietStart`/`quietEnd` deprecated and ignored), `migrate` and `run`. |
@@ -93,8 +117,9 @@ image's smoke test runs the agent with no network and the lockdown self-test aga
 
 ### The deployment (`deploy/helmrelease.yaml`, home-cluster's copy)
 
-There is no chart: home-cluster deploys Ferry Watch with app-template, as one HelmRelease
-(`kubernetes/apps/ferry-watch/ferry-watch/app/helmrelease.yaml`; design §7.10). This repo keeps a copy.
+There is no chart: home-cluster deploys Waitlist with app-template, as one HelmRelease
+(`kubernetes/apps/waitlist/waitlist/app/helmrelease.yaml` once home-cluster is renamed too; design §7.10). This
+repo keeps a copy.
 
 | Part | What |
 |---|---|
@@ -114,6 +139,10 @@ applies the render. It checks that:
 ## Where the build departs from the plan's wording
 
 Each is a two-way door.
+
+- **Renamed to Waitlist** (October 2026), to watch more reservation systems than BC Ferries: see the note at
+  the top. A rename can't roll out in place (namespaces, env vars, labels and wire names all change), so it
+  ships as a new deployment, with the Ferry Watch database copied into Waitlist's.
 
 - **One distribution, not a uv workspace** (§11.1). The same boundaries are packages held by
   import-linter. Playwright and selectolax are a `browser` extra and asyncpg and PyJWT a `control` extra,
@@ -166,12 +195,13 @@ Each is a two-way door.
 ## Still to do
 
 - **Frontend** (§10): each person's own session list.
-- **Deployment and CI follow-ups** (§7, §11): release v0.6.0 and fill in home-cluster's image digests and
+- **Deployment and CI follow-ups** (§7, §11): release the first Waitlist images and fill in home-cluster's
+  image digests (this repo's copy still carries Ferry Watch 0.6.4's digests under the new image names) and
   `vncPubkeys` (its README lists the 1Password fields to create first). Then: the PrometheusRule, PodMonitors
   and GrafanaDashboard once there are metrics; kind-lite (the positive pod-lock cases that need a kubelet,
   and the egress flip on a running pod); the `agent-e2e` and `fake-bcferries` images and the compose job.
-- **Agent follow-ups**: the smoke trip, the page watchdog (`checkout_host_blocked`); `/readyz` reporting the display, Chromium, the loop and lockdown (it answers 200 as
-  soon as the probe server is up).
+- **Agent follow-ups**: the smoke trip, the page watchdog (`checkout_host_blocked`); `/readyz` reporting the
+  display, Chromium, the loop and lockdown (it answers 200 as soon as the probe server is up).
 - **ferry-web follow-ups**: `DELETE /api/me` (delete my data), the session list, pre-auth rate limits
   on `/auth/*`, "self-book" (release, then the search link), and the `failing` suppression while the
   breaker is open.
