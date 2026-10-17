@@ -4,12 +4,15 @@ import { toast } from "sonner";
 import { errorMessage, fetchTerminals, isAuthError } from "./api";
 
 export const TERMINALS_KEY = ["terminals"] as const;
+/** How long the terminal list is fresh: after that, coming back to the app fetches it again (waitlist-web reloads
+ * it from BC Ferries daily, so a page left open for days still learns of a new route). */
+export const TERMINALS_STALE_MS = 3_600_000;
 
 export function useTerminals() {
   return useQuery({
     queryKey: TERMINALS_KEY,
     queryFn: ({ signal }) => fetchTerminals(signal),
-    staleTime: Infinity,
+    staleTime: TERMINALS_STALE_MS,
     // The server gets the list from BC Ferries and answers 503 while it can't. Keep trying, backing off to 30 s.
     retry: (_failures, error) => !isAuthError(error),
     retryDelay: (attempt) => Math.min(30_000, 1_000 * 2 ** attempt),
