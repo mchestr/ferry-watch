@@ -7,10 +7,11 @@ with the user's row locked, so two requests can't both slip under a limit.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import secrets
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from datetime import time as clock_time
@@ -42,6 +43,8 @@ AT_LIMIT = {
 }
 FULL = "You're watching as many as you can"
 NOT_OFFERED = "Not available to you"
+# A watch whose stored spec this build can't load: the state shows it degraded, as one that can only be removed.
+UNREADABLE = "This watch can't be read by this version of Waitlist; you can only remove it"
 SHOWN_LIMITS: tuple[LimitKey, ...] = (
     "maxTrips",
     "maxAlertOnlyWatches",
@@ -70,6 +73,18 @@ HOLD_REFUSED = {
     "already_held": "It was held for you once already; book it yourself on bcferries.com",
     "paused": "This trip is paused",
 }
+
+
+@contextlib.contextmanager
+def _as_stored(provider: HttpProvider[Any, Any, Any], watch_id: str) -> Iterator[None]:
+    """Around a provider's reading of a watch's stored spec. One it can't read, for any reason (a SpecError, a
+    shape this build doesn't know, a provider's bug), answers as the state shows that watch, degraded: 409, never
+    a 500, and never a SpecError's 400, which would name a field the request didn't send."""
+    try:
+        yield
+    except Exception as e:
+        log.warning("Watch %s (%s): its stored spec doesn't load (%s)", watch_id, provider.meta.id, type(e).__name__)
+        raise ApiError(409, UNREADABLE) from e
 
 
 def _ts(epoch: float) -> datetime:
@@ -404,7 +419,9 @@ class WebStore:
             if row is None or row["provider"] != provider.meta.id:
                 raise ApiError(404, "No such watch")
             current = json.loads(row["spec"])
-            base = provider.load_spec(current)
+            with _as_stored(provider, watch_id):
+                base = provider.load_spec(current)
+                old_search = search_hash(provider.search_key(base))
             new = provider.parse_spec(patch or {}, base=base, now=self._at(self._clock()))
             stored = provider.dump_spec(new)
             now_enabled = row["enabled"] if enabled is None else enabled
@@ -418,7 +435,7 @@ class WebStore:
             )
             if stored != current or (now_enabled and not row["enabled"]):
                 await conn.execute("UPDATE trip_runtime SET next_check_at = NULL WHERE trip_id = $1", watch_id)
-            if search_hash(provider.search_key(new)) != search_hash(provider.search_key(base)):
+            if search_hash(provider.search_key(new)) != old_search:
                 await conn.execute("DELETE FROM alert_memory WHERE trip_id = $1", watch_id)  # a new search
 
     async def check_watch(self, uid: str, watch_id: str, provider: HttpProvider[Any, Any, Any]) -> None:
@@ -437,8 +454,8 @@ class WebStore:
         )
         if row is None:
             raise ApiError(404, "No such watch")
-        spec = provider.load_spec(json.loads(row["spec"]))
-        window = provider.window(spec)
+        with _as_stored(provider, watch_id):
+            window = provider.window(provider.load_spec(json.loads(row["spec"])))
         context = await self.hold_context(uid, now)
         provider_paused, running, cooldown_until = self.check_inputs(provider.meta.id, await self.switches(), now)
         backoff_until = _epoch(row["backoff_until"])

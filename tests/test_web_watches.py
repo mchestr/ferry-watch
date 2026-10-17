@@ -5,7 +5,7 @@ Buntzen Lake, until the real one lands); and BC Ferries' own routes, which anoth
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any, cast
@@ -17,7 +17,7 @@ import pytest
 from aiohttp.test_utils import TestClient
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from tests.fakes import FAKE_PAGES, fake_registry
+from tests.fakes import FAKE_PAGES, FakeHttpProvider, FakeSpec, fake_registry
 from tests.golden_capture import _Known as Known
 from tests.golden_capture import terminals as golden_terminals
 from tests.postgres import ROLES, Database
@@ -32,7 +32,7 @@ from waitlist.web.accounts import Accounts, IdentityPolicy
 from waitlist.web.api import CheckoutSigner
 from waitlist.web.app import build
 from waitlist.web.identity import OidcClient, OidcSettings, Principal
-from waitlist.web.repo import WebStore, remark
+from waitlist.web.repo import UNREADABLE, WebStore, remark
 from waitlist.web.watches import OFFERS, REGISTRY_KEY
 
 ANN, BOB = "a" * 20, "b" * 20
@@ -625,6 +625,48 @@ def test_stored_options_are_re_marked_against_the_spec() -> None:
         option("afternoon"),  # never stored: the placeholder
     ]
     assert remark(placeholders, placeholders) == placeholders  # an unchanged spec: the identity
+
+
+# ---- a stored spec this build can't load
+
+
+class _ReadsNothing(FakeHttpProvider):
+    """A provider's bug, not a SpecError: it fails on every stored spec."""
+
+    def load_spec(self, stored: Mapping[str, Any]) -> FakeSpec:  # noqa: ARG002 - whatever it's given
+        raise KeyError("date")
+
+
+@pytest.mark.parametrize("failure", ["spec_error", "provider_bug"])
+async def test_a_stored_spec_that_doesnt_load_answers_like_a_degraded_watch(
+    db: Database, aiohttp_client: Callable[..., Any], failure: str
+) -> None:
+    """Whatever the provider raises on a watch's stored spec, the state shows the watch degraded, and editing or
+    checking it answers 409: never a 500, nor a SpecError's 400 naming a field the request didn't send. Nothing
+    changes, no manual check is spent, and the watch can still be removed."""
+    registry = fake_registry(_ReadsNothing()) if failure == "provider_bug" else fake_registry()
+    async for rig in make_rig(db, aiohttp_client, registry=registry):
+        watch_id = "b" * 16
+        stored = {"date": DAY.isoformat(), "from_a_newer_build": True}  # the fake's load_spec refuses the extra key
+        await rig.sql(
+            "INSERT INTO trips (id, user_id, provider, spec) VALUES ($1, $2, 'buntzen', $3)",
+            watch_id,
+            ANN,
+            json.dumps(stored),
+        )
+        await rig.sql("INSERT INTO trip_runtime (trip_id) VALUES ($1)", watch_id)
+        await rig.report()
+        (watch,) = watches(await rig.state())
+        assert set(watch) == {"provider", "id", "rev", "enabled", "paused_reason", "quiet"}
+        (before,) = await rig.sql("SELECT spec, enabled, rev FROM trips")
+        refused = (409, {"error": UNREADABLE})
+        path = f"/api/watches/{watch_id}"
+        assert await rig.error("PATCH", path, json={"spec": {"date": (DAY + timedelta(days=1)).isoformat()}}) == refused
+        assert await rig.error("PATCH", path, json={"enabled": False}) == refused
+        assert await rig.error("POST", f"{path}/check", json={}) == refused
+        assert await rig.sql("SELECT spec, enabled, rev FROM trips") == [before]
+        assert await rig.sql("SELECT 1 FROM agent_commands") == []
+        assert watches(await rig.ok("DELETE", path)) == []
 
 
 # ---- with the real Buntzen provider (W2)
