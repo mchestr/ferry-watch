@@ -54,6 +54,7 @@ def with_tag(controller: str, tag: str) -> dict[str, Any]:
             "must pin its digest",
         ),
         (with_tag("waitlist-control", "0.6.0"), "must pin its digest"),
+        (with_tag("waitlist-fetcher", "0.6.0"), "must pin its digest"),
         (with_tag("vnc-edge", "0.6.0"), "must pin its digest"),
         (with_values(vncPubkeys=""), "vncPubkeys"),
         (with_values(podMemory="1.5Gi"), "must be in Mi"),

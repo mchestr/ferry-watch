@@ -298,7 +298,7 @@ def test_nobody_gets_a_shell(cluster: Cluster, running: str) -> None:
 SERVICE_ACCOUNTS = {
     name: f"system:serviceaccount:{RELEASE_NAMESPACE}:{name}"
     # default: the db hook Job's, since a pre-install hook runs before the release's own exist.
-    for name in ("waitlist-web", "waitlist-control", "vnc-edge", "default")
+    for name in ("waitlist-web", "waitlist-control", "waitlist-fetcher", "vnc-edge", "default")
 } | {"waitlist-browser": f"system:serviceaccount:{BROWSERS}:waitlist-browser"}
 
 NEVER = [
@@ -352,9 +352,25 @@ def test_only_waitlist_control_touches_pods_and_only_in_the_browser_namespace(cl
     assert cluster.can(control, "create", "tokenreviews.authentication.k8s.io")
     assert not cluster.can(control, "create", "subjectaccessreviews.authorization.k8s.io")
     assert cluster.can(control, "list", "nodes")
-    for name in ("waitlist-web", "vnc-edge", "default", "waitlist-browser"):
+    for name in ("waitlist-web", "waitlist-fetcher", "vnc-edge", "default", "waitlist-browser"):
         for verb in ("create", "get", "list", "patch", "delete"):
             assert not cluster.can(SERVICE_ACCOUNTS[name], verb, "pods", BROWSERS), (name, verb)
+
+
+def test_the_fetcher_holds_no_verb_at_all(cluster: Cluster) -> None:
+    """waitlist-fetcher (docs/waitlist/design.md §4.4) is bound to nothing: in either namespace, and in another one
+    (where only cluster-wide grants show), it may do exactly what a ServiceAccount that doesn't exist may do
+    (discovery and self-review, which every authenticated identity has)."""
+    fetcher = SERVICE_ACCOUNTS["waitlist-fetcher"]
+    nobody = f"system:serviceaccount:{RELEASE_NAMESPACE}:no-such-account"
+    for ns in (RELEASE_NAMESPACE, BROWSERS, "default"):
+        held, baseline = (
+            cluster.kubectl("auth", "can-i", "--list", f"--namespace={ns}", user=user) for user in (fetcher, nobody)
+        )
+        assert "selfsubjectaccessreviews" in baseline  # the listing works at all
+        assert held == baseline, ns
+    sa = cluster.get("serviceaccount", "waitlist-fetcher", f"--namespace={RELEASE_NAMESPACE}")
+    assert sa["automountServiceAccountToken"] is False
 
 
 def test_rbac_slips_are_caught_by_ns_objects(cluster: Cluster) -> None:
