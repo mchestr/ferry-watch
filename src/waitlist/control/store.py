@@ -86,13 +86,14 @@ class ControlStore:
     # ---- what a pod is told
 
     async def trip_row(self, trip_id: str) -> tuple[TripRow, bool] | None:
-        """The trip as configured, and whether its owner is active."""
+        """The trip as configured, and whether its owner is active. Another provider's watch reads as no such trip:
+        only BC Ferries trips have browsers (docs/waitlist/design.md §2.4)."""
         row = await self._pool.fetchrow(
             "SELECT t.spec, t.rev, t.enabled, t.paused_reason, t.archived_at, u.state, u.is_admin, m.alerted,"
             " m.offered, r.hold_requested_until, r.quiet_lifted_until"
             " FROM trips t JOIN users u ON u.id = t.user_id LEFT JOIN alert_memory m ON m.trip_id = t.id"
             " LEFT JOIN trip_runtime r ON r.trip_id = t.id"
-            " WHERE t.id = $1",
+            " WHERE t.id = $1 AND t.provider = 'bcferries'",
             trip_id,
         )
         if row is None:

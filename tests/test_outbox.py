@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import AsyncIterator, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 from typing import Any
 
@@ -16,10 +16,14 @@ from aiohttp import web
 from aiohttp.test_utils import TestServer
 from cryptography.hazmat.primitives.asymmetric import ec
 
+from tests.fakes import FakeHttpProvider, FakeSpec, fake_registry
 from tests.postgres import ROLES, Database
 from tests.test_push import AS_PRIVATE, decrypt
 from waitlist.bcferries.terminals import Terminals
 from waitlist.models import Trip
+from waitlist.providers import Registry
+from waitlist.providers.bcferries import META as BCFERRIES
+from waitlist.web import admin
 from waitlist.web.messages import Messages
 from waitlist.web.outbox import RETRY_SECONDS, Outbox, allowed_endpoint, subscription_row
 from waitlist.web.push import Vapid, _point, b64
@@ -92,7 +96,10 @@ async def rig(db: Database, aiohttp_server: Callable[..., Any]) -> AsyncIterator
     try:
         await owner.execute("INSERT INTO users (id, username, email) VALUES ($1, 'ann', 'ann@example.com')", ANN)
         await owner.execute(
-            "INSERT INTO trips (id, user_id, spec) VALUES ($1, $2, $3)", TRIP.id, ANN, json.dumps(TRIP.to_json())
+            "INSERT INTO trips (id, user_id, provider, spec) VALUES ($1, $2, 'bcferries', $3)",
+            TRIP.id,
+            ANN,
+            json.dumps(TRIP.to_json()),
         )
         cart = {"id": "c1", "status": "ready", "depart": "09:00", "unclaimed_deadline": 1_790_000_000.0}
         await owner.execute("INSERT INTO trip_state (trip_id, cart) VALUES ($1, $2)", TRIP.id, json.dumps(cart))
@@ -116,6 +123,7 @@ async def rig(db: Database, aiohttp_server: Callable[..., Any]) -> AsyncIterator
             vapid=Vapid.from_raw(AS_PRIVATE, "mailto:waitlist@chestr.dev"),
             mailer=mailer,  # type: ignore[arg-type]
             clock=lambda: time.time() + clock[0],
+            registry=fake_registry(),  # Buntzen's meta, FakeHttpProvider's notices
         )
         try:
             yield Rig(outbox, service, mailer, db, browser, endpoint, clock)
@@ -221,3 +229,150 @@ def test_only_real_push_services() -> None:
     assert not allowed_endpoint("https://fcm.googleapis.com:8443/x")
     with pytest.raises(ValueError, match="push service"):
         subscription_row({"endpoint": "https://evil.example/x", "keys": {"p256dh": "a", "auth": "b"}})
+
+
+# ---- other providers (docs/waitlist/design.md §6.5)
+
+WATCH = "b" * 16
+
+
+async def http_watch(rig: Rig, spec: dict[str, Any] | None = None) -> None:
+    await rig.sql(
+        "INSERT INTO trips (id, user_id, provider, spec) VALUES ($1, $2, 'buntzen', $3)",
+        WATCH,
+        ANN,
+        json.dumps(spec if spec is not None else {"date": "2027-07-01"}),
+    )
+
+
+async def queue_for(rig: Rig, kind: str, params: dict[str, Any], trip_id: str | None = WATCH) -> None:
+    await rig.sql(
+        "INSERT INTO notifications (user_id, trip_id, kind, params) VALUES ($1, $2, $3, $4)",
+        ANN,
+        trip_id,
+        kind,
+        json.dumps(params),
+        user=ROLES.control,
+    )
+
+
+async def unrenderable(rig: Rig) -> list[tuple[Any, ...]]:
+    rows = await rig.sql("SELECT kind, sent_at, attempts, last_error FROM notifications")
+    return [tuple(r) for r in rows]
+
+
+async def test_an_opening_is_the_providers_notice_and_opens_the_watchs_page(rig: Rig) -> None:
+    await http_watch(rig)
+    await queue_for(rig, "opening", {"options": ["a"], "uncertain": []})
+    assert await rig.outbox.deliver_due() == 1
+    (message,) = rig.pushed()
+    assert message == {
+        "title": "Fake: a open for Thu Jul 1",
+        "body": "Book it now.",
+        "url": f"https://waitlist.chestr.dev/w/{WATCH}",
+    }
+    headers = rig.push.received[0][0]
+    assert (headers["Urgency"], headers["TTL"], headers["Topic"]) == ("high", "900", f"opening-{WATCH}")
+    assert rig.mailer.sent == []  # a device took it: no email
+
+
+async def test_an_openings_email_carries_the_booking_link(rig: Rig) -> None:
+    await http_watch(rig)
+    await rig.sql("DELETE FROM push_subscriptions")
+    await queue_for(rig, "opening", {"options": ["b"], "uncertain": []})
+    await rig.outbox.deliver_due()
+    ((to, subject, text),) = rig.mailer.sent
+    assert (to, subject) == ("ann@example.com", "Fake: b open for Thu Jul 1")
+    assert f"https://waitlist.chestr.dev/w/{WATCH}" in text
+    assert "Book it:\nhttps://yodelportal.com/buntzen-lake/Half-Day-Pass" in text
+
+
+class BadLinks(FakeHttpProvider):
+    def __init__(self, *, url: str | None = None, also: str | None = None, fail: bool = False) -> None:
+        self._url, self._also, self._fail = url, also, fail
+
+    def render(self, kind: str, params: Any, spec: FakeSpec, *, watch_url: str) -> Any:
+        if self._fail:
+            raise RuntimeError("a bug in a provider")
+        notice = super().render(kind, params, spec, watch_url=watch_url)
+        assert notice is not None
+        return replace(notice, url=self._url or notice.url, also=("Book", self._also) if self._also else notice.also)
+
+
+@pytest.mark.parametrize(
+    ("setup", "registry"),
+    [
+        ("unknown", Registry(metas=(BCFERRIES,))),  # an older build: no buntzen
+        ("bad-spec", None),
+        ("nothing-to-say", None),
+        ("bad-url", fake_registry(BadLinks(url="https://evil.example/"))),
+        ("bad-also", fake_registry(BadLinks(also="https://evil.example/buntzen-lake/"))),
+        ("render-raises", fake_registry(BadLinks(fail=True))),
+    ],
+)
+async def test_an_unrenderable_notification_is_never_silent(rig: Rig, setup: str, registry: Registry | None) -> None:
+    await http_watch(rig, {"date": "2027-07-01", "colour": "blue"} if setup == "bad-spec" else None)
+    params = {"options": [], "uncertain": []} if setup == "nothing-to-say" else {"options": ["a"], "uncertain": []}
+    await queue_for(rig, "opening", params)
+    if registry is not None:
+        rig.outbox._registry = registry
+    await rig.outbox.deliver_due()
+    assert rig.pushed() == []
+    assert rig.mailer.sent == []
+    assert await unrenderable(rig) == [("opening", None, 6, "Unrenderable")]
+    assert await rig.outbox.deliver_due() == 0  # never tried again
+    attention = await admin._attention(rig.outbox._pool)
+    assert [(a["kind"], a["detail"]) for a in attention] == [
+        ("delivery_failing", "Not delivered after 6 tries: opening (Unrenderable)")
+    ]
+
+
+async def test_a_bc_ferries_trip_that_wont_load_is_unrenderable_too(rig: Rig) -> None:
+    await rig.sql('UPDATE trips SET spec = \'{"from": "SWB"}\' WHERE id = $1', TRIP.id)
+    await rig.queue("bookable", {"departures": ["09:00"]})
+    await rig.outbox.deliver_due()
+    assert rig.pushed() == []
+    assert await unrenderable(rig) == [("bookable", None, 6, "Unrenderable")]
+
+
+@pytest.mark.parametrize(
+    ("kind", "body"),
+    [
+        ("site_changed", "Buntzen Lake's answers can't be read; its checks are failing."),
+        ("checker_down", "waitlist-fetcher isn't answering; Buntzen Lake checks are on hold."),
+    ],
+)
+async def test_a_providers_trouble_goes_to_admins_only(rig: Rig, kind: str, body: str) -> None:
+    await queue_for(rig, kind, {"provider": "buntzen", "since": 1.0}, trip_id=None)
+    await rig.outbox.deliver_due()
+    assert rig.pushed() == []  # Ann isn't an admin: nothing for her, though the row names her
+    (row,) = await rig.sql("SELECT sent_at FROM notifications")
+    assert row["sent_at"] is not None
+    await rig.sql("UPDATE users SET is_admin = true WHERE id = $1", ANN)
+    await queue_for(rig, kind, {"provider": "buntzen", "since": 1.0}, trip_id=None)
+    await rig.outbox.deliver_due()
+    assert rig.pushed() == [{"title": f"Admin: {kind.replace('_', ' ')}", "body": body, "url": "/admin"}]
+    assert rig.mailer.sent == []
+
+
+async def test_the_moved_notice_is_generic_and_emailed(rig: Rig) -> None:
+    await rig.sql("INSERT INTO notifications (user_id, kind, dedup_key) VALUES ($1, 'moved', 'moved:' || $1)", ANN)
+    await rig.outbox.deliver_due()
+    (message,) = rig.pushed()
+    assert message == {
+        "title": "Ferry Watch is now Waitlist",
+        "body": "Same app, new address: waitlist.chestr.dev. Sign in there, add it to your home screen again and turn"
+        " alerts on for each device. Your BC Ferries trips came with you.",
+        "url": "https://waitlist.chestr.dev/",
+    }
+    assert rig.push.received[0][0]["TTL"] == "86400"
+    assert [subject for _, subject, _ in rig.mailer.sent] == ["Ferry Watch is now Waitlist"]
+
+
+def test_an_invitation_says_waitlist_watches_reservations() -> None:
+    message = Messages("https://waitlist.chestr.dev", lambda: None).render("invited", {}, None)
+    assert message is not None
+    assert (message.title, message.body) == (
+        "You're invited to Waitlist",
+        "Sign in with your account to start watching reservations for you.",
+    )

@@ -25,6 +25,7 @@ from waitlist.control.config import ConfigError, LimitsConfig, PollingConfig, po
 from waitlist.control.configure import StreamViewer
 from waitlist.control.limits import Limits
 from waitlist.polling import PollPolicy
+from waitlist.providers import REGISTRY, Registry
 
 from .accounts import IdentityPolicy
 from .identity import OidcSettings
@@ -32,7 +33,10 @@ from .identity import OidcSettings
 KOFI = re.compile(r"https://ko-fi\.com/[A-Za-z0-9_]{1,64}")
 ED25519_KEY_BYTES = 32
 
-__all__ = ["ConfigError", "WebConfig", "checkout_key", "load", "new_keys", "read_secret", "signing_key"]
+__all__ = ["ConfigError", "Offer", "WebConfig", "checkout_key", "load", "new_keys", "read_secret", "signing_key"]
+
+# Who may create watches of an HTTP-checked provider (docs/waitlist/design.md §6.7). BC Ferries is always offered.
+Offer = Literal["off", "admins", "everyone"]
 
 
 class _Config(msgspec.Struct, forbid_unknown_fields=True, kw_only=True, rename="camel"):
@@ -78,6 +82,10 @@ class SmtpConfig(_Config, kw_only=True):
     sender: str = "waitlist@chestr.dev"
 
 
+class ProviderConfig(_Config, kw_only=True):
+    offer: Offer = "off"
+
+
 class WebConfig(_Config, kw_only=True):
     oidc: OidcConfig
     checkout: CheckoutConfig
@@ -90,6 +98,8 @@ class WebConfig(_Config, kw_only=True):
     kofi_url: str | None = None
     listen_port: int = 8765
     static_dir: str | None = None
+    # Each HTTP-checked provider's offer (keys within REGISTRY.http). A provider not listed is "off".
+    providers: dict[str, ProviderConfig] = {}
 
     def oidc_settings(self, client_secret: str) -> OidcSettings:
         o = self.oidc
@@ -120,7 +130,11 @@ class WebConfig(_Config, kw_only=True):
     def user_limits(self) -> Limits:
         return user_limits(self.limits)
 
-    def check(self) -> WebConfig:
+    def offers(self, registry: Registry = REGISTRY) -> dict[str, Offer]:
+        """Every HTTP-checked provider's offer: "off" unless the config says otherwise."""
+        return {provider_id: self.providers.get(provider_id, ProviderConfig()).offer for provider_id in registry.http}
+
+    def check(self, registry: Registry = REGISTRY) -> WebConfig:
         if not self.oidc.client_id:
             raise ConfigError("oidc.clientId is required (in the config or WL_OIDC_CLIENT_ID_FILE)")
         if not re.fullmatch(r"https://[a-z0-9.-]+(:\d+)?", self.base_url):
@@ -129,6 +143,9 @@ class WebConfig(_Config, kw_only=True):
             raise ConfigError("kofiUrl must be https://ko-fi.com/<name>")
         if not re.fullmatch(r"https://[a-z0-9.-]+(:\d+)?", self.checkout.origin):
             raise ConfigError("checkout.origin must be an https origin")
+        unknown = sorted(set(self.providers) - set(registry.http))
+        if unknown:  # BC Ferries is always offered, so it has no entry either
+            raise ConfigError(f"providers: {unknown[0]} isn't a provider whose offer can be set")
         try:
             self.oidc_settings("check")
             self.identity_policy()

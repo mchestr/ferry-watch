@@ -26,8 +26,10 @@ import asyncpg
 
 from waitlist.control.store import USER_CHANNEL
 from waitlist.models import Trip, ValidationError
+from waitlist.providers import REGISTRY, Registry
+from waitlist.providers.base import ADMIN_NOTICE_KINDS, CHECKER_DOWN, NOTICE_KINDS, SITE_CHANGED
 
-from .messages import ADMIN_KINDS, EMAIL_KINDS, Message, Messages
+from .messages import ADMIN_KINDS, EMAIL_KINDS, GENERIC_KINDS, Message, Messages
 from .push import PushGone, Subscription, Vapid, send
 
 log = logging.getLogger(__name__)
@@ -44,6 +46,15 @@ MAX_KEY = 200
 
 class Undelivered(Exception):
     """No channel took the message (no working device and no email): try again later."""
+
+
+class Unrenderable(Exception):
+    """A notification nobody can be told about: its provider or spec doesn't load, or its provider's notice is
+    missing or breaks the link rules. Never silent: it's marked as tried UNRENDERABLE_ATTEMPTS times, which the
+    admin attention list shows, and nothing goes to its user."""
+
+
+UNRENDERABLE_ATTEMPTS = 6
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +91,7 @@ class Outbox:
         vapid: Vapid | None,
         mailer: Mailer | None,
         clock: Callable[[], float] = time.time,
+        registry: Registry = REGISTRY,
     ) -> None:
         self._pool = pool
         self._http = http
@@ -87,6 +99,7 @@ class Outbox:
         self._vapid = vapid
         self._mailer = mailer
         self._clock = clock
+        self._registry = registry
         self._wake = asyncio.Event()
 
     def wake(self) -> None:
@@ -119,7 +132,7 @@ class Outbox:
         async with self._pool.acquire() as conn, conn.transaction():
             rows = await conn.fetch(
                 "SELECT n.id, n.user_id, n.to_email, n.trip_id, n.kind, n.params, n.attempts, u.email,"
-                " t.spec, s.cart FROM notifications n LEFT JOIN users u ON u.id = n.user_id"
+                " t.provider, t.spec, s.cart FROM notifications n LEFT JOIN users u ON u.id = n.user_id"
                 " LEFT JOIN trips t ON t.id = n.trip_id LEFT JOIN trip_state s ON s.trip_id = n.trip_id"
                 " WHERE n.sent_at IS NULL AND n.next_attempt_at <= $1 AND n.attempts < $2 AND n.created_at > $3"
                 " ORDER BY n.created_at LIMIT $4 FOR UPDATE OF n SKIP LOCKED",
@@ -139,17 +152,38 @@ class Outbox:
         return len(rows)
 
     async def _deliver(self, row: asyncpg.Record) -> None:
+        """One notification, by its kind and its watch's provider (docs/waitlist/design.md §6.5): generic kinds and
+        BC Ferries' as 0.7.1 did; an HTTP-checked provider's through its own notice; a provider's trouble to admins
+        only."""
+        kind, params = row["kind"], json.loads(row["params"])
         trip = None
-        if row["spec"]:
-            with contextlib.suppress(ValidationError, ValueError):
-                trip = Trip.from_json(json.loads(row["spec"]))
-        cart = json.loads(row["cart"]) if row["cart"] else None
-        message = self._messages.render(row["kind"], json.loads(row["params"]), trip, cart)
+        message = None
+        try:
+            if kind in ADMIN_NOTICE_KINDS:
+                pass  # nothing for the row's user: the admins get it below
+            elif kind in GENERIC_KINDS:
+                message = self._messages.render(kind, params, None)
+            elif row["provider"] is None or row["provider"] == "bcferries":
+                trip = self._trip(row)
+                cart = json.loads(row["cart"]) if row["cart"] else None
+                message = self._messages.render(kind, params, trip, cart)
+            else:
+                message = self._notice(row, kind, params)
+        except Unrenderable as e:
+            log.error("Notification %d (%s) can't be rendered: %s", row["id"], kind, e)  # noqa: TRY400 - no traceback
+            await self._pool.execute(
+                "UPDATE notifications SET attempts = $2, last_error = 'Unrenderable' WHERE id = $1",
+                row["id"],
+                UNRENDERABLE_ATTEMPTS,
+            )
+            return
         try:
             if message is not None:  # (an admin-only kind has nothing for its user; the admins get it below)
                 await self._send(row, message)
-            if row["kind"] in ADMIN_KINDS:
-                await self._to_admins(row["kind"], trip)
+            if kind in ADMIN_KINDS:
+                await self._to_admins(kind, trip)
+            elif kind in ADMIN_NOTICE_KINDS:
+                await self._provider_trouble_to_admins(kind, params)
         except Exception as e:  # noqa: BLE001 - recorded and retried, whatever went wrong
             attempts = row["attempts"] + 1
             delay = RETRY_SECONDS[min(attempts, len(RETRY_SECONDS)) - 1]
@@ -218,10 +252,58 @@ class Outbox:
         await self._mailer.send(to, message.title, text)
         return True
 
+    def _trip(self, row: asyncpg.Record) -> Trip | None:
+        """A BC Ferries row's trip. One whose spec doesn't load can't be told about, unless only admins hear it."""
+        if not row["spec"]:
+            return None  # its trip is gone: as 0.7.1, nothing to say
+        try:
+            return Trip.from_json(json.loads(row["spec"]))
+        except (ValidationError, ValueError):
+            if row["kind"] in ADMIN_KINDS:
+                return None
+            raise Unrenderable("its trip's spec doesn't load") from None
+
+    def _notice(self, row: asyncpg.Record, kind: str, params: dict[str, Any]) -> Message | None:
+        """An HTTP-checked provider's notice, as a message. Its push opens only the watch's own page, and its email's
+        second link is one of the provider's booking pages (I8)."""
+        provider = self._registry.http_provider(row["provider"])
+        if provider is None:
+            raise Unrenderable(f"{row['provider']} isn't a provider this build knows")
+        watch_url = f"{self._messages.base_url}/w/{row['trip_id']}"
+        try:
+            spec = provider.load_spec(json.loads(row["spec"]))
+            notice = provider.render(kind, params, spec, watch_url=watch_url)
+        except Exception as e:  # noqa: BLE001 - a SpecError or a provider's bug: either way, never silent
+            raise Unrenderable(f"its provider couldn't render it ({type(e).__name__})") from None
+        if notice is None:
+            if kind in NOTICE_KINDS:
+                raise Unrenderable("its provider had nothing to say")
+            return None
+        if notice.url != watch_url:
+            raise Unrenderable("its notice opens something other than the watch's page")
+        if notice.also is not None and not provider.meta.allows_booking_url(notice.also[1]):
+            raise Unrenderable("its notice links outside the provider's booking pages")
+        topic = notice.topic or f"{kind[:8]}-{row['trip_id']}"
+        return Message(notice.title, notice.body, notice.url, notice.urgency, notice.ttl, topic, notice.also)
+
     async def _to_admins(self, kind: str, trip: Trip | None) -> None:
         admins = await self._pool.fetch("SELECT id FROM users WHERE is_admin AND state = 'active'")
         note = Message(f"Admin: {kind.replace('_', ' ')}", f"Trip {trip.id if trip else '?'}.", "/admin")
         for admin in admins:
+            await self._push(admin["id"], note)
+
+    async def _provider_trouble_to_admins(self, kind: str, params: dict[str, Any]) -> None:
+        provider_id = params.get("provider")
+        meta = self._registry.meta(provider_id) if isinstance(provider_id, str) else None
+        name = meta.name if meta is not None else "A provider"
+        if kind == SITE_CHANGED:
+            body = f"{name}'s answers can't be read; its checks are failing."
+        elif kind == CHECKER_DOWN:
+            body = f"waitlist-fetcher isn't answering; {name} checks are on hold."
+        else:
+            return
+        note = Message(f"Admin: {kind.replace('_', ' ')}", body, "/admin")
+        for admin in await self._pool.fetch("SELECT id FROM users WHERE is_admin AND state = 'active'"):
             await self._push(admin["id"], note)
 
 

@@ -8,23 +8,48 @@ with the user's row locked, so two requests can't both slip under a limit.
 from __future__ import annotations
 
 import json
+import logging
 import secrets
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from datetime import time as clock_time
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import asyncpg
+import msgspec
 
+from waitlist.control.checkplan import STALE_REPORT_S, check_state
 from waitlist.control.configure import Allowance, HubSettings, Switches, cart_gate
-from waitlist.control.limits import LimitKey, Limits
+from waitlist.control.limits import DEFAULTS, LimitKey, Limits
 from waitlist.control.store import CLAIM_LAPSE_SECONDS, USER_CHANNEL
-from waitlist.models import PACIFIC, Trip, ValidationError
+from waitlist.models import PACIFIC, Trip, ValidationError, format_time
 from waitlist.polling import DEFAULT_QUIET_HOURS, PollPolicy, QuietHours, quiet_hours
+from waitlist.providers import REGISTRY, Registry
+from waitlist.providers.base import CheckState, HttpProvider, Option, ProviderMeta, search_hash
 
+from .config import Offer
 from .http import ApiError
 from .push import Subscription
+
+log = logging.getLogger(__name__)
+
+BCFERRIES = "bcferries"
+# What a full limit group says, by the limit that caps it (ProviderMeta.limit_key).
+AT_LIMIT = {
+    "maxTrips": "You can watch up to {n} trips",
+    "maxAlertOnlyWatches": "You can have up to {n} alert-only watches",
+}
+FULL = "You're watching as many as you can"
+NOT_OFFERED = "Not available to you"
+SHOWN_LIMITS: tuple[LimitKey, ...] = (
+    "maxTrips",
+    "maxAlertOnlyWatches",
+    "maxActiveBrowsers",
+    "maxHoldsPerDay",
+    "vncMinutesPerDay",
+    "manualChecksPerHour",
+)
 
 AFTER_CHECKOUT = "after_checkout"
 # Which viewer opens the user's checkouts (`user_settings.checkout_viewer`): KasmVNC, or the streamed viewer beta.
@@ -53,6 +78,11 @@ def _ts(epoch: float) -> datetime:
 
 def _epoch(value: datetime | None) -> float | None:
     return value.timestamp() if value is not None else None
+
+
+def _seconds(value: Any) -> float | None:
+    """An epoch time from JSON, or None for anything else."""
+    return float(value) if isinstance(value, int | float) and not isinstance(value, bool) else None
 
 
 def _today(now: float) -> date:
@@ -185,11 +215,22 @@ class WebStore:
         policy: PollPolicy,
         *,
         clock: Callable[[], float],
+        registry: Registry = REGISTRY,
+        offers: Mapping[str, Offer] | None = None,
     ) -> None:
         self._pool = pool
         self._limits = limits
         self._policy = policy
         self._clock = clock
+        self.registry = registry
+        # Each HTTP-checked provider's offer; one the config doesn't name is "off".
+        self.offers: dict[str, Offer] = {p: (offers or {}).get(p, "off") for p in registry.http}
+        self._unloadable: set[tuple[str, int]] = set()  # (id, rev) of watches already logged as not loading
+
+    @property
+    def horizon_days(self) -> int:
+        """How far ahead a BC Ferries trip may be: the deployment's polling.horizonDays, which add_trip enforces."""
+        return self._policy.horizon.days
 
     async def notify(self, uid: str) -> None:
         """Wake this user's other dashboards (LISTEN wl_user)."""
@@ -207,8 +248,11 @@ class WebStore:
     # ---- trips
 
     async def trip(self, uid: str, trip_id: str) -> tuple[Trip, int]:
+        """The user's live BC Ferries trip. Another provider's watch is "No such trip": the browser's actions (a
+        command, a manual check, a hold, a checkout) are BC Ferries' alone (docs/waitlist/design.md §2.4)."""
         row = await self._pool.fetchrow(
-            "SELECT spec, enabled, rev FROM trips WHERE id = $1 AND user_id = $2 AND archived_at IS NULL",
+            "SELECT spec, enabled, rev FROM trips"
+            " WHERE id = $1 AND user_id = $2 AND archived_at IS NULL AND provider = 'bcferries'",
             trip_id,
             uid,
         )
@@ -228,11 +272,13 @@ class WebStore:
         async with self._pool.acquire() as conn, conn.transaction():
             await conn.execute("SELECT 1 FROM users WHERE id = $1 FOR UPDATE", uid)
             limit = await self.limit(conn, uid, "maxTrips")
-            count = await conn.fetchval("SELECT count(*) FROM trips WHERE user_id = $1 AND archived_at IS NULL", uid)
+            count = await conn.fetchval(
+                "SELECT count(*) FROM trips WHERE user_id = $1 AND archived_at IS NULL AND provider = 'bcferries'", uid
+            )
             if count >= limit:
                 raise ApiError(409, f"You can watch up to {limit} trips", "trips", limit=limit, usage=count)
             await conn.execute(
-                "INSERT INTO trips (id, user_id, spec, enabled) VALUES ($1, $2, $3, $4)",
+                "INSERT INTO trips (id, user_id, provider, spec, enabled) VALUES ($1, $2, 'bcferries', $3, $4)",
                 trip.id,
                 uid,
                 json.dumps(trip.to_json()),
@@ -244,7 +290,8 @@ class WebStore:
     async def update_trip(self, uid: str, trip_id: str, data: dict[str, Any]) -> Trip:
         async with self._pool.acquire() as conn, conn.transaction():
             row = await conn.fetchrow(
-                "SELECT spec, enabled FROM trips WHERE id = $1 AND user_id = $2 AND archived_at IS NULL FOR UPDATE",
+                "SELECT spec, enabled FROM trips"
+                " WHERE id = $1 AND user_id = $2 AND archived_at IS NULL AND provider = 'bcferries' FOR UPDATE",
                 trip_id,
                 uid,
             )
@@ -270,11 +317,177 @@ class WebStore:
                 await conn.execute("UPDATE trip_runtime SET next_check_at = NULL WHERE trip_id = $1", trip_id)
         return trip
 
-    async def archive_trip(self, uid: str, trip_id: str) -> None:
-        """Stop watching. waitlist-control drains its pod, which hands back any cart first."""
+    async def archive_trip(self, uid: str, trip_id: str, *, provider: str | None = "bcferries") -> None:
+        """Stop watching. waitlist-control drains its pod, which hands back any cart first. `provider`: only a
+        watch of that provider (the /api/trips alias: BC Ferries), or None for any (DELETE /api/watches)."""
         async with self._pool.acquire() as conn, conn.transaction():
+            if provider is not None:
+                found = await conn.fetchval(
+                    "SELECT 1 FROM trips WHERE id = $1 AND user_id = $2 AND archived_at IS NULL AND provider = $3"
+                    " FOR UPDATE",
+                    trip_id,
+                    uid,
+                    provider,
+                )
+                if found is None:
+                    raise ApiError(404, "No such trip")
             if not await _archive(conn, uid, trip_id):
-                raise ApiError(404, "No such trip")
+                raise ApiError(404, "No such trip" if provider is not None else "No such watch")
+
+    # ---- watches on any provider (docs/waitlist/design.md §6.2)
+
+    def _limit_key(self, meta: ProviderMeta) -> LimitKey:
+        if meta.limit_key not in DEFAULTS:
+            raise ValueError(f"{meta.id}: {meta.limit_key} isn't a limit")
+        return cast(LimitKey, meta.limit_key)
+
+    def _at(self, now: float) -> datetime:
+        return datetime.fromtimestamp(now, UTC)  # what a provider is handed: always timezone-aware
+
+    async def watch_provider(self, uid: str, watch_id: str) -> str:
+        """The provider of the user's live watch, read before anything else (its spec is the provider's to parse)."""
+        provider = await self._pool.fetchval(
+            "SELECT provider FROM trips WHERE id = $1 AND user_id = $2 AND archived_at IS NULL", watch_id, uid
+        )
+        if provider is None:
+            raise ApiError(404, "No such watch")
+        return str(provider)
+
+    async def add_watch(
+        self, uid: str, provider: HttpProvider[Any, Any, Any], data: Mapping[str, Any], *, enabled: bool = True
+    ) -> str:
+        """A new watch on an HTTP-checked provider, within the user's limit for its kind; due as soon as its window
+        allows. Returns its id."""
+        spec = provider.parse_spec(data, base=None, now=self._at(self._clock()))
+        key = self._limit_key(provider.meta)
+        group = [m.id for m in self.registry.metas if m.limit_key == provider.meta.limit_key]
+        watch_id = secrets.token_hex(8)
+        async with self._pool.acquire() as conn, conn.transaction():
+            await conn.execute("SELECT 1 FROM users WHERE id = $1 FOR UPDATE", uid)
+            limit = await self.limit(conn, uid, key)
+            count = await conn.fetchval(
+                "SELECT count(*) FROM trips WHERE user_id = $1 AND archived_at IS NULL AND provider = ANY($2::text[])",
+                uid,
+                group,
+            )
+            if count >= limit:
+                message = AT_LIMIT.get(key, "You can't add more of these").format(n=limit)
+                raise ApiError(409, message, "provider", limit=limit, usage=count)
+            await conn.execute(
+                "INSERT INTO trips (id, user_id, provider, spec, enabled) VALUES ($1, $2, $3, $4, $5)",
+                watch_id,
+                uid,
+                provider.meta.id,
+                json.dumps(provider.dump_spec(spec)),
+                enabled,
+            )
+            await conn.execute("INSERT INTO trip_runtime (trip_id) VALUES ($1)", watch_id)  # NULL: due when it can be
+        return watch_id
+
+    async def update_watch(
+        self,
+        uid: str,
+        watch_id: str,
+        provider: HttpProvider[Any, Any, Any],
+        patch: Mapping[str, Any] | None,
+        enabled: bool | None,
+    ) -> None:
+        """A partial edit of an HTTP-checked watch. A changed spec makes it due at once (its stored options catch up
+        within a tick); a changed search forgets what was alerted; turning it back on makes it due too."""
+        async with self._pool.acquire() as conn, conn.transaction():
+            row = await conn.fetchrow(
+                "SELECT provider, spec, enabled, rev FROM trips"
+                " WHERE id = $1 AND user_id = $2 AND archived_at IS NULL FOR UPDATE",
+                watch_id,
+                uid,
+            )
+            if row is None or row["provider"] != provider.meta.id:
+                raise ApiError(404, "No such watch")
+            current = json.loads(row["spec"])
+            base = provider.load_spec(current)
+            new = provider.parse_spec(patch or {}, base=base, now=self._at(self._clock()))
+            stored = provider.dump_spec(new)
+            now_enabled = row["enabled"] if enabled is None else enabled
+            await conn.execute(
+                "UPDATE trips SET spec = $3, enabled = $4, rev = rev + 1, updated_at = now()"
+                " WHERE id = $1 AND user_id = $2",
+                watch_id,
+                uid,
+                json.dumps(stored),
+                now_enabled,
+            )
+            if stored != current or (now_enabled and not row["enabled"]):
+                await conn.execute("UPDATE trip_runtime SET next_check_at = NULL WHERE trip_id = $1", watch_id)
+            if search_hash(provider.search_key(new)) != search_hash(provider.search_key(base)):
+                await conn.execute("DELETE FROM alert_memory WHERE trip_id = $1", watch_id)  # a new search
+
+    async def check_watch(self, uid: str, watch_id: str, provider: HttpProvider[Any, Any, Any]) -> None:
+        """A manual check of an HTTP-checked watch: due now, with the user's quiet hours lifted for it for a few
+        minutes, counted against manualChecksPerHour. Refused, consuming nothing, while a check couldn't happen."""
+        now = self._clock()
+        row = await self._pool.fetchrow(
+            "SELECT t.spec, t.enabled, t.paused_reason, rt.backoff_until, rt.quiet_lifted_until,"
+            " cr.consecutive_errors, cr.attempted_at, u.state, u.paused"
+            " FROM trips t JOIN users u ON u.id = t.user_id LEFT JOIN trip_runtime rt ON rt.trip_id = t.id"
+            " LEFT JOIN check_results cr ON cr.trip_id = t.id"
+            " WHERE t.id = $1 AND t.user_id = $2 AND t.archived_at IS NULL AND t.provider = $3",
+            watch_id,
+            uid,
+            provider.meta.id,
+        )
+        if row is None:
+            raise ApiError(404, "No such watch")
+        spec = provider.load_spec(json.loads(row["spec"]))
+        window = provider.window(spec)
+        context = await self.hold_context(uid, now)
+        provider_paused, running, cooldown_until = self.check_inputs(provider.meta.id, await self.switches(), now)
+        backoff_until = _epoch(row["backoff_until"])
+        state: CheckState = check_state(
+            enabled=row["enabled"],
+            paused_reason=row["paused_reason"],
+            owner_active=row["state"] == "active" and not row["paused"],
+            window=window,
+            quiet=context.quiet(_epoch(row["quiet_lifted_until"]), now),
+            provider_paused=provider_paused,
+            provider_running=running,
+            backoff_until=backoff_until,
+            cooldown_until=cooldown_until,
+            consecutive_errors=row["consecutive_errors"] or 0,
+            attempted_at=_epoch(row["attempted_at"]),
+            now=now,
+        )
+        name = provider.meta.name
+        resume = max(backoff_until or 0.0, cooldown_until or 0.0)
+        if state == "waiting_release":
+            opens = window.opens_at.astimezone(PACIFIC)
+            raise ApiError(409, f"Checks start {opens:%a %b %-d} at {format_time(opens.time())}")
+        if state == "over":
+            raise ApiError(409, "It's too late for this watch")
+        if state == "provider_paused":
+            raise ApiError(409, f"Checks for {name} are paused right now")
+        if state == "unavailable":
+            raise ApiError(409, f"Checks for {name} aren't running right now")
+        if state == "paused":
+            raise ApiError(409, "This watch is paused")
+        if state == "backoff" or (state == "quiet" and resume > now):
+            # Web can't clear a backoff, so a check now would spend a manual check on nothing.
+            raise ApiError(409, f"Checks resume at {format_time(datetime.fromtimestamp(resume, PACIFIC).time())}")
+        async with self._pool.acquire() as conn, conn.transaction():
+            await self._check_now(conn, uid, watch_id, now)
+            await conn.execute(
+                "UPDATE trip_runtime SET quiet_lifted_until = $2 WHERE trip_id = $1", watch_id, _ts(now + QUIET_LIFT_S)
+            )
+
+    async def done_watch(self, uid: str, watch_id: str) -> None:
+        """ "I booked it", for an alert-only watch: archived, with a record of why."""
+        async with self._pool.acquire() as conn, conn.transaction():
+            if not await _archive(conn, uid, watch_id):
+                raise ApiError(404, "No such watch")
+            await conn.execute(
+                "INSERT INTO events (user_id, trip_id, kind, code, params) VALUES ($1, $2, 'watch', 'booked', '{}')",
+                uid,
+                watch_id,
+            )
 
     # ---- what users ask of their browser
 
@@ -410,7 +623,8 @@ class WebStore:
             raise ValidationError("reason", "Not a reason we know")
         async with self._pool.acquire() as conn, conn.transaction():
             paused = await conn.fetchval(
-                "SELECT paused_reason FROM trips WHERE id = $1 AND user_id = $2 AND archived_at IS NULL FOR UPDATE",
+                "SELECT paused_reason FROM trips"
+                " WHERE id = $1 AND user_id = $2 AND archived_at IS NULL AND provider = 'bcferries' FOR UPDATE",
                 trip_id,
                 uid,
             )
@@ -558,6 +772,199 @@ class WebStore:
 
     # ---- what the dashboard shows
 
+    async def switches(self) -> dict[str, Any]:
+        """The fleet switches and waitlist-control's check report, as stored."""
+        return {
+            r["key"]: json.loads(r["value"])
+            for r in await self._pool.fetch(
+                "SELECT key, value FROM fleet_state WHERE key IN ('maintenance', 'paused_providers', 'check_report')"
+            )
+        }
+
+    def provider_paused(self, provider_id: str, switches: Mapping[str, Any]) -> bool:
+        """An HTTP-checked provider's checks are paused: maintenance, or an admin paused it. Never BC Ferries."""
+        if provider_id not in self.registry.http:
+            return False
+        paused = switches.get("paused_providers")
+        return switches.get("maintenance") is True or (isinstance(paused, list) and provider_id in paused)
+
+    def offered(self, meta: ProviderMeta, *, is_admin: bool) -> bool:
+        """Whether this user may start a watch on the provider. BC Ferries is always offered."""
+        if meta.id not in self.registry.http:
+            return True
+        offer = self.offers.get(meta.id, "off")
+        return offer == "everyone" or (offer == "admins" and is_admin)
+
+    def providers(self, *, is_admin: bool, switches: Mapping[str, Any]) -> list[dict[str, Any]]:
+        """The catalog (GET /api/providers, and every state's `providers`), in picker order, built per request.
+        Providers not offered to the user are listed too, so an existing watch still names its provider."""
+        catalog = []
+        for meta in self.registry.metas:
+            entry = meta.to_json() | {
+                "offered": self.offered(meta, is_admin=is_admin),
+                "paused": self.provider_paused(meta.id, switches),
+            }
+            if meta.id == BCFERRIES:  # what add_trip enforces (PollPolicy.within_horizon), so the SPA agrees
+                entry["horizon_days"] = self.horizon_days
+            catalog.append(entry)
+        return catalog
+
+    def _capacity(self, live: Iterable[str], overrides: Mapping[str, int], *, is_admin: bool) -> dict[str, Any]:
+        """Whether the user may add a watch, per provider: each counts the live watches of every provider capped by
+        the same limit. A paused provider doesn't stop adding: the watch waits until checks resume."""
+        counts: dict[str, int] = {}
+        for provider_id in live:
+            meta = self.registry.meta(provider_id)
+            if meta is not None:
+                counts[meta.limit_key] = counts.get(meta.limit_key, 0) + 1
+        per_provider: dict[str, Any] = {}
+        for meta in self.registry.metas:
+            limit = self._limits.value(self._limit_key(meta), overrides)
+            count = counts.get(meta.limit_key, 0)
+            offered = self.offered(meta, is_admin=is_admin)
+            reason = None
+            if not offered:
+                reason = NOT_OFFERED
+            elif count >= limit:
+                reason = AT_LIMIT.get(meta.limit_key, "You can't add more of these").format(n=limit)
+            per_provider[meta.id] = {"can_add": reason is None, "reason": reason, "limit": limit, "count": count}
+        can_add = any(p["can_add"] for p in per_provider.values())
+        return {"can_add": can_add, "reason": None if can_add else FULL, "providers": per_provider}
+
+    def _degraded(self, r: asyncpg.Record, why: str) -> dict[str, Any]:
+        """What's left of a watch this build can't show: enough to list it and remove it."""
+        if (r["id"], r["rev"]) not in self._unloadable:
+            self._unloadable.add((r["id"], r["rev"]))
+            log.warning("Watch %s (rev %d, %s) is shown as unknown: %s", r["id"], r["rev"], r["provider"], why)
+        return {
+            "provider": r["provider"],
+            "id": r["id"],
+            "rev": r["rev"],
+            "enabled": r["enabled"],
+            "paused_reason": r["paused_reason"],
+            "quiet": False,
+        }
+
+    def _bcferries_entry(self, r: asyncpg.Record, context: HoldContext, now: float) -> dict[str, Any]:
+        """A BC Ferries trip's entry: 0.7.1's exactly, plus `provider`, `id` and `enabled`."""
+        spec = json.loads(r["spec"]) | {"enabled": r["enabled"]}
+        sailings = json.loads(r["sailings"]) if r["sailings"] else []
+        requested_until = _epoch(r["hold_requested_until"])
+        # A manual check or "Hold it for me" lifts the user's quiet hours for the trip.
+        lifted = max((t for t in (requested_until, _epoch(r["quiet_lifted_until"])) if t is not None), default=None)
+        quiet = context.quiet(lifted, now)
+        hold = context.hold(
+            Trip.from_json(spec),
+            paused=not r["enabled"] or r["paused_reason"] is not None,
+            quiet=quiet,
+            sailings=sailings,
+            alerted=r["alerted"] or (),
+            requested_until=requested_until,
+            now=now,
+        )
+        return {
+            "provider": BCFERRIES,
+            "id": r["id"],
+            "enabled": r["enabled"],
+            "trip": spec,
+            "rev": r["rev"],
+            "paused_reason": r["paused_reason"],
+            "quiet": quiet,  # in the user's quiet hours, and not lifted: it isn't being checked
+            "hold": hold,
+            "browser": {
+                "phase": r["agent_phase"] or r["phase"] or "off",
+                "mode": r["mode"] or "off",
+                "queue_position": r["queue_position"],
+                "next_check_at": _after_quiet(_epoch(r["next_check_at"]), context, lifted),
+                "last_check_at": _epoch(r["last_check_at"]),
+                "checked_at": _epoch(r["checked_at"]),
+                "next_due": _epoch(r["next_due"]),
+                "effective_interval": r["effective_interval"],
+                "heartbeat_at": _epoch(r["heartbeat_at"]),
+                "sailings": sailings,
+                "error_class": r["error_class"],
+                "consecutive_errors": r["consecutive_errors"] or 0,
+                "cart": json.loads(r["cart"]) if r["cart"] else None,
+                "viewer_connected": bool(r["viewer_connected"]),
+            },
+        }
+
+    def check_inputs(
+        self, provider_id: str, switches: Mapping[str, Any], now: float
+    ) -> tuple[bool, bool, float | None]:
+        """What waitlist-web passes check_state for a provider: (provider_paused, provider_running, cooldown_until).
+        Checks are running when waitlist-control's check report is fresh and says the fetcher answers."""
+        report = switches.get("check_report")
+        at = _seconds(report.get("at")) if isinstance(report, dict) else None
+        providers = report.get("providers") if isinstance(report, dict) else None
+        fresh = at is not None and at >= now - STALE_REPORT_S and isinstance(providers, dict)
+        entry = providers.get(provider_id) if fresh and isinstance(providers, dict) else None
+        running = isinstance(entry, dict) and entry.get("fetcher") == "ok"
+        cooldown_until = _seconds(entry.get("cooldown_until")) if isinstance(entry, dict) else None
+        return self.provider_paused(provider_id, switches), running, cooldown_until
+
+    def _http_entry(
+        self,
+        r: asyncpg.Record,
+        provider: HttpProvider[Any, Any, Any],
+        context: HoldContext,
+        switches: Mapping[str, Any],
+        *,
+        owner_active: bool,
+        now: float,
+    ) -> dict[str, Any]:
+        """An HTTP-checked watch's entry (design.md §6.3). Raises ValueError (SpecError) if its spec won't load."""
+        spec = provider.load_spec(json.loads(r["spec"]))
+        window = provider.window(spec)
+        at = datetime.fromtimestamp(now, UTC)
+        lifted = _epoch(r["quiet_lifted_until"])
+        quiet = context.quiet(lifted, now)
+        provider_paused, running, cooldown_until = self.check_inputs(r["provider"], switches, now)
+        state = check_state(
+            enabled=r["enabled"],
+            paused_reason=r["paused_reason"],
+            owner_active=owner_active,
+            window=window,
+            quiet=quiet,
+            provider_paused=provider_paused,
+            provider_running=running,
+            backoff_until=_epoch(r["backoff_until"]),
+            cooldown_until=cooldown_until,
+            consecutive_errors=r["cr_consecutive_errors"] or 0,
+            attempted_at=_epoch(r["cr_attempted_at"]),
+            now=now,
+        )
+        placeholders: tuple[Option, ...] = provider.evaluate(spec, {}, at)
+        outcome = r["cr_outcome"] or "pending"
+        options = list(placeholders)
+        if r["cr_search_hash"] is not None and r["cr_search_hash"] == search_hash(provider.search_key(spec)):
+            options = remark(_stored_options(r["cr_options"]), placeholders)
+        else:  # a result made for an earlier search (or none yet) is never shown for this one
+            outcome = "pending"
+        booking = provider.booking_url(spec, options)
+        return {
+            "provider": r["provider"],
+            "id": r["id"],
+            "rev": r["rev"],
+            "enabled": r["enabled"],
+            "paused_reason": r["paused_reason"],
+            "quiet": quiet,
+            "spec": provider.dump_spec(spec),
+            "check": {
+                "state": state,
+                "opens_at": window.opens_at.timestamp(),
+                "closes_at": window.closes_at.timestamp(),
+                "last_check_at": _epoch(r["cr_attempted_at"]),
+                "checked_at": _epoch(r["cr_checked_at"]),
+                "next_check_at": _after_quiet(_epoch(r["next_check_at"]), context, lifted),
+                "outcome": outcome,
+                "error_class": r["cr_error_class"],
+                "consecutive_errors": r["cr_consecutive_errors"] or 0,
+            },
+            "options": [msgspec.to_builtins(o) for o in options],
+            "booking_url": booking if booking is not None and provider.meta.allows_booking_url(booking) else None,
+        }
+
     async def snapshot(self, uid: str) -> dict[str, Any]:
         now = self._clock()
         # For a release: a waitlist-web from before 0004 can still "Pause all" (users.paused) while it's being
@@ -566,10 +973,13 @@ class WebStore:
         await self._pool.execute(
             "WITH cleared AS (UPDATE users SET paused = false WHERE id = $1 AND paused RETURNING id)"
             " UPDATE trips SET enabled = false, spec = jsonb_set(spec, '{enabled}', 'false'), rev = rev + 1,"
-            " updated_at = now() WHERE archived_at IS NULL AND enabled AND user_id IN (SELECT id FROM cleared)",
+            " updated_at = now() WHERE archived_at IS NULL AND enabled AND user_id IN (SELECT id FROM cleared)"
+            " AND provider = 'bcferries'",
             uid,
         )
-        user = await self._pool.fetchrow("SELECT id, username, display, is_admin FROM users WHERE id = $1", uid)
+        user = await self._pool.fetchrow(
+            "SELECT id, username, display, is_admin, state, paused FROM users WHERE id = $1", uid
+        )
         if user is None:
             raise ApiError(404, "No such user")
         overrides = await self.overrides(self._pool, uid)
@@ -580,73 +990,44 @@ class WebStore:
             )
         }
         rows = await self._pool.fetch(
-            "SELECT t.id, t.spec, t.enabled, t.paused_reason, t.rev, rt.phase, rt.mode, rt.queue_position,"
-            " rt.next_check_at, rt.last_check_at, rt.hold_requested_until, rt.quiet_lifted_until,"
+            "SELECT t.id, t.provider, t.spec, t.enabled, t.paused_reason, t.rev, rt.phase, rt.mode, rt.queue_position,"
+            " rt.next_check_at, rt.last_check_at, rt.hold_requested_until, rt.quiet_lifted_until, rt.backoff_until,"
             " s.agent_phase, s.checked_at, s.next_due, s.effective_interval,"
-            " s.sailings, s.error_class, s.consecutive_errors, s.cart, s.viewer_connected, s.heartbeat_at, m.alerted"
+            " s.sailings, s.error_class, s.consecutive_errors, s.cart, s.viewer_connected, s.heartbeat_at, m.alerted,"
+            " cr.search_hash AS cr_search_hash, cr.outcome AS cr_outcome, cr.options AS cr_options,"
+            " cr.attempted_at AS cr_attempted_at, cr.checked_at AS cr_checked_at, cr.error_class AS cr_error_class,"
+            " cr.consecutive_errors AS cr_consecutive_errors"
             " FROM trips t LEFT JOIN trip_runtime rt ON rt.trip_id = t.id LEFT JOIN trip_state s ON s.trip_id = t.id"
-            " LEFT JOIN alert_memory m ON m.trip_id = t.id"
+            " LEFT JOIN alert_memory m ON m.trip_id = t.id LEFT JOIN check_results cr ON cr.trip_id = t.id"
             " WHERE t.user_id = $1 AND t.archived_at IS NULL ORDER BY t.created_at",
             uid,
         )
         context = await self.hold_context(uid, now)
-        trips = []
+        switches = await self.switches()
+        owner_active = user["state"] == "active" and not user["paused"]
+        watches = []
         for r in rows:
-            spec = json.loads(r["spec"]) | {"enabled": r["enabled"]}
-            sailings = json.loads(r["sailings"]) if r["sailings"] else []
-            requested_until = _epoch(r["hold_requested_until"])
-            # A manual check or "Hold it for me" lifts the user's quiet hours for the trip.
-            lifted = max((t for t in (requested_until, _epoch(r["quiet_lifted_until"])) if t is not None), default=None)
-            quiet = context.quiet(lifted, now)
-            hold = context.hold(
-                Trip.from_json(spec),
-                paused=not r["enabled"] or r["paused_reason"] is not None,
-                quiet=quiet,
-                sailings=sailings,
-                alerted=r["alerted"] or (),
-                requested_until=requested_until,
-                now=now,
-            )
-            trips.append(
-                {
-                    "trip": spec,
-                    "rev": r["rev"],
-                    "paused_reason": r["paused_reason"],
-                    "quiet": quiet,  # in the user's quiet hours, and not lifted: it isn't being checked
-                    "hold": hold,
-                    "browser": {
-                        "phase": r["agent_phase"] or r["phase"] or "off",
-                        "mode": r["mode"] or "off",
-                        "queue_position": r["queue_position"],
-                        "next_check_at": _after_quiet(_epoch(r["next_check_at"]), context, lifted),
-                        "last_check_at": _epoch(r["last_check_at"]),
-                        "checked_at": _epoch(r["checked_at"]),
-                        "next_due": _epoch(r["next_due"]),
-                        "effective_interval": r["effective_interval"],
-                        "heartbeat_at": _epoch(r["heartbeat_at"]),
-                        "sailings": sailings,
-                        "error_class": r["error_class"],
-                        "consecutive_errors": r["consecutive_errors"] or 0,
-                        "cart": json.loads(r["cart"]) if r["cart"] else None,
-                        "viewer_connected": bool(r["viewer_connected"]),
-                    },
-                }
-            )
-        shown: tuple[LimitKey, ...] = (
-            "maxTrips",
-            "maxActiveBrowsers",
-            "maxHoldsPerDay",
-            "vncMinutesPerDay",
-            "manualChecksPerHour",
-        )
+            provider = self.registry.http_provider(r["provider"])
+            try:
+                if r["provider"] == BCFERRIES:
+                    watches.append(self._bcferries_entry(r, context, now))
+                elif provider is not None:
+                    watches.append(self._http_entry(r, provider, context, switches, owner_active=owner_active, now=now))
+                else:
+                    watches.append(self._degraded(r, "a provider this build doesn't know"))
+            except ValueError as e:  # ValidationError, SpecError: one bad row never fails the state
+                watches.append(self._degraded(r, f"its spec doesn't load ({e})"))
+            except Exception as e:  # nor does a provider's bug
+                if r["provider"] == BCFERRIES:
+                    raise  # BC Ferries' entry is 0.7.1's, and failed as it would have
+                watches.append(self._degraded(r, f"its provider failed on it ({type(e).__name__})"))
         limits: dict[str, dict[str, Any]] = {}
-        for key in shown:
+        for key in SHOWN_LIMITS:
             effective = self._limits.effective(key, overrides.get(key))
             limits[key] = {"value": effective.value, "source": effective.source}
         events = await self._pool.fetch(
             "SELECT id, trip_id, ts, kind, code, params FROM events WHERE user_id = $1 ORDER BY ts DESC LIMIT 50", uid
         )
-        max_trips = limits["maxTrips"]["value"]
         quiet_json = _quiet_json(context.allowance.quiet)
         return {
             "me": {
@@ -658,11 +1039,9 @@ class WebStore:
             },
             "limits": limits,
             "usage": usage,
-            "trips": trips,
-            "capacity": {
-                "can_add": len(trips) < max_trips,
-                "reason": None if len(trips) < max_trips else f"You can watch up to {max_trips} trips",
-            },
+            "watches": watches,
+            "providers": self.providers(is_admin=user["is_admin"], switches=switches),
+            "capacity": self._capacity((r["provider"] for r in rows), overrides, is_admin=user["is_admin"]),
             # waitlist-web adds whether the streamed viewer is offered to the user (api.user_state).
             "settings": {"quiet_hours": quiet_json, "checkout_viewer": await self.checkout_viewer(uid)},
             # The same quiet hours, and whether it's quiet now.
@@ -680,3 +1059,22 @@ class WebStore:
                 for e in events
             ],
         }
+
+
+def _stored_options(text: str | None) -> list[Option]:
+    """check_results.options, as waitlist-control wrote them; anything unreadable reads as none."""
+    if not text:
+        return []
+    try:
+        return msgspec.json.decode(text, type=list[Option])
+    except (msgspec.ValidationError, msgspec.DecodeError):
+        log.warning("Stored options that aren't options; showing placeholders")
+        return []
+
+
+def remark(stored: Iterable[Option], placeholders: Iterable[Option]) -> list[Option]:
+    """Stored options re-marked against the current spec (design.md §6.3): the placeholders' keys and order (the
+    spec's alone), each the stored option of that key with the placeholder's `wanted`, or the placeholder itself
+    if none is stored. Stored keys the placeholders don't list are dropped. For an unchanged spec, the identity."""
+    by_key = {o.key: o for o in stored}
+    return [msgspec.structs.replace(by_key[p.key], wanted=p.wanted) if p.key in by_key else p for p in placeholders]

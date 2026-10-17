@@ -1,11 +1,14 @@
 # Waitlist
 
-Waitlist watches reservation systems for openings on things that are booked up and alerts you when one opens.
-BC Ferries is the first supported system (with auto-cart and checkout through the remote viewer); more are
-coming (Buntzen Lake day passes next).
+Waitlist watches reservation systems ("providers") for openings on things that are booked up, and alerts you
+when one opens: one dashboard for every watch, whatever system it's on.
 
-Each person signs in and watches their own trips. Alerts arrive by Web Push, and by email for what matters
-most. Waitlist was called Ferry Watch until October 2026; the design record in
+- **BC Ferries**: sailings, with auto-cart and checkout through the remote viewer.
+- **Buntzen Lake**: BC Hydro's day-use parking passes, sold on Yodel. Alert-only: you book on Yodel with your
+  own account. Each deployment chooses who is offered it (`waitlist.providers.buntzen.offer`).
+
+Each person signs in and watches their own things. Alerts arrive by Web Push, and by email for what matters
+most. The provider framework's design contract is [docs/waitlist/design.md](docs/waitlist/design.md). Waitlist was called Ferry Watch until October 2026; the design record in
 [docs/multi-tenant/](docs/multi-tenant/README.md) still uses the old names, and each of its files starts with
 the mapping.
 
@@ -22,12 +25,21 @@ checkout in that same browser, from any device, through the checkout viewer.
 - Quiet hours (each person's own, 10 pm to 5 am until they change them): no checks or holds overnight.
 - A web dashboard with live updates, usable on a phone, and an admin page for invitations, limits and the fleet.
 
+## Buntzen Lake
+
+Passes for a day go on sale at 7:00 am Pacific the day before, and popular ones sell out in seconds. A Buntzen
+watch is a date and the passes that would do (all day, morning, afternoon). Waitlist reminds you at 6:55, checks
+from 7:00:02 (every 30 s for 20 minutes, then every minute, every 30 minutes out of season), and alerts once a
+wanted pass is open; the alert opens the watch's page, whose first button books it on Yodel.
+
 ## How it works
 
 bcferries.com sits behind a Queue-it waiting room and keeps each booking search in a server-side session, so
 each BC Ferries trip's checks run in a real Chromium, driven with Playwright. The design is in
 [docs/multi-tenant/](docs/multi-tenant/README.md); what's built is in
-[implementation.md](docs/multi-tenant/implementation.md).
+[implementation.md](docs/multi-tenant/implementation.md). A provider with a plain HTTP API, like Buntzen
+Lake's, is checked by waitlist-control's HTTP check loop through **waitlist-fetcher** instead
+([docs/waitlist/design.md §4](docs/waitlist/design.md)).
 
 ```
  phone / laptop ──▶ waitlist-web ──── Postgres ──── waitlist-control ──▶ Kubernetes API (browser pods)
@@ -37,12 +49,19 @@ each BC Ferries trip's checks run in a real Chromium, driven with Playwright. Th
         │                                                │
         └── checkout ──▶ vnc-edge ──▶ browser pod (one per trip): the agent, Xvnc, Chromium ──▶ bcferries.com
              (a one-time ticket)
+
+ waitlist-control's HTTP check loop ──(closed wire)──▶ waitlist-fetcher ──▶ api.yodelpass.com (Buntzen Lake)
+                                                       (no database, no secrets, no Kubernetes)
 ```
 
 - **waitlist-web** signs people in (OIDC, invite-only), serves the dashboard and each person's API, mints
   checkout tickets, and sends alerts (Web Push and email) from an outbox. It has no Kubernetes access.
 - **waitlist-control** decides which trips get a browser, starts and reaps the browser pods, and runs the hub
-  they dial. It's the only part that talks to the API server.
+  they dial. It's the only part that talks to the API server. Its HTTP check loop schedules every HTTP-checked
+  watch (coalescing identical queries across people, within each provider's request budget), records what was
+  found and queues the alerts.
+- **waitlist-fetcher** makes those checks' requests, to the providers' declared hosts only, and parses the
+  answers into typed inventories. It holds no secret, no token and no database credential.
 - **A browser pod** runs the agent: one trip's watcher, its Chromium on a private Xvnc, and the gate that admits
   a checkout viewer with a ticket.
 - **vnc-edge** serves the checkout page (KasmVNC's web client, or the streamed viewer) and proxies its socket to
@@ -53,14 +72,38 @@ Code layout (`src/waitlist/`):
 | Package or module | Responsibility |
 |---|---|
 | `models.py`, `polling.py`, `holds.py`, `protocol.py`, `tickets.py`, `versions.py` | The shared core: trips and their validation, the poll curve and quiet hours, the hold clocks, the agent ↔ waitlist-control messages, checkout tickets |
+| `providers/` | Every provider's catalog entry, and the pure HTTP-checked providers (`buntzen/`): specs, queries, check windows, evaluation, alert wording |
+| `fetchwire.py`, `fetcher/` | The closed wire between waitlist-control and waitlist-fetcher, and the fetcher itself |
 | `bcferries/` | Everything that knows bcferries.com: `site.py` (the browser flow), `parse.py` (pure HTML parsing), `urls.py`, `terminals.py`, `errors.py` |
 | `agent/` | The browser pod: the one-trip watcher, the hub link, the VNC gate, the streamed viewer, lockdown self-tests |
-| `control/` | waitlist-control: migrations and grants, the hub, the fleet planner, the pod template |
-| `web/` | waitlist-web: sign-in, the API, admin, the live socket, the alert outbox |
+| `control/` | waitlist-control: migrations and grants, the hub, the fleet planner, the pod template, the HTTP check loop (`checkplan.py`, `checks.py`, `fetch.py`) |
+| `web/` | waitlist-web: sign-in, the API (`watches.py` for every provider), admin, the live socket, the alert outbox |
 
 The frontend (`web/`) is React, TypeScript, Vite, Tailwind, Radix UI and TanStack Query; the live UI is
 `web/src/mt/`. The trip form's route map is drawn from data bundled with the app (no map service sees where
 anyone is going): see [the BC Ferries route map](#the-bc-ferries-route-map). The checkout host is `vnc-edge/`.
+
+## The API
+
+Every route acts for the signed-in user (`Authorization: Bearer <session token>`); every write answers with the
+user's whole state, which the live socket (`/api/ws`) pushes too. Errors are `{"error", "field"?, "limit"?,
+"usage"?}`.
+
+| Route | What |
+|---|---|
+| `GET /api/state` | `me`, `limits`, `usage`, `watches` (every live watch, any provider), `providers`, `capacity`, `settings`, `quiet_hours`, `devices`, `events`, `links`, `push` |
+| `GET /api/providers` | The catalog: each provider, whether it's `offered` to you and whether its checks are `paused` |
+| `POST /api/watches` | `{provider, spec, enabled?}`: a new watch; answers `{watch_id, state}` |
+| `PATCH /api/watches/{id}` | `{spec?, enabled?}`: `spec` is partial, over the current one |
+| `DELETE /api/watches/{id}` | Stop watching |
+| `POST /api/watches/{id}/check` | Check now (`manualChecksPerHour`) |
+| `POST /api/watches/{id}/done` | "I booked it", for an alert-only watch |
+| `POST /api/trips/{id}/hold`, `/cart/release`, `/cart/dismiss`, `/vnc`, `/booked` | BC Ferries' holds, carts and checkout |
+| `PATCH /api/me`, `POST`/`DELETE /api/me/push-subscriptions`, `POST /api/alerts/test`, `GET /api/terminals` | Settings, devices, a test alert, BC Ferries' terminals |
+| `/api/admin/*` | Invitations, people, limits, the fleet's switches (including pausing a provider's checks) |
+
+`POST /api/trips`, `PATCH`/`DELETE /api/trips/{id}` and `POST /api/trips/{id}/check` remain as BC Ferries-only
+aliases until 1.1; the dashboard doesn't use them.
 
 ## Deployment
 

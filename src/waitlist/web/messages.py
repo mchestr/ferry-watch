@@ -18,7 +18,9 @@ from waitlist.bcferries.urls import search_url
 from waitlist.models import PACIFIC, Trip, format_time
 from waitlist.web.push import Urgency
 
-EMAIL_KINDS = frozenset({"cart_held", "cart_lost", "cart_expired", "booked_it", "booked", "invited"})
+EMAIL_KINDS = frozenset({"cart_held", "cart_lost", "cart_expired", "booked_it", "booked", "invited", "moved"})
+# Kinds about no watch, for any user: rendered here whatever the row's trip (docs/waitlist/design.md §6.5).
+GENERIC_KINDS = frozenset({"test", "invited", "moved"})
 ADMIN_KINDS = frozenset({"release_unverified", "checkout_blocked"})
 SHOWN_TIMES = 3
 BOOK_IT_YOURSELF = "Or book it yourself on bcferries.com"
@@ -78,6 +80,11 @@ class Messages:
         self._base = base_url.rstrip("/")
         self._terminals = terminals
 
+    @property
+    def base_url(self) -> str:
+        """The site's own origin, without a trailing slash: every link a push opens starts with it."""
+        return self._base
+
     def _route(self, trip: Trip) -> str:
         terminals = self._terminals()
         if terminals is not None and trip.origin in terminals and trip.destination in terminals:
@@ -113,7 +120,15 @@ class Messages:
         if kind == "invited":
             return Message(
                 "You're invited to Waitlist",
-                "Sign in with your account to start watching BC Ferries sailings for you.",
+                "Sign in with your account to start watching reservations for you.",
+                f"{self._base}/",
+                ttl=86400,
+            )
+        if kind == "moved":  # queued by the database owner at the cutover (docs/waitlist/design.md §8.7 C9)
+            return Message(
+                "Ferry Watch is now Waitlist",
+                "Same app, new address: waitlist.chestr.dev. Sign in there, add it to your home screen again and turn"
+                " alerts on for each device. Your BC Ferries trips came with you.",
                 f"{self._base}/",
                 ttl=86400,
             )

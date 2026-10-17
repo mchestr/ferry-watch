@@ -70,6 +70,33 @@ def test_bad_config(tmp_path: Path, change: dict[str, Any]) -> None:
         load(write(tmp_path, MINIMAL | change))
 
 
+def test_providers_are_off_unless_the_deployment_offers_them(tmp_path: Path) -> None:
+    assert load(write(tmp_path, MINIMAL)).offers() == {"buntzen": "off"}
+    for offer in ("off", "admins", "everyone"):
+        config = load(write(tmp_path, MINIMAL | {"providers": {"buntzen": {"offer": offer}}}))
+        assert config.offers() == {"buntzen": offer}
+    assert load(write(tmp_path, MINIMAL | {"providers": {"buntzen": {}}})).offers() == {"buntzen": "off"}
+
+
+@pytest.mark.parametrize(
+    "providers",
+    [
+        {"bcferries": {"offer": "everyone"}},  # always offered: not the config's to say
+        {"bcparks": {"offer": "admins"}},  # not a provider this build knows
+        *({"buntzen": {"offer": v}} for v in ("on", "Admins", False, None)),  # YAML's bare off is false: refused
+        {"buntzen": {"offer": "admins", "requestsPerMinute": 12}},  # waitlist-control's key
+    ],
+)
+def test_bad_provider_offers(tmp_path: Path, providers: dict[str, Any]) -> None:
+    with pytest.raises(ConfigError):
+        load(write(tmp_path, MINIMAL | {"providers": providers}))
+
+
+def test_alert_only_watches_are_a_limit(tmp_path: Path) -> None:
+    config = load(write(tmp_path, MINIMAL | {"limits": {"defaults": {"maxAlertOnlyWatches": 2}}}))
+    assert config.user_limits().value("maxAlertOnlyWatches", {}) == 2
+
+
 def test_the_client_id_may_come_from_its_own_file(tmp_path: Path) -> None:
     oidc = {k: v for k, v in MINIMAL["oidc"].items() if k != "clientId"}
     path = write(tmp_path, MINIMAL | {"oidc": oidc})
@@ -130,3 +157,25 @@ async def test_the_spa_is_served_on_explicit_routes_only(tmp_path: Path, aiohttp
     assert (await client.get("/manifest.webmanifest")).status == 200
     assert (await client.get("/c/not-a-trip")).status == 404
     assert (await client.get("/anything-else")).status == 404
+
+
+async def test_the_spa_serves_the_watch_routes(tmp_path: Path, aiohttp_client: Any) -> None:
+    """docs/waitlist/design.md §6.8: the dashboard, New watch (with a provider), a watch's page and the checkout."""
+    (tmp_path / "index.html").write_text("<html>app</html>")
+    app = web.Application()
+    add_static(app, tmp_path)
+    client: TestClient = await aiohttp_client(app)
+    for path in (
+        "/",
+        "/new",
+        "/new/buntzen",
+        "/new/bcferries",
+        "/w/3f9c0a1b2c3d4e5f",
+        "/c/3f9c0a1b2c3d4e5f",
+        "/settings",
+    ):
+        response = await client.get(path)
+        assert (response.status, await response.text()) == (200, "<html>app</html>"), path
+        assert response.headers["Cache-Control"] == "no-cache"
+    for path in ("/new/Buntzen", "/new/b", "/new/" + "x" * 33, "/w/not-a-watch", "/w/3F9C0A1B2C3D4E5F", "/watches"):
+        assert (await client.get(path)).status == 404, path

@@ -1,0 +1,70 @@
+{
+  "booking_url": "https://www.bcferries.com/?sailing=true&departureLocation=TSA&departureLocationName=Delta+-+Vancouver+%28Tsawwassen%29&arrivalLocation=SWB&arrivalLocationName=Sidney+-+Victoria+%28Swartz+Bay%29&departingDateTime=07%2F03%2F2027",
+  "browser": {
+    "cart": null,
+    "checked_at": 1814461160.0,
+    "consecutive_errors": 0,
+    "effective_interval": 300,
+    "error_class": null,
+    "heartbeat_at": 1814461195.0,
+    "last_check_at": 1814461080.0,
+    "mode": "warm",
+    "next_check_at": 1814464800.0,
+    "next_due": 1814461460.0,
+    "phase": "watching",
+    "queue_position": null,
+    "sailings": [
+      {
+        "arrive": "10:35",
+        "depart": "09:00",
+        "fares": [],
+        "status": "available",
+        "vessel": "Spirit of Vancouver Island"
+      },
+      {
+        "arrive": "12:35",
+        "depart": "11:00",
+        "fares": [],
+        "status": "sold_out",
+        "vessel": "Queen of New Westminster"
+      },
+      {
+        "arrive": "14:35",
+        "depart": "13:00",
+        "fares": [],
+        "status": "available",
+        "vessel": "Spirit of British Columbia"
+      }
+    ],
+    "viewer_connected": false
+  },
+  "hold": {
+    "can_request": true,
+    "holdable": [
+      "09:00"
+    ],
+    "reason": null,
+    "requested_at": null,
+    "requested_until": null
+  },
+  "paused_reason": null,
+  "quiet": false,
+  "rev": 1,
+  "trip": {
+    "adults": 2,
+    "auto_cart": true,
+    "children": 0,
+    "date": "2027-07-03",
+    "earliest": "07:00",
+    "enabled": true,
+    "fare": "cheapest",
+    "from": "TSA",
+    "height_ft": 8.0,
+    "id": "a1b2c3d4e5f60718",
+    "infants": 0,
+    "latest": "12:00",
+    "seniors": 0,
+    "to": "SWB",
+    "vehicle": "standard"
+  }
+}

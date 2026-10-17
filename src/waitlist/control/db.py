@@ -2,8 +2,9 @@
 
 `db-migrate` runs `migrate()` then `grant()` as the database owner. waitlist-web and waitlist-control log in as
 their own roles, own nothing, and get exactly the grants below: the audit log is insert-only for both;
-waitlist-web may queue only its own kinds of notification, flip only the maintenance switches and close (never
-open) the breaker; only waitlist-control writes what the agents report.
+waitlist-web may queue only its own kinds of notification, flip only the admin's switches (maintenance, pause
+carting, the per-provider pause) and close (never open) the breaker; only waitlist-control writes what the agents
+and the fetcher report (docs/waitlist/design.md §3.2).
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ LOCK_KEY = 0x776C_6D69  # "wlmi": one migrator at a time
 _ROLE = re.compile(r"[a-z_][a-z0-9_]{0,62}")
 
 WEB_NOTIFICATION_KINDS = ("test", "account", "admin", "invited")
-WEB_FLEET_KEYS = ("maintenance", "pause_carting")
+WEB_FLEET_KEYS = ("maintenance", "pause_carting", "paused_providers")
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,12 +69,19 @@ def _grants(web: str, control: str) -> list[str]:
     kinds = ", ".join(f"'{k}'" for k in WEB_NOTIFICATION_KINDS)
     keys = ", ".join(f"'{k}'" for k in WEB_FLEET_KEYS)
     return [
-        # ---- waitlist-web: people, trips, the API's reads, the outbox's sending
+        # ---- start from nothing, so the grants below are exactly what each role has (a privilege an older
+        # release granted and this one doesn't is gone). One transaction: nobody sees the gap.
+        f"REVOKE ALL ON ALL TABLES IN SCHEMA public FROM {web}, {control}",
+        f"REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM {web}, {control}",
+        # ---- waitlist-web: people, watches, the API's reads, the outbox's sending
         f"GRANT SELECT, INSERT, UPDATE, DELETE ON users, identities, unmatched_identities, invites, sessions,"
-        f" user_limits, user_settings, push_subscriptions, trips TO {web}",
-        f"GRANT SELECT ON trip_runtime, browser_pods, hold_claims, trip_state, alert_memory TO {web}",
-        # ... and may make a short check due now (a new trip, a re-enable, a manual check), ask for a hold
-        # ("Hold it for me") and lift quiet hours for a trip (a manual check), nothing more.
+        f" user_limits, user_settings, push_subscriptions TO {web}",
+        # Watches: never a new owner or provider (the triggers say so too), never a new id.
+        f"GRANT SELECT, INSERT, DELETE ON trips TO {web}",
+        f"GRANT UPDATE (spec, enabled, rev, paused_reason, archived_at, updated_at) ON trips TO {web}",
+        f"GRANT SELECT ON trip_runtime, browser_pods, hold_claims, trip_state, alert_memory, check_results TO {web}",
+        # ... and may make a check due now (a new watch, a re-enable, a manual check), ask for a hold
+        # ("Hold it for me") and lift quiet hours for a watch (a manual check), nothing more.
         f"GRANT INSERT (trip_id), UPDATE (next_check_at, hold_requested_until, quiet_lifted_until) ON trip_runtime"
         f" TO {web}",
         f"GRANT DELETE ON alert_memory TO {web}",  # an edited search forgets what the old one alerted
@@ -88,11 +96,11 @@ def _grants(web: str, control: str) -> list[str]:
         f"GRANT INSERT ON audit_log TO {web}",
         f"GRANT USAGE ON SEQUENCE agent_commands_id_seq, events_id_seq, notifications_id_seq,"
         f" push_subscriptions_id_seq, audit_log_id_seq TO {web}",
-        # ---- waitlist-control: pods, what agents report, and the trips' pause and archive
+        # ---- waitlist-control: pods, what agents and the fetcher report, and the watches' pause and archive
         f"GRANT SELECT ON users, user_limits, user_settings, trips TO {control}",
         f"GRANT UPDATE (paused_reason, archived_at, updated_at) ON trips TO {control}",
         f"GRANT SELECT, INSERT, UPDATE, DELETE ON trip_runtime, browser_pods, hold_claims, trip_state,"
-        f" alert_memory TO {control}",
+        f" alert_memory, check_results TO {control}",
         f"GRANT SELECT ON agent_commands TO {control}",
         f"GRANT UPDATE (consumed_at) ON agent_commands TO {control}",
         f"GRANT SELECT, INSERT ON events, notifications, hold_outcomes TO {control}",
@@ -100,7 +108,7 @@ def _grants(web: str, control: str) -> list[str]:
         f"GRANT INSERT ON audit_log TO {control}",
         f"GRANT USAGE ON SEQUENCE events_id_seq, notifications_id_seq, hold_outcomes_id_seq, audit_log_id_seq"
         f" TO {control}",
-        # ---- row-level limits
+        # ---- row-level limits (as 0.7.1, with the new switch in WEB_FLEET_KEYS)
         "ALTER TABLE notifications ENABLE ROW LEVEL SECURITY",
         "DROP POLICY IF EXISTS web_reads ON notifications",
         f"CREATE POLICY web_reads ON notifications FOR SELECT TO {web} USING (true)",
@@ -113,7 +121,7 @@ def _grants(web: str, control: str) -> list[str]:
         "ALTER TABLE fleet_state ENABLE ROW LEVEL SECURITY",
         "DROP POLICY IF EXISTS web_reads ON fleet_state",
         f"CREATE POLICY web_reads ON fleet_state FOR SELECT TO {web} USING (true)",
-        # waitlist-web flips the maintenance switches, and may close the breaker (only waitlist-control opens it).
+        # waitlist-web flips the admin's switches, and may close the breaker (only waitlist-control opens it).
         "DROP POLICY IF EXISTS web_switches ON fleet_state",
         f"CREATE POLICY web_switches ON fleet_state FOR UPDATE TO {web} USING (key IN ({keys}, 'breaker'))"
         f" WITH CHECK (key IN ({keys}) OR (key = 'breaker' AND value = '\"closed\"'::jsonb))",

@@ -77,7 +77,7 @@ async def seed(db: Database, *, uid: str | None = UID, trip: Trip = TRIP, user: 
     try:
         await owner.execute("INSERT INTO users (id, username) VALUES ($1, $1) ON CONFLICT DO NOTHING", user)
         await owner.execute(
-            "INSERT INTO trips (id, user_id, spec, rev) VALUES ($1, $2, $3, 3)",
+            "INSERT INTO trips (id, user_id, provider, spec, rev) VALUES ($1, $2, 'bcferries', $3, 3)",
             trip.id,
             user,
             json.dumps(trip.to_json()),
@@ -450,6 +450,11 @@ async def test_a_bookable_alert_says_why_nothing_was_held(rig: Rig, agent: Agent
             spec = TRIP.to_json() | {"auto_cart": False}
             await owner.execute("UPDATE trips SET spec = $1", json.dumps(spec))
         elif setup == "elsewhere":
+            # The user's other BC Ferries trip (only those have cart claims), holding the one cart.
+            await owner.execute(
+                "INSERT INTO trips (id, user_id, provider, spec) VALUES ('ffffffffffffffff', $1, 'bcferries', '{}')",
+                USER,
+            )
             await owner.execute(
                 "INSERT INTO hold_claims (user_id, trip_id, pod, cart_id) VALUES ($1, 'ffffffffffffffff', 'x', 'c1')",
                 USER,
