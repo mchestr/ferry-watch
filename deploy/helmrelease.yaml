@@ -2,18 +2,22 @@
 # Waitlist, multi-tenant (github.com/mchestr/waitlist, docs/multi-tenant/design-reference.md §7).
 #
 # - waitlist-web: sign-in, the API and the dashboard. No Kubernetes access.
-# - waitlist-control: the hub the browser pods dial, and the fleet loop that starts and reaps them.
+# - waitlist-control: the hub the browser pods dial, the fleet loop that starts and reaps them, and the checks
+#   of the providers that need no browser (Buntzen Lake), which it asks waitlist-fetcher to make.
+# - waitlist-fetcher: the only process that calls such a provider's site. No secrets, no database, no API token;
+#   only waitlist-control may reach it, and it may reach only the providers' hosts (docs/waitlist/design.md §4.4).
 # - vnc-edge: the checkout host. Stock nginx, no secrets.
 # - db: a hook Job that creates the database and applies migrations before every install and upgrade.
 #
-# One browser pod per watched trip runs in the waitlist-browsers namespace. waitlist-control builds those pods
-# itself; the rawResources below fence that namespace in. The admission policies admit only the exact pod
-# waitlist-control builds, and nobody can change or enter one afterwards.
+# One browser pod per watched BC Ferries trip runs in the waitlist-browsers namespace. waitlist-control builds
+# those pods itself; the rawResources below fence that namespace in. The admission policies admit only the exact
+# pod waitlist-control builds, and nobody can change or enter one afterwards.
 #
-# waitlist.* is Waitlist's own configuration. waitlist-control's config, waitlist-web's config and the admission
-# policy's parameters are all rendered from it, so they can't drift apart. Change values there, not in the
-# rendered objects. The waitlist repo renders this file in CI and proves the admission policies against a
-# real API server (tests/apiserver), so keep the two copies in step.
+# waitlist.* is Waitlist's own configuration. waitlist-control's, waitlist-web's and waitlist-fetcher's configs
+# and the admission policy's parameters are all rendered from it, so they can't drift apart. Change values there,
+# not in the rendered objects. The waitlist repo renders this file in CI and proves the admission policies against
+# a real API server (tests/apiserver), so keep the two copies in step: they differ only in the streamViewer: and
+# offer: lines, each deployment's own choice.
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
@@ -37,10 +41,12 @@ spec:
         checkout: waitlist-checkout.chestr.dev
 
       # The browser pods' image. The tag is for people and Renovate; the digest is what waitlist-control starts and
-      # what the admission policy admits. Like the other two images, it must carry its digest.
+      # what the admission policy admits. Like the other two images, it must carry its digest. A release sets the
+      # three images and control.pod.vncPubkeys in both copies at once (home-cluster's
+      # kubernetes/apps/waitlist/waitlist/README.md, Phase 0 steps 6-7).
       browserImage:
         repository: ghcr.io/mchestr/waitlist-browser
-        tag: 0.6.4@sha256:8b3c800566adcc02416999161683ecea44eb88480bf15f94789c9d4666e75a56
+        tag: 0.6.4@sha256:8b3c800566adcc02416999161683ecea44eb88480bf15f94789c9d4666e75a56  # placeholder: no such image; Phase 0 step 7 copies in 1.0.0's
 
       # The streamed checkout viewer (beta, 0.7.0): off, admins or everyone. waitlist-web shows its Settings switch
       # and opens checkouts in it only for those it is offered to; waitlist-control lets only their pods serve it.
@@ -50,15 +56,32 @@ spec:
       checkout:
         streamViewer: "off"
 
+      # The providers whose watches waitlist-control checks through waitlist-fetcher (BC Ferries is always on).
+      # offer: who may create their watches, "off", "admins" or "everyone" (quoted: YAML reads a bare off as false).
+      # "off" renders nothing about the provider: no fetcher URL or httpChecks for waitlist-control, no offer for
+      # waitlist-web, no cap for waitlist-fetcher. This is the only place to set them: a fetcher or httpChecks under
+      # control, providers under web, or providers or listenPort under fetcher is refused.
+      providers:
+        buntzen:
+          offer: "off"
+          requestsPerMinute: 12 # waitlist-control's budget (1-30)
+          fetcherPerMinute: 30 # waitlist-fetcher's own hard cap (requestsPerMinute-30)
+
+      # waitlist-fetcher's config.json (src/waitlist/fetcher/config.py). listenPort and providers are added from
+      # the Service and waitlist.providers.
+      fetcher:
+        upstreamTimeoutSeconds: 10
+
       # waitlist-control's config.json (src/waitlist/control/config.py). pod.image, pod.vncOrigin and (unless
       # "off") checkout.streamViewer are added from browserImage, hosts.checkout and checkout.streamViewer, which is
-      # the only place to set it: a checkout.streamViewer here (or under web) is refused.
+      # the only place to set it: a checkout.streamViewer here (or under web) is refused. fetcher and httpChecks are
+      # added from waitlist.providers.
       control:
         pod:
           hubUrl: ws://waitlist-control.waitlist.svc.cluster.local.:8766/agent/v1
           # The public half of WAITLIST_CHECKOUT_KEY, as <keyId>:<base64url> (two, comma-separated, while
           # the key rotates). See ../README.md.
-          vncPubkeys: k1:ODYaV036tlurYBPYQbL2HX40mnxBQOViEwBFwx_7wjk
+          vncPubkeys: k1:ODYaV036tlurYBPYQbL2HX40mnxBQOViEwBFwx_7wjk  # placeholder: 0.7.1's key; Phase 0 step 7 copies in WAITLIST_CHECKOUT_KEY's
           sandbox: false
           # In millicores and Mi: the browser quota below is computed from them.
           cpuRequest: 200m
@@ -132,7 +155,7 @@ spec:
           app:
             image: &image
               repository: ghcr.io/mchestr/waitlist-control
-              tag: 0.6.4@sha256:15d92c0a1b8efd8efc8312a95324423a2c9dcb46f22d7b4db27d4b614e18f934
+              tag: 0.6.4@sha256:15d92c0a1b8efd8efc8312a95324423a2c9dcb46f22d7b4db27d4b614e18f934  # placeholder: no such image; Phase 0 step 7 copies in 1.0.0's
             args: [waitlist-web, run]
             env:
               WL_WEB_CONFIG: /etc/waitlist-web/config.json
@@ -248,6 +271,50 @@ spec:
                 memory: 512Mi
             securityContext: *securityContext
 
+      # Makes the requests waitlist-control sends it, to the providers' hosts only, and answers with what it parsed
+      # (src/waitlist/fetchwire.py). No PG* env, no secret, no API token, no RBAC. One replica: its rate caps are
+      # its only state, and waitlist-control retries in 30 seconds when it is away.
+      waitlist-fetcher:
+        forceRename: waitlist-fetcher
+        strategy: RollingUpdate # Kubernetes' 25 % defaults round to surge 1 / unavailable 0 for one replica
+        serviceAccount:
+          identifier: waitlist-fetcher
+        pod:
+          automountServiceAccountToken: false
+          dnsConfig:
+            options: [{ name: ndots, value: "1" }] # api.yodelpass.com resolves as itself, not via search domains
+        containers:
+          app:
+            image: *image
+            args: [waitlist-fetcher, run]
+            env:
+              WL_FETCHER_CONFIG: /etc/waitlist-fetcher/config.json
+              WL_LOG_LEVEL: *logLevel
+            ports:
+              - name: http
+                containerPort: &fetcherPort 8767
+            probes:
+              liveness:
+                enabled: true
+                custom: true
+                spec:
+                  httpGet: { path: /livez, port: *fetcherPort }
+                  periodSeconds: 15
+                  timeoutSeconds: 2
+                  failureThreshold: 3
+              readiness:
+                enabled: true
+                custom: true
+                spec:
+                  httpGet: { path: /readyz, port: *fetcherPort }
+                  periodSeconds: 10
+                  timeoutSeconds: 2
+                  failureThreshold: 3
+            resources:
+              requests: { cpu: 10m, memory: 64Mi }
+              limits: { memory: 192Mi }
+            securityContext: *securityContext
+
       vnc-edge:
         forceRename: vnc-edge
         replicas: 2
@@ -264,7 +331,7 @@ spec:
           app:
             image:
               repository: ghcr.io/mchestr/waitlist-vnc-edge
-              tag: 0.6.4@sha256:af2b4466e0c5988cfc12eaedfa1db967375345e774125e66fe832dec03d8ee14
+              tag: 0.6.4@sha256:af2b4466e0c5988cfc12eaedfa1db967375345e774125e66fe832dec03d8ee14  # placeholder: no such image; Phase 0 step 7 copies in 1.0.0's
             ports:
               - name: http
                 containerPort: &edgePort 8080
@@ -366,6 +433,10 @@ spec:
       waitlist-control:
         forceRename: waitlist-control
         automountServiceAccountToken: true
+      # No bindings anywhere: it holds no verb at all.
+      waitlist-fetcher:
+        forceRename: waitlist-fetcher
+        automountServiceAccountToken: false
       vnc-edge:
         forceRename: vnc-edge
         automountServiceAccountToken: false
@@ -376,7 +447,7 @@ spec:
         includeChecksumInControllers: [waitlist-control]
         data:
           config.json: &controlConfig >-
-            {{- range (list .Values.waitlist.browserImage.tag (index .Values.controllers "waitlist-control" "containers" "app" "image" "tag") (index .Values.controllers "vnc-edge" "containers" "app" "image" "tag")) -}}
+            {{- range (list .Values.waitlist.browserImage.tag (index .Values.controllers "waitlist-control" "containers" "app" "image" "tag") (index .Values.controllers "waitlist-fetcher" "containers" "app" "image" "tag") (index .Values.controllers "vnc-edge" "containers" "app" "image" "tag")) -}}
             {{- if not (contains "@sha256:" .) -}}
             {{- fail "Each Waitlist image tag must pin its digest: <version>@sha256:<digest>" -}}
             {{- end -}}
@@ -397,11 +468,40 @@ spec:
             {{- if or (hasKey (.Values.waitlist.control.checkout | default dict) "streamViewer") (hasKey ((.Values.waitlist.web | default dict).checkout | default dict) "streamViewer") -}}
             {{- fail "Set waitlist.checkout.streamViewer only: a copy under waitlist.control.checkout or waitlist.web.checkout would override the kill switch" -}}
             {{- end -}}
+            {{- /* The same rule for the providers: waitlist.providers is the one place that turns one on. */ -}}
+            {{- if or (hasKey .Values.waitlist.control "fetcher") (hasKey .Values.waitlist.control "httpChecks") (hasKey (.Values.waitlist.web | default dict) "providers") (hasKey (.Values.waitlist.fetcher | default dict) "providers") (hasKey (.Values.waitlist.fetcher | default dict) "listenPort") -}}
+            {{- fail "Set waitlist.providers only: a fetcher or httpChecks under waitlist.control, providers under waitlist.web, or providers or listenPort under waitlist.fetcher would bypass it" -}}
+            {{- end -}}
+            {{- $httpChecks := dict -}}
+            {{- range $id, $p := (.Values.waitlist.providers | default dict) -}}
+            {{- if not (has $p.offer (list "off" "admins" "everyone")) -}}
+            {{- fail (printf "waitlist.providers.%s.offer must be \"off\", \"admins\" or \"everyone\" (quoted: YAML reads a bare off as false)" $id) -}}
+            {{- end -}}
+            {{- range $key := list "requestsPerMinute" "fetcherPerMinute" -}}
+            {{- $n := index $p $key -}}
+            {{- if or (kindIs "string" $n) (ne (toString (int $n)) (toString $n)) -}}
+            {{- fail (printf "waitlist.providers.%s.%s must be a whole number" $id $key) -}}
+            {{- end -}}
+            {{- end -}}
+            {{- if not (and (le 1 (int $p.requestsPerMinute)) (le (int $p.requestsPerMinute) (int $p.fetcherPerMinute)) (le (int $p.fetcherPerMinute) 30)) -}}
+            {{- fail (printf "waitlist.providers.%s: 1 <= requestsPerMinute <= fetcherPerMinute <= 30 doesn't hold" $id) -}}
+            {{- end -}}
+            {{- if ne $p.offer "off" -}}
+            {{- $_ := set $httpChecks $id (dict "requestsPerMinute" (int $p.requestsPerMinute)) -}}
+            {{- end -}}
+            {{- end -}}
             {{- $added := dict "pod" (dict
               "image" (printf "%s:%s" .Values.waitlist.browserImage.repository .Values.waitlist.browserImage.tag)
               "vncOrigin" (printf "https://%s" .Values.waitlist.hosts.checkout)) -}}
             {{- if ne .Values.waitlist.checkout.streamViewer "off" -}}
             {{- $_ := set $added "checkout" (dict "streamViewer" .Values.waitlist.checkout.streamViewer) -}}
+            {{- end -}}
+            {{- /* "off" everywhere: no fetcher keys, so the config is BC Ferries-only, as 0.7.1's was. */ -}}
+            {{- if $httpChecks -}}
+            {{- $_ := set $added "fetcher" (dict
+              "url" (printf "http://waitlist-fetcher.%s.svc.cluster.local.:%d" .Release.Namespace (int (index .Values.service "waitlist-fetcher" "ports" "http" "port")))
+              "timeoutSeconds" 20) -}}
+            {{- $_ := set $added "httpChecks" $httpChecks -}}
             {{- end -}}
             {{- toPrettyJson (merge $added .Values.waitlist.control) -}}
       # The same file for the db hook, which runs before the release's own ConfigMaps exist.
@@ -423,11 +523,37 @@ spec:
             {{- if ne .Values.waitlist.checkout.streamViewer "off" -}}
             {{- $_ := set $checkout "streamViewer" .Values.waitlist.checkout.streamViewer -}}
             {{- end -}}
-            {{- toPrettyJson (merge (dict
+            {{- $added := dict
               "baseUrl" (printf "https://%s" .Values.waitlist.hosts.dashboard)
               "oidc" (dict "redirectUri" (printf "https://%s/auth/callback" .Values.waitlist.hosts.dashboard))
-              "checkout" $checkout)
-              .Values.waitlist.web) -}}
+              "checkout" $checkout -}}
+            {{- $offers := dict -}}
+            {{- range $id, $p := (.Values.waitlist.providers | default dict) -}}
+            {{- if ne $p.offer "off" -}}
+            {{- $_ := set $offers $id (dict "offer" $p.offer) -}}
+            {{- end -}}
+            {{- end -}}
+            {{- if $offers -}}
+            {{- $_ := set $added "providers" $offers -}}
+            {{- end -}}
+            {{- toPrettyJson (merge $added .Values.waitlist.web) -}}
+      # waitlist-fetcher's: a cap for each provider that isn't "off" (one it doesn't list, it refuses to fetch for).
+      fetcher-config:
+        forceRename: waitlist-fetcher-config
+        includeChecksumInControllers: [waitlist-fetcher]
+        data:
+          config.json: >-
+            {{- $limits := dict -}}
+            {{- range $id, $p := (.Values.waitlist.providers | default dict) -}}
+            {{- if ne $p.offer "off" -}}
+            {{- $_ := set $limits $id (dict "maxPerMinute" (int $p.fetcherPerMinute)) -}}
+            {{- end -}}
+            {{- end -}}
+            {{- toPrettyJson (merge (dict
+              "listenPort" (int (index .Values.service "waitlist-fetcher" "ports" "http" "port"))
+              "providers" $limits)
+              (.Values.waitlist.fetcher | default dict)
+              (dict "maxBodyBytes" 262144)) -}}
 
     persistence:
       control-config:
@@ -453,6 +579,14 @@ spec:
           waitlist-web:
             app:
               - path: /etc/waitlist-web
+                readOnly: true
+      fetcher-config:
+        type: configMap
+        identifier: fetcher-config
+        advancedMounts:
+          waitlist-fetcher:
+            app:
+              - path: /etc/waitlist-fetcher
                 readOnly: true
       web-secrets:
         type: secret
@@ -482,6 +616,9 @@ spec:
           waitlist-control:
             app:
               - path: /tmp
+          waitlist-fetcher:
+            app:
+              - path: /tmp
           vnc-edge:
             app:
               - path: /tmp
@@ -503,6 +640,13 @@ spec:
         ports:
           hub:
             port: *hubPort
+      # waitlist-control calls this (its config's fetcher.url, rendered from this port).
+      waitlist-fetcher:
+        forceRename: waitlist-fetcher
+        controller: waitlist-fetcher
+        ports:
+          http:
+            port: *fetcherPort
       vnc-edge:
         forceRename: vnc-edge
         controller: vnc-edge
@@ -519,7 +663,7 @@ spec:
           gethomepage.dev/enabled: "true"
           gethomepage.dev/group: Home
           gethomepage.dev/name: Waitlist
-          gethomepage.dev/icon: mdi-ferry
+          gethomepage.dev/icon: mdi-bell-ring
         hostnames: ["{{ .Values.waitlist.hosts.dashboard }}"]
         parentRefs: &externalGateway
           - name: envoy-external
@@ -675,6 +819,15 @@ spec:
               ports:
                 - protocol: TCP
                   port: 5432
+            # Its only way out to a provider: waitlist-fetcher (it has no internet egress of its own).
+            - to:
+                - podSelector:
+                    matchLabels:
+                      app.kubernetes.io/instance: *app
+                      app.kubernetes.io/controller: waitlist-fetcher
+              ports:
+                - protocol: TCP
+                  port: *fetcherPort
             - &dnsEgress
               to:
                 - namespaceSelector:
@@ -698,6 +851,58 @@ spec:
               - ports:
                   - port: "6443"
                     protocol: TCP
+      # In: waitlist-control alone. Out: kube-dns for the providers' names, and those hosts on 443 (the Cilium
+      # policy below). Browser pods and waitlist-web can't reach it.
+      waitlist-fetcher:
+        forceRename: waitlist-fetcher
+        type: native
+        controller: waitlist-fetcher
+        policyTypes: [Ingress, Egress]
+        rules:
+          ingress:
+            - from:
+                - podSelector:
+                    matchLabels:
+                      app.kubernetes.io/instance: *app
+                      app.kubernetes.io/controller: waitlist-control
+              ports:
+                - protocol: TCP
+                  port: *fetcherPort
+          egress: [] # DNS and HTTPS only by name: the Cilium policy below
+      # Every provider's hosts are listed here and in its client's HOSTS (src/waitlist/providers/<id>/meta.py).
+      waitlist-fetcher-cilium:
+        forceRename: waitlist-fetcher-cilium
+        type: cilium
+        controller: waitlist-fetcher
+        egress:
+          - toEndpoints:
+              - *kubeDns
+            toPorts:
+              - ports:
+                  - port: "53"
+                    protocol: ANY
+                rules:
+                  dns:
+                    - matchName: api.yodelpass.com
+          - toFQDNs:
+              - matchName: api.yodelpass.com
+            toPorts:
+              - ports:
+                  - port: "443"
+                    protocol: TCP
+        # Defence in depth beside the fetcher's PublicOnlyResolver: whatever api.yodelpass.com resolves to, never
+        # the LAN, CGNAT, link-local or loopback. (Cilium's CIDR rules don't select cluster endpoints, so DNS to
+        # kube-dns is unaffected; Phase S proves it.)
+        egressDeny:
+          - toCIDRSet:
+              - cidr: 10.0.0.0/8
+              - cidr: 172.16.0.0/12
+              - cidr: 192.168.0.0/16
+              - cidr: 100.64.0.0/10
+              - cidr: 169.254.0.0/16
+              - cidr: 127.0.0.0/8
+              - cidr: fc00::/7
+              - cidr: fe80::/10
       vnc-edge:
         forceRename: vnc-edge
         type: native

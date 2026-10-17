@@ -2,8 +2,9 @@
 
 `deploy/helmrelease.yaml` (and `externalsecret.yaml`) are copies of home-cluster's
 `kubernetes/apps/waitlist/waitlist/app/helmrelease.yaml` (and `externalsecret.yaml`)
-(docs/multi-tenant/design-reference.md §7.10). Its values carry waitlist-control's and waitlist-web's configs and the
-admission policies, so CI renders it the way Flux would and tests the result (tests/apiserver, kubeconform).
+(docs/multi-tenant/design-reference.md §7.10, docs/waitlist/design.md §8.5). Its values carry waitlist-control's,
+waitlist-web's and waitlist-fetcher's configs and the admission policies, so CI renders it the way Flux would and tests
+the result (tests/test_deploy.py, tests/apiserver, kubeconform).
 
 `python -m tests.deploy` prints the render, for kubeconform. It needs WL_HELM (a helm binary). WL_APP_TEMPLATE may
 name a local copy of the chart instead of the OCI one; WL_HELMRELEASE another HelmRelease file (home-cluster's).
@@ -49,10 +50,34 @@ TEST_VALUES: dict[str, Any] = {
     "controllers": {
         "waitlist-web": _image("app", CONTROL_TAG),
         "waitlist-control": _image("app", CONTROL_TAG),
+        "waitlist-fetcher": _image("app", CONTROL_TAG),
         "db": _image("migrate", CONTROL_TAG),
         "vnc-edge": _image("app", EDGE_TAG),
     },
 }
+
+
+def merged(base: dict[str, Any], change: dict[str, Any]) -> dict[str, Any]:
+    """`base` with `change` merged in, map by map (as helm merges two --values files): a copy, never `base` itself."""
+    out = dict(base)
+    for key, value in change.items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = merged(out[key], value)
+        else:
+            out[key] = value
+    return out
+
+
+def with_provider(provider: str = "buntzen", **values: Any) -> dict[str, Any]:
+    """TEST_VALUES with waitlist.providers.<provider> changed: offer "admins" unless `values` says otherwise. This
+    repo's copy has every provider "off" (§8.5), so a test that needs one on renders through this."""
+    return merged(TEST_VALUES, {"waitlist": {"providers": {provider: {"offer": "admins"} | values}}})
+
+
+def objects(documents: list[dict[str, Any]]) -> dict[tuple[str, str], dict[str, Any]]:
+    """The render, by (kind, name)."""
+    return {(o["kind"], o["metadata"]["name"]): o for o in documents}
+
 
 # Flux's postBuild substitution (fluxcd/pkg/envsubst) rewrites ${VAR} and turns the escape $$ into $; a bare
 # $name is left alone.
