@@ -32,7 +32,6 @@ import { CHIPS, chipDay, dayLabel, isPass, passesPhrase, RELEASE_LABEL } from ".
 import { inSeason, RELEASE_AT, REMINDER_AT, reminderAt, stillUseful } from "./season";
 
 type Field = "date" | "passes";
-const FIELDS: readonly string[] = ["date", "passes"];
 const OTHER = "other";
 
 /** The next days offered as chips after Today and Tomorrow ("Sat 3"). */
@@ -94,6 +93,28 @@ export function BuntzenSheet({ mode, state, info, onDone }: SheetProps<BuntzenWa
     }
   }, [gone, onDone]);
 
+  /**
+   * Where the form shows a failed save: a field's problem on that field, a refusal (a limit, a provider not offered)
+   * above the buttons, a watch removed elsewhere by closing with a note. Null: a toast says it.
+   */
+  const placeOf = (error: Error): { field: Field } | "form" | "gone" | null => {
+    if (!(error instanceof ApiError)) return null;
+    if (error.field === "date" || error.field === "passes") return { field: error.field };
+    if (error.status === 409 || error.status === 403) return "form";
+    if (error.status === 404 && editing) return "gone";
+    return null;
+  };
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  // The state and the toasts land even if the sheet has closed meanwhile (the phone's back button, say). Closing it
+  // and the form's errors happen in save.mutate's callbacks, which only run while this form is mounted, so a late
+  // answer can't close a sheet opened since.
   const save = useMutation({
     mutationKey: [SHEET_MUTATION_KEY],
     mutationFn: async (spec: Record<string, unknown>): Promise<{ id: string; state: WaitlistState }> => {
@@ -101,29 +122,25 @@ export function BuntzenSheet({ mode, state, info, onDone }: SheetProps<BuntzenWa
       const created = await myApi.addWatch({ provider: "buntzen", spec });
       return { id: created.watch_id, state: created.state };
     },
-    onSuccess: ({ id, state: next }) => {
+    onSuccess: ({ id, state: next }, spec) => {
       qc.setQueryData(MY_STATE_KEY, next);
       if (editing) {
         toast.success("Saved");
       } else {
         rememberProvider("buntzen");
-        toast.success(`Watching Buntzen Lake for ${dayLabel(date)}`, {
+        const day = typeof spec.date === "string" ? spec.date : date;
+        toast.success(`Watching Buntzen Lake for ${dayLabel(day)}`, {
           action: { label: "View", onClick: () => navigate(`/w/${id}`) },
         });
       }
-      onDone(id);
     },
     onError: (error) => {
-      // A field's problem goes on that field; a refusal (a limit, a provider not offered) above the buttons.
-      if (error instanceof ApiError && error.field && FIELDS.includes(error.field)) {
-        setErrors({ [error.field]: error.message });
-      } else if (error instanceof ApiError && (error.status === 409 || error.status === 403)) {
-        setErrors({ form: error.message });
-      } else if (error instanceof ApiError && error.status === 404 && editing) {
-        toast.info("This watch was removed elsewhere.");
-        onDone(null);
-      } else {
-        reportError(error);
+      const place = placeOf(error);
+      if (place === null) reportError(error);
+      else if (!mounted.current) {
+        // The form that would have shown it has gone: a toast instead.
+        if (place === "gone") toast.info("This watch was removed elsewhere.");
+        else reportError(error);
       }
     },
     onSettled: () => {
@@ -136,6 +153,8 @@ export function BuntzenSheet({ mode, state, info, onDone }: SheetProps<BuntzenWa
     setErrors((e) => ({ ...e, date: undefined, passes: undefined, form: undefined }));
     if (value === OTHER) {
       setOther(true);
+      // Focus stays on the chip: arrowing through the days lands here too, and mustn't be pulled out of the group.
+      // The date it asks for is the next stop for Tab.
       if (days.some((d) => d.value === date)) setDate("");
       return;
     }
@@ -160,7 +179,9 @@ export function BuntzenSheet({ mode, state, info, onDone }: SheetProps<BuntzenWa
     const problems = validate();
     if (problems.date || problems.passes) {
       setErrors(problems);
-      document.getElementById(problems.date ? `${ids}-date` : `${ids}-passes`)?.focus();
+      // The control to fix: with Other date chosen, its date, not the chips.
+      const at = problems.date ? (other ? `${ids}-date-input` : `${ids}-date`) : `${ids}-passes`;
+      document.getElementById(at)?.focus();
       return;
     }
     const spec: Record<string, unknown> = { date, passes, release_reminder: reminder };
@@ -176,7 +197,20 @@ export function BuntzenSheet({ mode, state, info, onDone }: SheetProps<BuntzenWa
     }
     setErrors({});
     inFlight.current = true;
-    save.mutate(spec);
+    save.mutate(spec, {
+      onSuccess: ({ id }) => onDone(id),
+      onError: (error) => {
+        const place = placeOf(error);
+        if (place === "gone") {
+          toast.info("This watch was removed elsewhere.");
+          onDone(null);
+        } else if (place === "form") {
+          setErrors({ form: error.message });
+        } else if (place !== null) {
+          setErrors({ [place.field]: error.message });
+        }
+      },
+    });
   };
 
   // The reminder goes out at 6:55 the day before, in season: offered only while that's still ahead.
@@ -218,9 +252,11 @@ export function BuntzenSheet({ mode, state, info, onDone }: SheetProps<BuntzenWa
             </RadioGroup.Root>
             {other && (
               <Input
+                id={`${ids}-date-input`}
                 type="date"
                 aria-label="Date"
                 aria-invalid={errors.date ? true : undefined}
+                aria-describedby={errors.date ? `${ids}-date-error` : undefined}
                 min={today}
                 max={horizon}
                 value={date}

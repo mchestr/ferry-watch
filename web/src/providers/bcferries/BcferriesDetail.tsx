@@ -26,6 +26,7 @@ export function BcferriesDetail({ watch, state, info }: WatchProps<BcferriesWatc
         header={<ProviderLine icon={Ship} name={info?.name ?? "BC Ferries"} date={shortDate(watch.trip.date)} />}
         heading={routeTitle(watch, terminals.data)}
         showHeldCart={!held}
+        headingLevel={held ? 2 : 1} // the checkout's title heads the page while it holds a cart
       />
     </div>
   );

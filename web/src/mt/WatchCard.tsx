@@ -32,24 +32,29 @@ export function WatchCard({
   const Shown = ui ? (detail ? ui.Detail : ui.Card) : null;
   return (
     // A new revision of the watch gets a fresh try.
-    <ErrorBoundary key={`${watch.id}:${watch.rev}`} fallback={() => <CardFallback watch={watch} />}>
+    <ErrorBoundary key={`${watch.id}:${watch.rev}`} fallback={() => <CardFallback watch={watch} detail={detail} />}>
       {Shown ? (
         <Shown watch={watch} state={state} info={info} />
       ) : (
-        <UnknownCard watch={watch} state={state} info={info} />
+        <>
+          {/* On its page, the page needs a title, and the unknown card has none of its own. */}
+          {detail && <h1 className="sr-only">A watch this version of Waitlist can't show</h1>}
+          <UnknownCard watch={watch} state={state} info={info} />
+        </>
       )}
     </ErrorBoundary>
   );
 }
 
-/** A card that threw while rendering: say so, and let the watch be removed. */
-function CardFallback({ watch }: { watch: Watch }) {
+/** A card that threw while rendering: say so, and let the watch be removed. On the watch's page, it's the title. */
+function CardFallback({ watch, detail }: { watch: Watch; detail: boolean }) {
+  const Title = detail ? "h1" : "p";
   return (
     <Card role="alert" className="flex flex-wrap items-center justify-between gap-3 p-4 sm:p-5">
-      <p className="flex min-w-0 items-center gap-2 text-sm font-medium">
+      <Title className="flex min-w-0 items-center gap-2 text-sm font-medium">
         <AlertTriangle className="size-4 shrink-0 text-danger" aria-hidden />
         Couldn't show this watch
-      </p>
+      </Title>
       <RemoveWatchButton watchId={watch.id} title="This watch" />
     </Card>
   );
@@ -70,14 +75,16 @@ export function ProviderLine({
 }) {
   return (
     <div className="flex items-center justify-between gap-3">
-      <p className="flex min-w-0 items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+      {/* The date is the part that matters (a Buntzen card's title is only its passes): it wraps whole onto a line
+          of its own before anything is cut, and only an overlong provider name is truncated. */}
+      <p className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
         <Icon className="size-3.5 shrink-0" aria-hidden />
-        <span className="truncate">
+        <span className="min-w-0 truncate">
           {name}
           <span aria-hidden> · </span>
           <span className="sr-only">, </span>
-          {date}
         </span>
+        <span className="whitespace-nowrap">{date}</span>
       </p>
       {watchId && (
         <a

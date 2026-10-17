@@ -154,6 +154,12 @@ describe("a Buntzen Lake card", () => {
     expect(await screen.findByText("Enjoy the lake.")).toBeInTheDocument();
   });
 
+  it("says when it was last checked without announcing every check", () => {
+    show(makeBuntzenWatch({ check: { state: "checking", checked_at: 1_814_365_860 }, options: [] }));
+    expect(screen.getByText("Checked 7:31 am, every minute.")).toBeInTheDocument();
+    expect(screen.queryByRole("status")).toBeNull(); // it changes every check: not a live region
+  });
+
   it("never shows a cart, a hold or a checkout", () => {
     show(open);
     expect(screen.queryByText(/cart|hold it|checkout|did you book it/i)).toBeNull();

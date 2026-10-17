@@ -1,7 +1,21 @@
 import { describe, expect, it } from "vitest";
 import type { BuntzenWatch, WatchOption } from "@/mt/watch-schema";
 import { FIXTURE_NOW, makeBuntzenWatch, fail } from "@/test/fixtures";
-import { badge, chip, currentOptions, dayLabel, LABELS, notes, PAGES, passesPhrase, timeline } from "./labels";
+import {
+  badge,
+  chip,
+  currentOptions,
+  dayLabel,
+  LABELS,
+  notes,
+  pacificClock,
+  pacificDate,
+  pacificDay,
+  PAGES,
+  passesPhrase,
+  relativeDay,
+  timeline,
+} from "./labels";
 
 const NOW = FIXTURE_NOW.getTime(); // Wed Jun 30 2027, 7:31 am
 const open = makeBuntzenWatch(); // Thu Jul 1: morning open, afternoon sold out; checking
@@ -127,6 +141,15 @@ describe("a Buntzen card's notes", () => {
     expect(notes(makeBuntzenWatch({ check: { state: "unavailable" } }), NOW)).toEqual([
       "Checks aren't running right now. Keep an eye on Yodel yourself.",
     ]);
+  });
+
+  it("says nothing, rather than throwing, of a time no Date can hold", () => {
+    // Finite epochs past the year 275760 pass the schema, but Intl's formatters throw on them.
+    for (const ms of [1e16, -1e16, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect([pacificClock(ms), pacificDay(ms), pacificDate(ms), relativeDay(ms, NOW)]).toEqual(["", "", "", ""]);
+    }
+    const far = makeBuntzenWatch({ check: { state: "waiting_release", opens_at: 1e13 }, options: [] });
+    expect(() => [badge(far, NOW), notes(far, NOW), timeline(far)]).not.toThrow();
   });
 
   it("has a timeline for the watch's page", () => {

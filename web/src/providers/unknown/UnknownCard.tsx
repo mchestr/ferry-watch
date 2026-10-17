@@ -2,7 +2,7 @@
  * A watch this build can't show (docs/waitlist/design.md §7.4): a provider it doesn't know (a newer server's), or an
  * entry it can't read. Enough to know it's there and to remove it, and nothing else.
  */
-import { useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { HelpCircle, RotateCw, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -10,9 +10,9 @@ import { RemoveTripDialog } from "@/components/RemoveTripDialog";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { hasStatus } from "@/lib/api";
+import { reportError } from "@/lib/hooks";
 import { cn } from "@/lib/utils";
 import { MY_STATE_KEY, myApi } from "@/mt/api";
-import { useStateMutation } from "@/mt/watches";
 import type { Watch } from "@/mt/watch-schema";
 import type { WatchProps } from "../types";
 
@@ -54,7 +54,21 @@ export function RemoveWatchButton({
 }) {
   const qc = useQueryClient();
   const [confirming, setConfirming] = useState(false);
-  const remove = useStateMutation(() => myApi.removeWatch(watchId), removed);
+  const remove = useMutation({
+    mutationFn: () => myApi.removeWatch(watchId),
+    onSuccess: (state) => {
+      qc.setQueryData(MY_STATE_KEY, state);
+      toast.success(removed);
+    },
+    onError: (error) => {
+      // Already gone (removed on another device, say): say so, once, and fetch what's there now.
+      if (hasStatus(error, 404)) {
+        setConfirming(false);
+        toast.info("That watch was already removed.");
+        void qc.invalidateQueries({ queryKey: MY_STATE_KEY });
+      } else reportError(error);
+    },
+  });
   return (
     <>
       <Button
@@ -75,12 +89,6 @@ export function RemoveWatchButton({
             onSuccess: () => {
               setConfirming(false);
               onRemoved?.();
-            },
-            onError: (error) => {
-              if (!hasStatus(error, 404)) return;
-              setConfirming(false); // already gone
-              toast.info("That watch was already removed.");
-              void qc.invalidateQueries({ queryKey: MY_STATE_KEY });
             },
           })
         }

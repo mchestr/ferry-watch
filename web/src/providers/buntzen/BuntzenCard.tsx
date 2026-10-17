@@ -155,7 +155,7 @@ export function Notes({
   const lines = notes(watch, now, state.settings.quiet_hours.end, { cadence });
   if (lines.length === 0) return null;
   return (
-    <div className="space-y-1 text-sm text-muted-foreground" role="status">
+    <div className="space-y-1 text-sm text-muted-foreground">
       {lines.map((line) => (
         <p key={line}>{line}</p>
       ))}

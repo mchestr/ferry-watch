@@ -9,6 +9,7 @@ import { useTerminals } from "@/lib/hooks";
 import type { TripSettings } from "@/lib/schema";
 import { MY_STATE_KEY, myApi } from "@/mt/api";
 import { tripTitle } from "@/mt/trips";
+import { rememberProvider } from "@/mt/watches";
 import type { BcferriesWatch, WaitlistState, WatchPatchRequest } from "@/mt/watch-schema";
 import type { SheetProps } from "../types";
 
@@ -47,6 +48,7 @@ export function BcferriesSheet({ mode, state, onDone }: SheetProps<BcferriesWatc
           const { enabled, ...spec } = request.settings;
           const answer = await myApi.addWatch({ provider: "bcferries", spec, enabled });
           created.current = answer.watch_id;
+          rememberProvider("bcferries"); // the picker lists it first next time
           keep(answer.state);
         } else {
           const { enabled, ...spec } = request.patch;

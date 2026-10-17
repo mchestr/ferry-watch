@@ -51,5 +51,17 @@ describe("a watch this build can't show", () => {
     await user.click(screen.getByRole("button", { name: "Remove" }));
     await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Remove" }));
     expect(await screen.findByText("That watch was already removed.")).toBeInTheDocument();
+    expect(screen.queryByText("No such watch")).toBeNull(); // one toast, not an error beside it
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  });
+
+  it("says what went wrong otherwise, and lets them try again", async () => {
+    mockFetch((r) => (r.method === "DELETE" ? jsonResponse({ error: "Try again later" }, 500) : jsonResponse(state)));
+    const { user } = renderWithProviders(<UnknownCard watch={unknown} state={state} info={undefined} />);
+    await user.click(screen.getByRole("button", { name: "Remove" }));
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Remove" }));
+    expect(await screen.findByText("Try again later")).toBeInTheDocument();
+    expect(screen.queryByText("That watch was already removed.")).toBeNull();
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
   });
 });

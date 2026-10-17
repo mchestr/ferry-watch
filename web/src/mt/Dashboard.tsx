@@ -28,7 +28,10 @@ export function Dashboard({ state }: { state: WaitlistState }) {
     <div className={cn("mx-auto max-w-3xl space-y-5", !wide && count > 0 && "pb-20")}>
       <div className="flex items-end justify-between gap-4">
         <div className="min-w-0">
-          <h1 className="text-xl font-bold tracking-tight">Your watches</h1>
+          {/* Focusable from script: where focus goes when the New watch sheet closes and what opened it has gone. */}
+          <h1 tabIndex={-1} className="text-xl font-bold tracking-tight outline-none">
+            Your watches
+          </h1>
           <p className="text-sm text-muted-foreground">
             {count} watched
             {state.quiet_hours?.now && (

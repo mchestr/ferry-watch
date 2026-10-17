@@ -76,15 +76,17 @@ describe("a watch's page", () => {
     renderWithProviders(<MtApp />);
     expect(await screen.findByRole("button", { name: /Check out on this device/ })).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 2, name: /→/ })).toBeInTheDocument();
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1); // the checkout's
     expect(screen.queryByText("9:00 am is held for you (Saver, $93.45)")).toBeNull(); // said once, above
   });
 
-  it("shows a BC Ferries trip without a cart as its card", async () => {
+  it("shows a BC Ferries trip without a cart as its card, whose title heads the page", async () => {
     const trip = tripsOf(parsedState())[0] ?? fail();
     at(`/w/${trip.id}`);
     serveState(parsedState());
     renderWithProviders(<MtApp />);
-    expect(await screen.findByRole("heading", { level: 2, name: /→/ })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 1, name: /→/ })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { level: 2, name: /→/ })).toBeNull();
     expect(screen.getByText("Checking")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Check out on this device/ })).toBeNull();
   });
@@ -94,6 +96,9 @@ describe("a watch's page", () => {
     serveState(parsedState());
     renderWithProviders(<MtApp />);
     expect(await screen.findByText(/This watch is for bcparks and needs a newer version/)).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { level: 1, name: "A watch this version of Waitlist can't show" }),
+    ).toBeInTheDocument();
   });
 
   it("says when the watch isn't on the list any more, with a way home", async () => {

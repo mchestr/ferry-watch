@@ -61,6 +61,25 @@ describe("the dashboard", () => {
     expect(screen.queryByRole("heading", { name: /^Needs you now/ })).toBeNull();
   });
 
+  it("still shows every watch when one has a time no Date can hold", async () => {
+    const state = parsedState();
+    // Finite, so the schema takes it, but past the year 275760: Intl's formatters throw on it.
+    const odd = makeBuntzenWatch({
+      id: "0dd0dd0dd0dd0dd0",
+      check: { state: "waiting_release", opens_at: 1e13 },
+      options: [],
+    });
+    serveState(stateWith([odd, ...state.watches.slice(1)]));
+    renderWithProviders(<MtApp />);
+    const heading = await screen.findByRole("heading", { level: 1, name: "Your watches" });
+    expect(heading.nextElementSibling).toHaveTextContent("4 watched");
+    expect(screen.getByText("Next: Buntzen Lake passes for Sat Jul 3 go on sale Fri at 7:00 am")).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { level: 2, name: "Vancouver (Tsawwassen) → Victoria (Swartz Bay)" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Something went wrong")).toBeNull();
+  });
+
   it("doesn't say what's next while something needs the user", async () => {
     serveState(parsedState());
     renderWithProviders(<MtApp />);

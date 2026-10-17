@@ -131,6 +131,7 @@ export function MyTripCard({
   header,
   heading,
   showHeldCart = true,
+  headingLevel = 2,
 }: {
   trip: MyTrip;
   terminals: readonly Terminal[] | undefined;
@@ -141,6 +142,8 @@ export function MyTripCard({
   heading?: string;
   /** False where the page shows the held cart's checkout itself (the watch page). */
   showHeldCart?: boolean;
+  /** 1 where the title is the page's (the watch page, when no checkout heads it). */
+  headingLevel?: 1 | 2;
 }) {
   const badge = tripBadge(trip);
   const check = useMyMutation(() => myApi.checkWatch(trip.trip.id), "Checking now");
@@ -159,12 +162,15 @@ export function MyTripCard({
   const checked = trip.browser.checked_at;
   const next = nextCheck(trip);
   const title = tripTitle(trip, terminals);
+  const Heading = headingLevel === 1 ? "h1" : "h2";
   return (
     <Card className="space-y-4 p-4 sm:p-5">
       {header}
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <h2 className={heading === undefined ? "truncate font-semibold" : "font-semibold"}>{heading ?? title}</h2>
+          <Heading className={heading === undefined ? "truncate font-semibold" : "font-semibold"}>
+            {heading ?? title}
+          </Heading>
           <p className="text-sm text-muted-foreground">
             {timeLabel(trip.trip.earliest)}–{timeLabel(trip.trip.latest)}
             {checked ? ` · checked ${clock(checked * 1000)}` : ""}

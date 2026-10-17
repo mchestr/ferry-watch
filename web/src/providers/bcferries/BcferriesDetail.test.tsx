@@ -26,9 +26,9 @@ function show(watch: BcferriesWatch) {
 describe("a BC Ferries trip's page", () => {
   const trip = tripsOf(parsedState())[0] ?? fail();
 
-  it("is the trip card, without a link to itself", () => {
+  it("is the trip card, without a link to itself, its title the page's", () => {
     show(trip);
-    expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent("→");
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("→");
     expect(screen.queryByRole("link", { name: /Details/ })).toBeNull();
   });
 

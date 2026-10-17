@@ -69,22 +69,29 @@ const pacificTime = new Intl.DateTimeFormat("en-US", {
 });
 const pacificWeekday = new Intl.DateTimeFormat("en-US", { timeZone: FERRY_TIME_ZONE, weekday: "short" });
 
+/**
+ * Whether `ms` is a time a Date can hold. Intl's formatters throw on any other (NaN, Infinity, or a finite epoch
+ * past the year 275760, which the schema's `epoch` accepts), so every Pacific label checks first.
+ */
+const datable = (ms: number): boolean => !Number.isNaN(new Date(ms).getTime());
+
 /** "7:00 am" in Pacific time, for the release and other fixed times. */
 export function pacificClock(ms: number): string {
-  if (!Number.isFinite(ms)) return "";
+  if (!datable(ms)) return "";
   const parts = pacificTime.formatToParts(new Date(ms));
   const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((p) => p.type === type)?.value ?? "";
   return fmt12(`${part("hour")}:${part("minute")}`) ?? "";
 }
 
 /** "Wed" in Pacific time. */
-export const pacificDay = (ms: number): string => (Number.isFinite(ms) ? pacificWeekday.format(new Date(ms)) : "");
+export const pacificDay = (ms: number): string => (datable(ms) ? pacificWeekday.format(new Date(ms)) : "");
 
 /** "Wed Jun 30" in Pacific time. */
-export const pacificDate = (ms: number): string => dayLabel(todayInPacific(new Date(ms)));
+export const pacificDate = (ms: number): string => (datable(ms) ? dayLabel(todayInPacific(new Date(ms))) : "");
 
 /** "today", "tomorrow" or "Fri", from `now`'s point of view. */
 export function relativeDay(ms: number, now: number): string {
+  if (!datable(ms) || !datable(now)) return "";
   const day = todayInPacific(new Date(ms));
   const today = todayInPacific(new Date(now));
   if (day === today) return "today";

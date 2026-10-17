@@ -20,6 +20,7 @@ afterEach(() => {
 describe("the BC Ferries form in the New watch sheet", () => {
   it("is the trip form, and adds through POST /api/watches with enabled beside the spec", async () => {
     history.replaceState(null, "", "/new/bcferries");
+    localStorage.setItem("wl.lastProvider", "buntzen");
     const { requests } = serveState(parsedState(), (r) =>
       r.url === "/api/watches" && r.method === "POST"
         ? jsonResponse({ watch_id: "a1b2c3d4e5f60718", state: parsedState() })
@@ -43,6 +44,7 @@ describe("the BC Ferries form in the New watch sheet", () => {
     expect(body.spec).not.toHaveProperty("enabled");
     expect(await screen.findByText("Trip added. It'll be checked shortly.")).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(localStorage.getItem("wl.lastProvider")).toBe("bcferries"); // the picker lists it first next time
   });
 
   it("edits through PATCH /api/watches/{id} with only the changed settings in spec", async () => {

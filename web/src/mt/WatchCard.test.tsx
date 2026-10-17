@@ -52,6 +52,16 @@ describe("a watch's card", () => {
     expect(await screen.findByText("Stopped watching")).toBeInTheDocument();
   });
 
+  it("titles its page with the failure when a watch's page throws", () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const state = parsedState();
+    const ui = providerUi("buntzen") ?? fail();
+    renderWithProviders(
+      <WatchCard watch={state.watches[0] ?? fail()} state={state} ui={{ ...ui, Detail: Boom }} detail />,
+    );
+    expect(screen.getByRole("heading", { level: 1, name: "Couldn't show this watch" })).toBeInTheDocument();
+  });
+
   it("leaves the full-screen page to an error boundary without a fallback", () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     renderWithProviders(

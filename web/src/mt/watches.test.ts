@@ -11,6 +11,7 @@ import {
   fail,
 } from "@/test/fixtures";
 import { capacityFor, nextHint, pickable, rememberProvider, sections } from "./watches";
+import type { ProviderUi } from "@/providers/types";
 import type { MyTrip } from "./schema";
 import type { Watch } from "./watch-schema";
 
@@ -139,6 +140,30 @@ describe("the Next hint", () => {
     });
     expect(nextHint([tomorrow], NOW, uiFor)).toBe(
       "Next: Buntzen Lake passes for Fri Jul 2 go on sale tomorrow at 7:00 am",
+    );
+  });
+
+  it("passes over a watch whose provider throws, which then sits in Watching undated", () => {
+    const state = parsedState();
+    const [odd, ...rest] = state.watches;
+    if (!odd) fail();
+    const broken = (): never => {
+      throw new RangeError("Invalid time value");
+    };
+    const lookup = (watch: Watch): ProviderUi | null => {
+      const ui = uiFor(watch);
+      return ui && watch.id === odd.id ? { ...ui, date: broken, group: broken, next: broken } : ui;
+    };
+    const groups = sections(state.watches, NOW, lookup);
+    const unknown = state.watches[3]?.id ?? fail(); // the fixture's bcparks watch, also undated
+    // After every dated watch, with the undated one, in the server's order.
+    expect(ids(groups.watching)).toEqual([
+      ...ids(sections(rest, NOW, uiFor).watching).filter((id) => id !== unknown),
+      odd.id,
+      unknown,
+    ]);
+    expect(nextHint(groups.watching, NOW, lookup)).toBe(
+      "Next: Buntzen Lake passes for Sat Jul 3 go on sale Fri at 7:00 am",
     );
   });
 

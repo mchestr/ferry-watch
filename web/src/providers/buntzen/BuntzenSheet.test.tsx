@@ -3,8 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MtApp } from "@/mt/MtApp";
 import type { WaitlistState } from "@/mt/watch-schema";
 import { FakeWebSocket } from "@/test/fake-websocket";
-import { FIXTURE_NOW, parsedState, serveState, fail } from "@/test/fixtures";
-import { jsonResponse, renderWithProviders } from "@/test/render";
+import { FIXTURE_NOW, parsedState, serveState, TERMINALS, fail } from "@/test/fixtures";
+import { deferred, jsonResponse, mockFetch, renderWithProviders } from "@/test/render";
 
 beforeEach(() => {
   // jsdom has no pointer capture; a toast's action button (View) asks for it.
@@ -127,6 +127,18 @@ describe("the Buntzen Lake form", () => {
     );
   });
 
+  it("asks for another date on the date itself", async () => {
+    const { user } = await open();
+    await user.click(screen.getByRole("radio", { name: "Other date" }));
+    const input = screen.getByLabelText("Date");
+    await user.tab();
+    expect(input).toHaveFocus(); // the next stop after the days
+    await user.click(screen.getByRole("button", { name: "Start watching" }));
+    expect(input).toHaveFocus(); // not the chip
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    expect(input).toHaveAccessibleDescription("Pick a day");
+  });
+
   it("puts the server's field errors on their field, and a refusal above the buttons", async () => {
     let refusal: Response = jsonResponse({ error: "Those passes are over for today", field: "passes" }, 400);
     const { user } = await open(parsedState(), (r) => (r.method === "POST" ? refusal : undefined));
@@ -137,6 +149,29 @@ describe("the Buntzen Lake form", () => {
     await user.click(screen.getByRole("button", { name: "Start watching" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("You can have up to 6 alert-only watches");
     expect(screen.getByRole("dialog", { name: "Watch Buntzen Lake" })).toBeInTheDocument(); // still open
+  });
+
+  it("lets a late answer land without closing a sheet opened since", async () => {
+    history.replaceState(null, "", "/");
+    const answer = deferred<Response>();
+    mockFetch((r) => {
+      if (r.url === "/api/terminals") return jsonResponse({ terminals: TERMINALS });
+      return r.method === "POST" ? answer.promise : jsonResponse(parsedState());
+    });
+    const { user } = renderWithProviders(<MtApp />);
+    await user.click(await screen.findByRole("button", { name: "New watch" }));
+    await user.click(await screen.findByRole("button", { name: /^Buntzen Lake/ }));
+    await user.click(await screen.findByRole("radio", { name: "Tomorrow" }));
+    await user.click(screen.getByRole("button", { name: "Start watching" }));
+    history.back(); // the phone's back button, while it saves
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await user.click(screen.getByRole("button", { name: "New watch" }));
+    await screen.findByRole("dialog", { name: "New watch" });
+    answer.resolve(jsonResponse({ watch_id: "0f3c9a1b2d4e5f60", state: parsedState() }));
+    expect(await screen.findByText("Watching Buntzen Lake for Thu Jul 1")).toBeInTheDocument(); // it still says so
+    await new Promise((settle) => setTimeout(settle, 50)); // time for a stray history.back() to land
+    expect(screen.getByRole("dialog", { name: "New watch" })).toBeInTheDocument();
+    expect(location.pathname).toBe("/new");
   });
 
   it("edits with a PATCH of only what changed", async () => {

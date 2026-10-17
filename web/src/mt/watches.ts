@@ -23,14 +23,27 @@ export type UiLookup = (watch: Watch) => ProviderUi | null;
 /** Unknown watches have no date: they sort after every dated one. */
 const NO_DATE = "9999-12-31";
 
+/**
+ * A provider's answer about one watch, or `otherwise` if it throws. These run while the dashboard renders, outside
+ * every card's error boundary: one odd watch must cost only its own card (which then says it can't show it), never
+ * the page.
+ */
+function soft<T>(ask: () => T, otherwise: T): T {
+  try {
+    return ask();
+  } catch {
+    return otherwise;
+  }
+}
+
 /** Every watch in its section (an unknown one is Watching), each section by date, then in the server's order. */
 export function sections(watches: readonly Watch[], now: number, lookup: UiLookup): Record<Group, Watch[]> {
   const out: Record<Group, Watch[]> = { now: [], watching: [], paused: [], ended: [] };
   watches
     .map((watch, index) => ({ watch, index, ui: lookup(watch) }))
-    .map((entry) => ({ ...entry, date: entry.ui?.date(entry.watch) ?? NO_DATE }))
+    .map((entry) => ({ ...entry, date: soft(() => entry.ui?.date(entry.watch), undefined) ?? NO_DATE }))
     .sort((a, b) => (a.date === b.date ? a.index - b.index : a.date < b.date ? -1 : 1))
-    .forEach(({ watch, ui }) => out[ui?.group(watch, now) ?? "watching"].push(watch));
+    .forEach(({ watch, ui }) => out[soft(() => ui?.group(watch, now), undefined) ?? "watching"].push(watch));
   return out;
 }
 
@@ -38,7 +51,7 @@ export function sections(watches: readonly Watch[], now: number, lookup: UiLooku
 export function nextHint(watching: readonly Watch[], now: number, lookup: UiLookup): string | null {
   let best: { at: number; text: string } | null = null;
   for (const watch of watching) {
-    const next = lookup(watch)?.next(watch, now) ?? null;
+    const next = soft(() => lookup(watch)?.next(watch, now) ?? null, null);
     if (next && next.at >= now && (best === null || next.at < best.at)) best = next;
   }
   return best ? `Next: ${best.text}` : null;
