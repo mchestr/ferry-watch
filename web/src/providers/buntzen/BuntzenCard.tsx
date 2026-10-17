@@ -163,7 +163,8 @@ export function Notes({
   );
 }
 
-const CHECKABLE = new Set(["checking", "pending", "error"]);
+// Quiet too: a check lifts the owner's quiet hours for 10 minutes (design.md §6.2, §4.5), as on a BC Ferries card.
+const CHECKABLE = new Set(["checking", "pending", "error", "quiet"]);
 
 /** Check now, Pause/Resume, Edit, Remove, and Watch another day once it's over. */
 export function BuntzenActions({ watch, onRemoved }: { watch: BuntzenWatch; onRemoved?: () => void }) {
