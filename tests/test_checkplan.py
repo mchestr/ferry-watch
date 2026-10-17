@@ -24,7 +24,11 @@ from waitlist.control.checkplan import (
 from waitlist.control.planner import UserView
 from waitlist.models import PACIFIC
 from waitlist.polling import QuietHours
+from waitlist.providers import REGISTRY as PROVIDERS
 from waitlist.providers.base import CheckWindow
+from waitlist.providers.buntzen import PROVIDER as BUNTZEN
+from waitlist.providers.buntzen import BuntzenSpec
+from waitlist.providers.buntzen.model import Pass
 
 DAY = date(2027, 7, 1)
 PROVIDER = FakeHttpProvider()
@@ -67,7 +71,7 @@ def plan(watches: list[WatchInput], *, now: float = NOON, tokens: int = 12, **kw
         cooldown_until=kw.pop("cooldown_until", {}),
         tokens={"buntzen": tokens},
         now=now,
-        fetched_at=kw.pop("fetched_at", None),
+        checked_at=kw.pop("checked_at", None),
     )
 
 
@@ -178,13 +182,13 @@ def test_a_watch_without_a_next_check_never_goes_ahead_of_watches_already_due() 
 
 
 def test_a_watch_reset_every_tick_fetches_each_query_at_most_once_per_min_interval() -> None:
-    fetched: dict[Any, float] = {}
+    checked: dict[str, float] = {}
     fetches: dict[str, list[float]] = {"a": [], "b": []}
     now = NOON
     while now < NOON + 300:
-        result = plan([watch("1" * 16)], now=now, fetched_at=fetched)  # next_check_at NULL, as after every PATCH
+        result = plan([watch("1" * 16)], now=now, checked_at=checked)  # next_check_at NULL, as after every PATCH
         for job in result.jobs:
-            fetched[(job.provider, job.query)] = now
+            checked.update(dict.fromkeys(job.watch_ids, now))
             fetches[job.query.part].append(now)
         now += TICK_SECONDS
     for times in fetches.values():
@@ -196,15 +200,59 @@ def test_a_watch_reset_every_tick_fetches_each_query_at_most_once_per_min_interv
 def test_a_watch_held_back_by_min_interval_is_neither_checked_nor_deferred() -> None:
     w = watch("1" * 16)
     jobs = plan([w]).jobs
-    fetched = {(j.provider, j.query): NOON - 10 for j in jobs}
-    held = plan([w], fetched_at=fetched)
+    checked = {w.id: NOON - 10}
+    held = plan([w], checked_at=checked)
     assert (held.jobs, held.deferred) == ([], {})
     assert held.wake_at == NOON + MIN_INTERVAL_S - 10
-    assert plan([w], now=NOON + MIN_INTERVAL_S - 10, fetched_at=fetched).jobs == jobs
-    one = {(jobs[0].provider, jobs[0].query): NOON - 10}  # one of its queries is enough to hold the watch
-    assert plan([w], fetched_at=one).jobs == []
-    other = watch("2" * 16, BOB, day=DAY + timedelta(days=1))  # different queries: not held
-    assert {j.watch_ids for j in plan([w, other], fetched_at=fetched).jobs} == {("2" * 16,)}
+    assert plan([w], now=NOON + MIN_INTERVAL_S - 10, checked_at=checked).jobs == jobs
+    other = watch("2" * 16, BOB, day=DAY + timedelta(days=1))  # another watch's last check doesn't hold it
+    assert {j.watch_ids for j in plan([w, other], checked_at=checked).jobs} == {("2" * 16,)}
+    # Only its own last check holds a watch: another watch on the same queries is due, and this one rides along.
+    same = watch("3" * 16, BOB)
+    assert {j.watch_ids for j in plan([w, same], checked_at=checked).jobs} == {("1" * 16, "3" * 16)}
+
+
+def test_a_watch_sharing_each_query_with_a_different_watch_is_still_checked_on_time() -> None:
+    # B wants the all-day pass and the morning one; A only the first, C only the second. Through the release burst,
+    # with A and C each checked on their own cadence, B must be checked on its own: other watches fetching its
+    # queries at other moments never hold it back (the loop remembers each watch's last check, not each query's).
+    def buntzen(watch_id: str, passes: tuple[Pass, ...], offset: float) -> WatchInput:
+        spec = BuntzenSpec(date=DAY, passes=passes)
+        start = BUNTZEN.window(spec).opens_at.timestamp() + RELEASE_DELAY_S
+        return replace(
+            watch(watch_id), spec=spec, window=BUNTZEN.window(spec), next_check_at=start + offset, attempted_at=start
+        )
+
+    watches = {
+        "a" * 16: buntzen("a" * 16, ("full_day",), 0.0),
+        "b" * 16: buntzen("b" * 16, ("full_day", "morning"), 8.0),
+        "c" * 16: buntzen("c" * 16, ("morning",), 15.0),
+    }
+    cadence = {"a" * 16: 31.0, "b" * 16: 30.5, "c" * 16: 33.0}  # 30 s, +JITTER, as HttpChecks schedules them
+    start = watches["a" * 16].window.opens_at.timestamp() + RELEASE_DELAY_S
+    checked: dict[str, float] = {}
+    times: dict[str, list[float]] = {watch_id: [start] for watch_id in watches}
+    now = start
+    while now < start + 1200:  # the release's 20 minutes at 30 s
+        checked = {k: at for k, at in checked.items() if now - at < MIN_INTERVAL_S}
+        result = plan_checks(
+            list(watches.values()),
+            USERS,
+            PROVIDERS,
+            provider_paused=frozenset(),
+            cooldown_until={},
+            tokens={"buntzen": 12},
+            now=now,
+            checked_at=checked,
+        )
+        for watch_id in sorted({watch_id for job in result.jobs for watch_id in job.watch_ids}):
+            checked[watch_id] = now
+            times[watch_id].append(now)
+            watches[watch_id] = replace(watches[watch_id], next_check_at=now + cadence[watch_id], attempted_at=now)
+        assert result.wake_at is not None
+        now = max(now + 0.25, min(now + TICK_SECONDS, result.wake_at)) + 0.5  # each round takes half a second
+    for watch_id, seen in times.items():
+        assert max(b - a for a, b in pairwise([*seen, now])) <= MIN_INTERVAL_S + TICK_SECONDS, watch_id
 
 
 def test_a_watch_not_due_rides_along_for_free() -> None:

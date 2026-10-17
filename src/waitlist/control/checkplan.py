@@ -7,8 +7,8 @@ dashboard and the loop always agree on a watch's state.
 A watch is checked from its window's `opens_at` (plus RELEASE_DELAY_S) until `closes_at`. Each tick takes the due
 watches oldest first and admits one only if all of its queries fit in its provider's request budget; identical
 queries are coalesced across watches and users, and every other checkable watch whose queries all made the round
-rides along for free. No query is fetched again within MIN_INTERVAL_S of its last fetch, whatever made its watch
-due early (an edit or a re-enable resets next_check_at, and a new watch has none).
+rides along for free. No watch is due again within MIN_INTERVAL_S of its last check, whatever made it due early
+(an edit or a re-enable resets next_check_at, and a new watch has none).
 """
 
 from __future__ import annotations
@@ -184,15 +184,8 @@ def _released(watch: WatchInput, now: float) -> bool:
     return now >= watch.window.opens_at.timestamp() + RELEASE_DELAY_S
 
 
-FetchedAt = Mapping[tuple[str, msgspec.Struct], float]
-"""When each (provider, query) was last fetched, as the check loop remembers it."""
-
-
-def _spaced_until(provider: str, queries: Sequence[msgspec.Struct], fetched_at: FetchedAt) -> float:
-    """The earliest instant at which every one of these queries may be fetched again (0.0: at once)."""
-    return max(
-        (fetched_at[(provider, q)] + MIN_INTERVAL_S for q in queries if (provider, q) in fetched_at), default=0.0
-    )
+CheckedAt = Mapping[str, float]
+"""When each watch was last checked (all of its queries were in a round), by id, as the check loop remembers it."""
 
 
 def plan_checks(
@@ -204,14 +197,16 @@ def plan_checks(
     cooldown_until: Mapping[str, float],
     tokens: Mapping[str, int],
     now: float,
-    fetched_at: FetchedAt | None = None,
+    checked_at: CheckedAt | None = None,
 ) -> CheckPlan:
     """The tick's jobs, reminders and archives, every watch's state, and when to wake next (design.md §4.5).
 
-    A watch is due only once all of its queries were last fetched (`fetched_at`) at least MIN_INTERVAL_S ago; until
-    then it waits, neither admitted nor deferred. A due watch without a next_check_at (new, edited or re-enabled)
-    is as old as `now`: it never goes ahead of watches already due."""
-    fetched = fetched_at if fetched_at is not None else {}
+    A watch is due only once it was last checked (`checked_at`) at least MIN_INTERVAL_S ago; until then it waits,
+    neither admitted nor deferred, though it still rides along with a round that fetches all of its queries. Only
+    the watch's own checks count: other watches fetching some of its queries never hold it back. A due watch
+    without a next_check_at (new, edited or re-enabled) is as old as `now`: it never goes ahead of watches already
+    due."""
+    checked = checked_at if checked_at is not None else {}
     states: dict[str, CheckState] = {}
     queries: dict[str, tuple[msgspec.Struct, ...]] = {}
     for w in watches:
@@ -225,7 +220,7 @@ def plan_checks(
             now=now,
         )
         queries[w.id] = provider.queries(w.spec) if provider is not None else ()
-    spaced = {w.id: _spaced_until(w.provider, queries[w.id], fetched) for w in watches}
+    spaced = {w.id: checked[w.id] + MIN_INTERVAL_S if w.id in checked else 0.0 for w in watches}
     checkable = [w for w in watches if states[w.id] in CHECKABLE and queries[w.id] and _released(w, now)]
     due = sorted(
         (w for w in checkable if (w.next_check_at or 0.0) <= now and spaced[w.id] <= now),
@@ -308,7 +303,7 @@ def _wake_at(
     now: float,
 ) -> float | None:
     """Rule 7: the earliest future instant at which something becomes due (a release, a reminder, a next check, an
-    archive), or None. A checkable watch's next check is never before its queries may be fetched again."""
+    archive), or None. A checkable watch's next check is never within MIN_INTERVAL_S of its last."""
     instants: list[float] = []
     for w in watches:
         opens, closes = w.window.opens_at.timestamp(), w.window.closes_at.timestamp()

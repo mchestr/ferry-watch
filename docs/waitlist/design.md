@@ -104,14 +104,27 @@ card's Check now is now enabled for `quiet` as well.
   each `(provider, query)` was last fetched and passes it to `plan_checks` as `fetched_at`. Rule 1 adds: a
   watch is due only when each of its queries was last fetched at least `MIN_INTERVAL_S` ago (one held back
   this way is not counted in `deferred`). Rule 2 sorts a NULL `next_check_at` as `now`, not `opens_at`. Rule 7
-  never puts a checkable watch's instant before its queries may be fetched again.
+  never puts a checkable watch's instant before its queries may be fetched again. (Amendment 5 replaces this
+  with per-watch spacing.)
 - **I3 holds on updates too.** §3.1's `browser_pods_bcferries_only`, `vnc_mints_bcferries_only` and
   `check_results_http_only` fire `BEFORE INSERT OR UPDATE OF trip_id`, as `hold_claims_bcferries_only`
   already did, so no update can move a browser pod or checkout ticket to an HTTP watch, or an HTTP result to a
   BC Ferries trip. 0008 is edited in place: it was never released, and every deployment starts empty.
 
-### Amendment 5 (review round 6): the I3 triggers read public.trips
+### Amendment 5 (review round 6): per-watch spacing, and the I3 triggers read public.trips
 
+- **No watch is checked more often than every `MIN_INTERVAL_S`; queries aren't spaced.** This replaces
+  Amendment 4's per-query spacing. Under it a watch was due only once *every* one of its queries was
+  `MIN_INTERVAL_S` stale. So a watch on the all-day and morning passes, sharing a date with one watch on each,
+  waited while those two fetched its queries at different moments, and rode along only when both fell in one
+  round: through a release burst it could go minutes unchecked. `HttpChecks` now remembers when each watch was
+  last checked (every watch a round includes, riders too, by id) and passes it to `plan_checks` as
+  `checked_at`. Rule 1 reads: a watch is due only when it was last checked at least `MIN_INTERVAL_S` ago (one
+  held back this way is still not counted in `deferred`, and still rides along with a round that fetches all
+  of its queries). Rule 7 never puts a checkable watch's instant within `MIN_INTERVAL_S` of its last check.
+  An edit or a re-enable on every tick still checks that watch at most once per `MIN_INTERVAL_S`. The cost is
+  that two watches sharing a query can fetch it less than `MIN_INTERVAL_S` apart; the provider's request
+  budget (§4.5 rules 3-4) still bounds every fetch.
 - **A temporary table can't stand in for `trips`.** Both app roles keep PostgreSQL's default `TEMPORARY`
   privilege, and an unqualified table name finds `pg_temp` first unless the search path lists it, so
   `bcferries_trip_only()` and `http_trip_only()` (§3.1) could be shown a session's own `trips`. Each now reads
