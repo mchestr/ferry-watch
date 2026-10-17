@@ -91,6 +91,25 @@ request, or one declared over `MAX_REQUEST_BYTES`, before reading it.
 (refusing it only while a backoff or a cooldown would still hold it back), as BC Ferries' card always has. The
 card's Check now is now enabled for `quiet` as well.
 
+### Amendment 4 (final review): bounded fetcher replies, per-query spacing, I3 on updates
+
+- **waitlist-control keeps the fetcher's replies as sent.** §4.4 has control treat them as untrusted input,
+  bounded and strictly decoded, but aiohttp inflated a compressed reply whole before `FetchClient`'s byte cap
+  saw it. The fetcher session is built with `auto_decompress=False`, and `FetchClient.fetch` passes it on every
+  request too, asks for `Accept-Encoding: identity`, and answers `bad_reply` before reading the body when the
+  reply's `Content-Encoding` is anything but absent or `identity`. The fetcher never compresses its replies.
+- **No query is fetched more often than every `MIN_INTERVAL_S`.** An edit, a re-enable or a new watch leaves
+  `next_check_at` NULL, which §4.5's rules made due at once and, sorted by `opens_at`, ahead of every other due
+  watch, so edits could check a watch on every tick around `manualChecksPerHour`. `HttpChecks` remembers when
+  each `(provider, query)` was last fetched and passes it to `plan_checks` as `fetched_at`. Rule 1 adds: a
+  watch is due only when each of its queries was last fetched at least `MIN_INTERVAL_S` ago (one held back
+  this way is not counted in `deferred`). Rule 2 sorts a NULL `next_check_at` as `now`, not `opens_at`. Rule 7
+  never puts a checkable watch's instant before its queries may be fetched again.
+- **I3 holds on updates too.** §3.1's `browser_pods_bcferries_only`, `vnc_mints_bcferries_only` and
+  `check_results_http_only` fire `BEFORE INSERT OR UPDATE OF trip_id`, as `hold_claims_bcferries_only`
+  already did, so no update can move a browser pod or checkout ticket to an HTTP watch, or an HTTP result to a
+  BC Ferries trip. 0008 is edited in place: it was never released, and every deployment starts empty.
+
 ---
 
 ## 0. Decisions at a glance

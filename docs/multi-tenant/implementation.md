@@ -60,7 +60,7 @@ and was then removed; it's in git history before the removal.
 
 | Module | What |
 |---|---|
-| `migrations/0001_init.sql` … `0007_waitlist_names.sql`, `db.py` | The schema (expand only), and per-role grants with row-level security (§6.4). 0004 adds `user_settings` (quiet hours), `trip_runtime.quiet_lifted_until` and `browser_pods.agent_version`, and moves "pause all" onto each trip. 0005 gives everyone quiet hours: 22:00-05:00 where they had none (no times, which a 0.6.3 ferry-web can still store during the rollout, read as the default; a later release makes them NOT NULL). 0006 adds each user's checkout viewer. 0007 (the rename) names new pods `wl-<trip>-g<gen>` and keeps the `fw-` rows restored from the Ferry Watch database. |
+| `migrations/0001_init.sql` … `0007_waitlist_names.sql`, `db.py` | The schema (expand only), and per-role grants with row-level security (§6.4). 0004 adds `user_settings` (quiet hours), `trip_runtime.quiet_lifted_until` and `browser_pods.agent_version`, and moves "pause all" onto each trip. 0005 gives everyone quiet hours: 22:00-05:00 where they had none (no times, which a 0.6.3 ferry-web can still store during the rollout, read as the default; a later release makes them NOT NULL). 0006 adds each user's checkout viewer. 0007 (the rename) names new pods `wl-<trip>-g<gen>` and still allows `fw-` names, so a database created before the rename stays valid. |
 | `hub.py`, `store.py` | The hub endpoint: TokenReview binding, idempotent recording, cart claims (one hold per user), configure pushes (`active=false` in the user's quiet hours unless lifted), commands, NOTIFY on change. A viewed hold asks "Did you book it?" unless it was released on request. |
 | `planner.py`, `fleet.py`, `pods.py`, `kube.py` | The fleet loop: warm and short-check pods (none in a user's quiet hours, unless lifted for the trip), admission and fairness, reaping timers, hold egress, the pod template, and `fleet_report` (with ferry-control's version) for the admin page. |
 | `configure.py`, `limits.py`, `config.py`, `main.py` | Cart gating (with the user's quiet hours), the curve with the budget stretch, per-user limits, the deployment's config (`polling.quietStart`/`quietEnd` deprecated and ignored), `migrate` and `run`. |
@@ -142,7 +142,8 @@ Each is a two-way door.
 
 - **Renamed to Waitlist** (October 2026), to watch more reservation systems than BC Ferries: see the note at
   the top. A rename can't roll out in place (namespaces, env vars, labels and wire names all change), so it
-  ships as a new deployment, with the Ferry Watch database copied into Waitlist's.
+  ships as a new deployment with an empty database; Ferry Watch was deleted with no data carried over
+  (docs/waitlist/design.md, Amendment 1).
 
 - **One distribution, not a uv workspace** (§11.1). The same boundaries are packages held by
   import-linter. Playwright and selectolax are a `browser` extra and asyncpg and PyJWT a `control` extra,
