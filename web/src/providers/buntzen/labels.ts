@@ -226,7 +226,7 @@ export function notes(
       break;
     case "checking": {
       if (!cadence) break;
-      const at = check.checked_at ?? check.last_check_at;
+      const at = check.checked_at; // the last check that read Yodel: a failed one (last_check_at) read nothing
       const pace = every(intervalSeconds(spec.date, now, opensAt(watch)));
       out.push(at !== null ? `Checked ${clock(at * 1000)}, ${pace}.` : `Checking ${pace}.`);
       break;

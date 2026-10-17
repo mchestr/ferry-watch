@@ -28,6 +28,22 @@ describe("a Buntzen Lake watch's page", () => {
     expect(screen.getAllByText(/Checked 7:31 am/)).toHaveLength(1); // said once
   });
 
+  it("says not checked yet while every check so far failed, though one was tried", () => {
+    show(
+      makeBuntzenWatch({
+        check: {
+          state: "checking",
+          outcome: "error",
+          error_class: "rate_limited",
+          consecutive_errors: 1,
+          checked_at: null,
+        },
+      }),
+    );
+    expect(screen.getByText(/^Not checked yet\. On sale Wed Jun 30 at 7:00 am;/)).toBeInTheDocument();
+    expect(screen.queryByText(/Checked 7:31 am/)).toBeNull();
+  });
+
   it("says an uncertain pass may be bookable", () => {
     const base = makeBuntzenWatch();
     show(makeBuntzenWatch({ options: [{ ...(base.options[0] ?? fail()), status: "maybe", detail: "Waitlist only" }] }));

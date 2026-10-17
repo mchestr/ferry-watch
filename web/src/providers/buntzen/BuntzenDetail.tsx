@@ -41,7 +41,7 @@ export function BuntzenDetail({ watch, state, info }: WatchProps<BuntzenWatch>) 
   const now = useNow(30_000);
   const status = badge(watch, now);
   const line = statusLine(watch, now);
-  const checked = watch.check.checked_at ?? watch.check.last_check_at;
+  const checked = watch.check.checked_at; // the last check that read Yodel, never a failed attempt
   return (
     <div className="space-y-4">
       <Card className="space-y-4 p-5 sm:p-6">
