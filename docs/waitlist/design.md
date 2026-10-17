@@ -110,6 +110,15 @@ card's Check now is now enabled for `quiet` as well.
   already did, so no update can move a browser pod or checkout ticket to an HTTP watch, or an HTTP result to a
   BC Ferries trip. 0008 is edited in place: it was never released, and every deployment starts empty.
 
+### Amendment 5 (review round 6): the I3 triggers read public.trips
+
+- **A temporary table can't stand in for `trips`.** Both app roles keep PostgreSQL's default `TEMPORARY`
+  privilege, and an unqualified table name finds `pg_temp` first unless the search path lists it, so
+  `bcferries_trip_only()` and `http_trip_only()` (§3.1) could be shown a session's own `trips`. Each now reads
+  `FROM public.trips` and is declared `SET search_path = pg_catalog, public, pg_temp`. 0008 is edited in
+  place, as in Amendment 4. `TEMPORARY` stays granted: it comes from `PUBLIC` on the database, outside what
+  `db.grant()` manages, and with these two changes the triggers no longer depend on it.
+
 ---
 
 ## 0. Decisions at a glance

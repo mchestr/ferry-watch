@@ -29,10 +29,12 @@ COMMENT ON TABLE trips IS 'One watch per row, on any provider (trips.provider). 
 
 -- Browser pods, cart claims and checkout tickets exist for BC Ferries trips only, whatever a bug in
 -- waitlist-control or waitlist-web asks for. (They fire on INSERT and on a change of trip_id: rows already there
--- aren't re-checked otherwise.)
-CREATE FUNCTION bcferries_trip_only() RETURNS trigger LANGUAGE plpgsql AS $$
+-- aren't re-checked otherwise.) Each names public.trips and pins its search_path, temporary schema last: a
+-- temporary table named trips, which either role may create, must not stand in for the real one.
+CREATE FUNCTION bcferries_trip_only() RETURNS trigger LANGUAGE plpgsql
+    SET search_path = pg_catalog, public, pg_temp AS $$
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM trips WHERE id = NEW.trip_id AND provider = 'bcferries') THEN
+    IF NOT EXISTS (SELECT 1 FROM public.trips WHERE id = NEW.trip_id AND provider = 'bcferries') THEN
         RAISE EXCEPTION '% rows are for BC Ferries trips only', TG_TABLE_NAME;
     END IF;
     RETURN NEW;
@@ -45,9 +47,10 @@ CREATE TRIGGER hold_claims_bcferries_only BEFORE INSERT OR UPDATE OF trip_id ON 
 CREATE TRIGGER vnc_mints_bcferries_only BEFORE INSERT OR UPDATE OF trip_id ON vnc_mints
     FOR EACH ROW EXECUTE FUNCTION bcferries_trip_only();
 
-CREATE FUNCTION http_trip_only() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE FUNCTION http_trip_only() RETURNS trigger LANGUAGE plpgsql
+    SET search_path = pg_catalog, public, pg_temp AS $$
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM trips WHERE id = NEW.trip_id AND provider <> 'bcferries') THEN
+    IF NOT EXISTS (SELECT 1 FROM public.trips WHERE id = NEW.trip_id AND provider <> 'bcferries') THEN
         RAISE EXCEPTION '% rows are for HTTP-checked watches only', TG_TABLE_NAME;
     END IF;
     RETURN NEW;

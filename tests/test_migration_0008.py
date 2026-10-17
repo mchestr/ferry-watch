@@ -245,6 +245,49 @@ async def test_check_results_are_for_http_watches_only_and_written_by_control(se
 
 
 @pytest.mark.parametrize(
+    ("role", "trip", "provider", "insert", "refusal"),
+    [
+        (
+            ROLES.control,
+            PASS,
+            "bcferries",
+            "INSERT INTO browser_pods (name, trip_id, user_id, gen, mode, deadline_at)"
+            " VALUES ('wl-' || $1::text || '-g1', $1, $2, 1, 'warm', now())",
+            "browser_pods rows are for BC Ferries trips only",
+        ),
+        (
+            ROLES.web,
+            PASS,
+            "bcferries",
+            "INSERT INTO vnc_mints (jti, user_id, trip_id, pod, aud)"
+            " VALUES ('j1', $2, $1::text, 'wl-' || $1::text || '-g1', 'wl-vnc')",
+            "vnc_mints rows are for BC Ferries trips only",
+        ),
+        (
+            ROLES.control,
+            FERRY,
+            "buntzen",
+            "INSERT INTO check_results (trip_id, search_hash) VALUES ($1, '0123456789abcdef')",
+            "check_results rows are for HTTP-checked watches only",
+        ),
+    ],
+)
+async def test_a_temporary_trips_table_doesnt_fool_the_provider_triggers(
+    seeded: Database, role: str, trip: str, provider: str, insert: str, refusal: str
+) -> None:
+    # Either role may create a temporary table, and an unqualified name finds pg_temp first unless the path says
+    # otherwise: a "trips" there, claiming the watch is on the other provider, must change nothing.
+    conn = await seeded.connect(role)
+    try:
+        await conn.execute("CREATE TEMP TABLE trips (id char(16), provider text)")
+        await conn.execute("INSERT INTO trips VALUES ($1, $2)", trip, provider)
+        with pytest.raises(asyncpg.RaiseError, match=refusal):
+            await conn.execute(insert, *((trip, ANN) if "$2" in insert else (trip,)))
+    finally:
+        await conn.close()
+
+
+@pytest.mark.parametrize(
     ("column", "value"),
     [
         ("search_hash", "'XYZ'"),
