@@ -3,6 +3,7 @@ its site parser past the fence, or start importing another provider."""
 
 from __future__ import annotations
 
+import ast
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -41,5 +42,12 @@ def test_every_provider_is_independent_of_the_others() -> None:
 def test_no_provider_package_imports_its_client() -> None:
     """control and web import waitlist.providers, and import-linter follows transitive imports."""
     for name in _packages():
-        text = (PROVIDERS / name / "__init__.py").read_text()
-        assert ".client" not in text, name
+        tree = ast.parse((PROVIDERS / name / "__init__.py").read_text())
+        imported: set[str] = set()  # every module the package imports, and every name it takes from one
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                module = node.module or ""
+                imported |= {module} | {f"{module}.{a.name}".lstrip(".") for a in node.names}
+            elif isinstance(node, ast.Import):
+                imported |= {a.name for a in node.names}
+        assert not {m for m in imported if m == "client" or m.endswith(".client")}, name

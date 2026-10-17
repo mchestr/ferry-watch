@@ -1017,6 +1017,10 @@ class WebStore:
                     watches.append(self._degraded(r, "a provider this build doesn't know"))
             except ValueError as e:  # ValidationError, SpecError: one bad row never fails the state
                 watches.append(self._degraded(r, f"its spec doesn't load ({e})"))
+            except Exception as e:  # nor does a provider's bug
+                if r["provider"] == BCFERRIES:
+                    raise  # BC Ferries' entry is 0.7.1's, and failed as it would have
+                watches.append(self._degraded(r, f"its provider failed on it ({type(e).__name__})"))
         limits: dict[str, dict[str, Any]] = {}
         for key in SHOWN_LIMITS:
             effective = self._limits.effective(key, overrides.get(key))

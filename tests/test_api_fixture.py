@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Mapping
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -15,6 +15,7 @@ import aiohttp
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from tests.fakes import FakeHttpProvider, FakeSpec, fake_registry
 from tests.postgres import ROLES, Database
 from tests.test_web_watches import ANN, STUB, Rig, make_rig, watches
 from waitlist.control.limits import Limits
@@ -238,3 +239,20 @@ async def test_buntzen_entries_have_the_fixtures_shape(buntzen: Rig) -> None:
     assert built[1]["options"] == entry("buntzen", 1)["options"]
     assert state["capacity"] == fixture()["capacity"]
     assert state["providers"] == fixture()["providers"]
+
+
+async def test_a_providers_bug_degrades_its_watch_not_the_state(
+    db: Database, aiohttp_client: Callable[..., Any]
+) -> None:
+    """A provider that fails on a stored spec with something other than a SpecError: the state still comes back."""
+
+    class Broken(FakeHttpProvider):
+        def load_spec(self, stored: Mapping[str, Any]) -> FakeSpec:
+            raise NotImplementedError  # as the contract commit's stub did, for everything
+
+    async for rig in make_rig(db, aiohttp_client, registry=fake_registry(Broken()), policy=PollPolicy()):
+        await rig.sql("INSERT INTO trips (id, user_id, provider, spec) VALUES ($1, $2, 'buntzen', '{}')", "b" * 16, ANN)
+        state = await rig.state()
+        (watch,) = watches(state)
+        assert set(watch) == {"provider", "id", "rev", "enabled", "paused_reason", "quiet"}
+        assert state["capacity"]["providers"]["buntzen"]["count"] == 1
