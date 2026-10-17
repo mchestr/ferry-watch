@@ -84,6 +84,13 @@ an uncompressed body is. Any other `Content-Encoding`, or a stream that doesn't 
 is `site_changed`. The fetcher's own server likewise leaves request bodies as sent and refuses a compressed
 request, or one declared over `MAX_REQUEST_BYTES`, before reading it.
 
+### Amendment 3 (end-to-end run): Check now in quiet hours
+
+§7.4 listed the Buntzen card's Check now as enabled for `checking`, `pending` and `error`, which left out
+`quiet`. §6.2 and §4.5 have a check lift the owner's quiet hours for 10 minutes, and waitlist-web accepts one
+(refusing it only while a backoff or a cooldown would still hold it back), as BC Ferries' card always has. The
+card's Check now is now enabled for `quiet` as well.
+
 ---
 
 ## 0. Decisions at a glance

@@ -174,7 +174,7 @@ describe("a Buntzen Lake card", () => {
     ["error", true],
     ["waiting_release", false],
     ["backoff", false],
-    ["quiet", false],
+    ["quiet", true], // a check lifts quiet hours for 10 minutes (design.md §6.2), as on a BC Ferries card
     ["paused", false],
     ["provider_paused", false],
     ["unavailable", false],
@@ -183,6 +183,21 @@ describe("a Buntzen Lake card", () => {
     const check = screen.getByRole("button", { name: "Check now" });
     if (enabled) expect(check).toBeEnabled();
     else expect(check).toBeDisabled();
+  });
+
+  it("checks now in quiet hours, which lifts them for a while", async () => {
+    const quiet = makeBuntzenWatch({
+      quiet: true,
+      check: { state: "quiet" },
+      options: [option("morning", "sold_out")],
+    });
+    const lifted = makeBuntzenWatch({ check: { state: "pending" }, options: [option("morning", "sold_out")] });
+    const { requests } = mockFetch(() => jsonResponse(stateWith([lifted])));
+    const { user } = show(quiet);
+    expect(screen.getByText(/^It's your quiet hours, so this isn't checked/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Check now" }));
+    expect(await screen.findByText("Checking now")).toBeInTheDocument();
+    expect(requests.map((r) => [r.method, r.url])).toEqual([["POST", `/api/watches/${quiet.id}/check`]]);
   });
 
   it("checks now, pauses and resumes through /api/watches", async () => {

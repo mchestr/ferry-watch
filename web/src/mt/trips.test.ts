@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { makeSettings } from "@/test/fixtures";
 import type { MyTrip } from "./schema";
-import { asSailings, minutesLeft, nextCheck, notHeldReason, tripBadge, unheld } from "./trips";
+import { asSailings, minutesLeft, nextCheck, notHeldReason, routeTitle, tripBadge, tripTitle, unheld } from "./trips";
 
 function myTrip(browser: Partial<MyTrip["browser"]> = {}, extra: Partial<MyTrip> = {}): MyTrip {
   return {
@@ -38,6 +38,28 @@ const open = (depart: string, status: "available" | "sold_out" = "available") =>
   vessel: "Queen of Oak Bay",
   status,
   fares: [],
+});
+
+describe("route titles", () => {
+  // As GET /api/terminals sends them: a label is BC Ferries' "City - Name (Place)", for the route form's lists.
+  const terminals = [
+    { code: "SWB", label: "Sidney - Victoria (Swartz Bay)", place: "Swartz Bay", area: "Victoria", dests: ["TSA"] },
+    { code: "TSA", label: "Delta - Vancouver (Tsawwassen)", place: "Tsawwassen", area: "Vancouver", dests: ["SWB"] },
+  ];
+  const trip = myTrip(
+    {},
+    { trip: { ...makeSettings({ from: "SWB", to: "TSA", date: "2026-10-23" }), id: "3f9c0a1b2c3d4e5f" } },
+  );
+
+  it("name the terminals themselves, as alerts do", () => {
+    expect(routeTitle(trip, terminals)).toBe("Swartz Bay → Tsawwassen");
+    expect(tripTitle(trip, terminals)).toBe("Swartz Bay → Tsawwassen, Friday, October 23");
+  });
+
+  it("fall back to the codes until the list has loaded", () => {
+    expect(routeTitle(trip, undefined)).toBe("SWB → TSA");
+    expect(routeTitle(trip, terminals.slice(0, 1))).toBe("Swartz Bay → TSA");
+  });
 });
 
 describe("trip badges", () => {

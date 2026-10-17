@@ -120,6 +120,22 @@ describe("a Buntzen card's notes", () => {
     expect(notes(open, NOW, undefined, { cadence: false })).toEqual([]);
   });
 
+  it("never says checked of a watch whose every check so far failed", () => {
+    // Yodel answered 429 to the first check: it was tried (last_check_at), but nothing was read (checked_at).
+    const failedFirst = makeBuntzenWatch({
+      check: {
+        state: "checking",
+        outcome: "error",
+        error_class: "rate_limited",
+        consecutive_errors: 1,
+        checked_at: null,
+      },
+      options: [option("unchecked")],
+    });
+    expect(failedFirst.check.last_check_at).not.toBeNull();
+    expect(notes(failedFirst, NOW)).toEqual(["Checking every minute."]);
+  });
+
   it("says out of season that Yodel isn't offering passes", () => {
     const offSeason = makeBuntzenWatch({
       spec: { date: "2026-10-20" },

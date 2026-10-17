@@ -39,7 +39,7 @@ describe("the dashboard", () => {
       "Morning or afternoon pass",
       "Watching3",
       "All-day pass",
-      "Vancouver (Tsawwassen) → Victoria (Swartz Bay)",
+      "Tsawwassen → Swartz Bay",
     ]);
     expect(within(section("Needs you now")).getByText("Open now")).toBeInTheDocument();
     const watching = section("Watching");
@@ -74,9 +74,7 @@ describe("the dashboard", () => {
     const heading = await screen.findByRole("heading", { level: 1, name: "Your watches" });
     expect(heading.nextElementSibling).toHaveTextContent("4 watched");
     expect(screen.getByText("Next: Buntzen Lake passes for Sat Jul 3 go on sale Fri at 7:00 am")).toBeInTheDocument();
-    expect(
-      screen.getByRole("heading", { level: 2, name: "Vancouver (Tsawwassen) → Victoria (Swartz Bay)" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "Tsawwassen → Swartz Bay" })).toBeInTheDocument();
     expect(screen.queryByText("Something went wrong")).toBeNull();
   });
 

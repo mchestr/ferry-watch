@@ -1,6 +1,7 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { asWatch, BCFERRIES_INFO, makeSettings, tripsOf } from "@/test/fixtures";
+import { asWatch, BCFERRIES_INFO, makeSettings, TERMINALS, tripsOf } from "@/test/fixtures";
+import { createQueryClient } from "@/lib/query";
 import { addDays, todayInPacific } from "@/lib/time";
 import { FakeWebSocket } from "@/test/fake-websocket";
 import { jsonResponse, mockFetch, renderWithProviders } from "@/test/render";
@@ -197,6 +198,39 @@ describe("signed in", () => {
     renderWithProviders(<MtApp />);
     expect(await screen.findByRole("button", { name: "Sign in" })).toBeInTheDocument();
     expect(localStorage.getItem("wl.token")).toBeNull();
+  });
+});
+
+describe("BC Ferries' terminal list", () => {
+  beforeEach(() => {
+    localStorage.setItem("wl.token", "t-1");
+    history.replaceState(null, "", "/new/bcferries");
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("keeps asking while BC Ferries is out of reach, and opens the trip form once it's back", async () => {
+    // waitlist-web answers 503 while it can't load bcferries.com's list (a restart during an outage, say). The
+    // form says it's retrying, so it must: with the app's own query defaults, not the tests' no-retry ones.
+    vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ["setTimeout", "clearTimeout", "Date"] });
+    let unavailable = 3;
+    const { requests } = mockFetch((r) => {
+      if (r.url === "/api/state") return jsonResponse(myState({ trips: [] }));
+      if (r.url === "/api/terminals" && unavailable-- > 0) {
+        return jsonResponse({ error: "BC Ferries' terminal list is unavailable right now; try again shortly" }, 503);
+      }
+      return jsonResponse({ terminals: TERMINALS });
+    });
+    renderWithProviders(<MtApp />, { queryClient: createQueryClient() });
+    const from = await screen.findByRole("combobox", { name: "From" });
+    expect(from).toBeDisabled();
+    expect(await screen.findByText(/Couldn't load BC Ferries' terminals/)).toBeInTheDocument();
+    await act(() => vi.advanceTimersByTimeAsync(60_000));
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "From" })).toBeEnabled());
+    expect(requests.filter((r) => r.url === "/api/terminals")).toHaveLength(4);
+    expect(screen.queryByText(/Couldn't load BC Ferries' terminals/)).toBeNull();
   });
 });
 

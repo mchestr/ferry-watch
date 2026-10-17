@@ -13,9 +13,10 @@ export interface TripBadge {
   tone: TripTone;
 }
 
-/** "Tsawwassen → Swartz Bay", or the codes until the terminal list has loaded. */
+/** "Tsawwassen → Swartz Bay", or the codes until the terminal list has loaded. The terminals' own names, as alerts
+ * say them: a terminal's label is BC Ferries' longer "Delta - Vancouver (Tsawwassen)", for the route form's lists. */
 export function routeTitle(trip: MyTrip, terminals: readonly Terminal[] | undefined): string {
-  const name = (code: string) => terminals?.find((t) => t.code === code)?.label ?? code;
+  const name = (code: string) => terminals?.find((t) => t.code === code)?.place ?? code;
   return `${name(trip.trip.from)} → ${name(trip.trip.to)}`;
 }
 

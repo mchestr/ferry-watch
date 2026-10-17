@@ -32,9 +32,7 @@ describe("a BC Ferries card", () => {
       (_, element) => element?.tagName === "P" && (element.textContent ?? "").startsWith("BC Ferries"),
     );
     expect(line).toHaveTextContent("BC Ferries · , Sat Jul 3");
-    expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent(
-      "Vancouver (Tsawwassen) → Victoria (Swartz Bay)",
-    );
+    expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent("Tsawwassen → Swartz Bay");
     expect(screen.getByText("Checking")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Details/ })).toHaveAttribute("href", `/w/${watch.id}`);
   });
