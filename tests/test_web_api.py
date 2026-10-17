@@ -48,6 +48,11 @@ def today_at(hour: int, minute: int = 0) -> float:
     return datetime.combine(datetime.now(PACIFIC).date(), dt_time(hour, minute), PACIFIC).timestamp()
 
 
+def trips(state: dict[str, Any]) -> list[dict[str, Any]]:
+    """The state's BC Ferries trips: its watches on BC Ferries (docs/waitlist/design.md §6.3)."""
+    return [w for w in state["watches"] if w["provider"] == "bcferries"]
+
+
 @dataclass
 class Rig:
     client: TestClient
@@ -63,7 +68,7 @@ class Rig:
         body = {"from": "SWB", "to": "TSA", "date": soon()} | trip
         response = await self.call("POST", "/api/trips", user, json=body)
         assert response.status == 200, await response.text()
-        return str((await response.json())["trips"][-1]["trip"]["id"])
+        return str(trips(await response.json())[-1]["trip"]["id"])
 
     async def sql(self, query: str, *args: Any) -> list[asyncpg.Record]:
         conn = await self.db.connect()
@@ -120,8 +125,8 @@ async def test_adding_a_trip(rig: Rig) -> None:
     trip_id = await rig.add()
     assert len(trip_id) == 16
     state = await (await rig.call("GET", "/api/state")).json()
-    assert [t["trip"]["id"] for t in state["trips"]] == [trip_id]
-    assert state["trips"][0]["browser"]["mode"] == "off"
+    assert [t["trip"]["id"] for t in trips(state)] == [trip_id]
+    assert trips(state)[0]["browser"]["mode"] == "off"
     assert state["limits"]["maxTrips"] == {"value": 3, "source": "default"}
     assert (await rig.sql("SELECT next_check_at FROM trip_runtime"))[0]["next_check_at"] is None  # checked at once
 
@@ -155,7 +160,7 @@ async def test_another_users_trip_looks_missing(rig: Rig) -> None:
         response = await rig.call(method, path, json=body)
         assert response.status == 404, path
     state = await (await rig.call("GET", "/api/state")).json()
-    assert state["trips"] == []
+    assert trips(state) == []
 
 
 async def test_editing_and_removing(rig: Rig) -> None:
@@ -224,7 +229,7 @@ async def test_hold_it_for_me(rig: Rig) -> None:
     before = time.time()
     response = await rig.call("POST", f"/api/trips/{trip_id}/hold")
     assert response.status == 200, await response.text()
-    (trip,) = (await response.json())["trips"]
+    (trip,) = trips(await response.json())
     assert trip["hold"]["can_request"] is True
     assert before + 590 < trip["hold"]["requested_until"] < time.time() + 610  # quiet hours are lifted for 10 min
     assert trip["hold"]["requested_until"] - trip["hold"]["requested_at"] == 600
@@ -259,7 +264,7 @@ async def test_hold_it_for_me_keeps_the_other_limits(rig: Rig) -> None:
         "You're already holding a cart on another trip",
     )
     state = await (await rig.call("GET", "/api/state")).json()
-    assert state["trips"][0]["hold"] == {
+    assert trips(state)[0]["hold"] == {
         "reason": "holding_elsewhere",
         "can_request": False,
         "holdable": ["09:00"],
@@ -287,11 +292,11 @@ async def test_no_hold_is_offered_for_a_sailing_already_held_once(rig: Rig) -> N
     await seen(rig, trip_id, sailing("09:00"), sailing("11:00"))
     await rig.sql("INSERT INTO alert_memory (trip_id, key_hash, alerted) VALUES ($1, '', '{09:00}')", trip_id)
     state = await (await rig.call("GET", "/api/state")).json()
-    assert state["trips"][0]["hold"]["holdable"] == ["11:00"]
-    assert state["trips"][0]["hold"]["can_request"] is True
+    assert trips(state)[0]["hold"]["holdable"] == ["11:00"]
+    assert trips(state)[0]["hold"]["can_request"] is True
     await rig.sql("UPDATE alert_memory SET alerted = '{09:00,11:00}'")
     state = await (await rig.call("GET", "/api/state")).json()
-    hold = state["trips"][0]["hold"]
+    hold = trips(state)[0]["hold"]
     assert (hold["reason"], hold["can_request"], hold["holdable"]) == ("already_held", False, [])
     response = await rig.call("POST", f"/api/trips/{trip_id}/hold")
     assert (response.status, (await response.json())["error"]) == (
@@ -306,7 +311,7 @@ async def test_a_paused_trip_offers_no_hold(rig: Rig) -> None:
     response = await rig.call("PATCH", f"/api/trips/{trip_id}", json={"enabled": False})
     assert response.status == 200
     state = await response.json()
-    assert state["trips"][0]["hold"] == {
+    assert trips(state)[0]["hold"] == {
         "reason": "paused",
         "can_request": False,
         "holdable": [],
@@ -342,14 +347,14 @@ async def test_a_sailing_the_state_cant_read_doesnt_break_it(rig: Rig) -> None:
     trip_id = await rig.add()
     await seen(rig, trip_id, {"depart": "9am", "status": "available"}, sailing("09:00"))
     state = await (await rig.call("GET", "/api/state")).json()
-    assert state["trips"][0]["hold"]["holdable"] == ["09:00"]
+    assert trips(state)[0]["hold"]["holdable"] == ["09:00"]
 
 
 async def test_the_state_says_why_a_trip_wouldnt_be_held(rig: Rig) -> None:
     trip_id = await rig.add(auto_cart=False)
     rig.clock[0] = today_at(12)  # outside the quiet hours everyone has
     state = await (await rig.call("GET", "/api/state")).json()
-    hold = state["trips"][0]["hold"]
+    hold = trips(state)[0]["hold"]
     assert hold == {
         "reason": "auto_cart_off",
         "can_request": True,
@@ -359,8 +364,8 @@ async def test_the_state_says_why_a_trip_wouldnt_be_held(rig: Rig) -> None:
     }
     await rig.sql("UPDATE fleet_state SET value = 'true' WHERE key = 'pause_carting'")
     state = await (await rig.call("GET", "/api/state")).json()
-    assert state["trips"][0]["hold"]["reason"] == "carting_paused"
-    assert state["trips"][0]["hold"]["can_request"] is False
+    assert trips(state)[0]["hold"]["reason"] == "carting_paused"
+    assert trips(state)[0]["hold"]["can_request"] is False
     assert trip_id
 
 
@@ -412,7 +417,7 @@ async def test_no_cancel_stops_watching_the_trip(rig: Rig) -> None:
         assert (response.status, (await response.json())["field"]) == (400, "stop")
     response = await rig.call("POST", path, json={"booked": False, "stop": True})
     assert response.status == 200
-    assert [t["trip"]["id"] for t in (await response.json())["trips"]] == [other]  # its slot is free again
+    assert [t["trip"]["id"] for t in trips(await response.json())] == [other]  # its slot is free again
     assert await archived(rig, trip_id) == (True, False, None, 2, True, None)
     assert await answers(rig) == ["cancelled"]
     assert (await rig.call("POST", path, json={"booked": False, "stop": True})).status == 409  # answered
@@ -422,7 +427,7 @@ async def test_pausing_and_resuming_one_trip(rig: Rig) -> None:
     """Trips are paused one at a time ("pause all" is gone); resuming one checks it soon."""
     trip_id, other = await rig.add(), await rig.add()
     state = await (await rig.call("PATCH", f"/api/trips/{trip_id}", json={"enabled": False})).json()
-    assert [(t["trip"]["id"], t["trip"]["enabled"]) for t in state["trips"]] == [(trip_id, False), (other, True)]
+    assert [(t["trip"]["id"], t["trip"]["enabled"]) for t in trips(state)] == [(trip_id, False), (other, True)]
     assert state["me"]["paused"] is False  # kept a release for the old dashboard; always false
     await rig.sql("UPDATE trip_runtime SET next_check_at = now() + interval '6 hours'")
     assert (await rig.call("PATCH", f"/api/trips/{trip_id}", json={"enabled": True})).status == 200
@@ -439,7 +444,7 @@ async def test_the_old_account_pause_moves_onto_each_trip(rig: Rig) -> None:
     before = {r["id"]: r["rev"] for r in await rig.sql("SELECT id, rev FROM trips")}
     state = await (await rig.call("GET", "/api/state")).json()
     assert state["me"]["paused"] is False
-    assert [t["trip"]["enabled"] for t in state["trips"]] == [False, False]
+    assert [t["trip"]["enabled"] for t in trips(state)] == [False, False]
     rows = await rig.sql("SELECT id, enabled, spec->>'enabled' AS spec, rev FROM trips ORDER BY id = $1", trip_id)
     assert [(r["enabled"], r["spec"], r["rev"] - before[r["id"]]) for r in rows] == [
         (False, "false", 0),  # already paused: untouched
@@ -476,7 +481,7 @@ async def test_quiet_hours_are_each_users_own(rig: Rig) -> None:
     await rig.sql("UPDATE trip_runtime SET next_check_at = to_timestamp($1)", today_at(22, 45))
     bob = await (await rig.call("GET", "/api/state", BOB)).json()
     assert (bob["settings"]["quiet_hours"], bob["quiet_hours"]) == (DEFAULT, DEFAULT | {"now": True})
-    (trip,) = bob["trips"]
+    (trip,) = trips(bob)
     five = datetime.combine(datetime.now(PACIFIC).date() + timedelta(days=1), dt_time(5), PACIFIC).timestamp()
     assert (trip["trip"]["id"], trip["quiet"], trip["browser"]["next_check_at"]) == (bobs, True, five)
     state = await (await rig.call("GET", "/api/state")).json()
@@ -533,13 +538,13 @@ async def test_in_quiet_hours_a_trip_isnt_checked_until_lifted(rig: Rig) -> None
     await rig.call("PATCH", "/api/me", json={"quiet_hours": {"start": "23:00", "end": "06:00"}})
     rig.clock[0] = today_at(23, 30)
 
-    async def trips() -> dict[str, dict[str, Any]]:
+    async def by_id() -> dict[str, dict[str, Any]]:
         state = await (await rig.call("GET", "/api/state")).json()
-        return {t["trip"]["id"]: t for t in state["trips"]}
+        return {t["trip"]["id"]: t for t in trips(state)}
 
     state = await (await rig.call("GET", "/api/state")).json()
     assert state["quiet_hours"] == {"start": "23:00", "end": "06:00", "now": True}
-    for trip in (await trips()).values():
+    for trip in (await by_id()).values():
         assert trip["quiet"] is True
         # Not held for the quiet hours, but "Hold it for me" lifts them.
         assert (trip["hold"]["reason"], trip["hold"]["can_request"]) == ("quiet_hours", True)
@@ -548,18 +553,18 @@ async def test_in_quiet_hours_a_trip_isnt_checked_until_lifted(rig: Rig) -> None
     (row,) = await rig.sql("SELECT quiet_lifted_until FROM trip_runtime WHERE trip_id = $1", checked)
     assert row["quiet_lifted_until"].timestamp() == rig.clock[0] + 600
     assert (await rig.call("POST", f"/api/trips/{asked}/hold")).status == 200  # and so does asking for a hold
-    for trip in (await trips()).values():
+    for trip in (await by_id()).values():
         assert (trip["quiet"], trip["hold"]["reason"]) == (False, None)  # checked, and it may hold a cart
 
     rig.clock[0] += 601
-    assert [t["quiet"] for t in (await trips()).values()] == [True, True]  # 10 minutes, then quiet again
+    assert [t["quiet"] for t in (await by_id()).values()] == [True, True]  # 10 minutes, then quiet again
     await rig.sql("UPDATE trip_runtime SET next_check_at = to_timestamp($1)", today_at(23, 45))
     morning = datetime.combine(datetime.now(PACIFIC).date() + timedelta(days=1), dt_time(6), PACIFIC).timestamp()
-    assert [t["browser"]["next_check_at"] for t in (await trips()).values()] == [morning, morning]
+    assert [t["browser"]["next_check_at"] for t in (await by_id()).values()] == [morning, morning]
     rig.clock[0] = today_at(12)
     state = await (await rig.call("GET", "/api/state")).json()
     assert state["quiet_hours"]["now"] is False
-    assert [(t["quiet"], t["hold"]["reason"]) for t in state["trips"]] == [(False, None), (False, None)]
+    assert [(t["quiet"], t["hold"]["reason"]) for t in trips(state)] == [(False, None), (False, None)]
 
 
 # ---- checkout
@@ -1218,10 +1223,10 @@ async def next_state(ws: aiohttp.ClientWebSocketResponse) -> dict[str, Any]:
 
 async def test_the_live_socket_follows_the_users_own_changes(rig: Rig) -> None:
     ann, bob = await live(rig), await live(rig, BOB)
-    assert (await next_state(ann))["trips"] == []
-    assert (await next_state(bob))["trips"] == []
+    assert trips(await next_state(ann)) == []
+    assert trips(await next_state(bob)) == []
     await rig.add()
-    assert len((await next_state(ann))["trips"]) == 1
+    assert len(trips(await next_state(ann))) == 1
     with pytest.raises(TimeoutError):
         await asyncio.wait_for(bob.receive(), 0.5)  # nothing of Ann's reaches Bob
     await ann.close()
@@ -1237,7 +1242,7 @@ async def test_the_live_socket_sends_the_same_state_as_the_api(rig: Rig) -> None
     fetched = await (await rig.call("GET", "/api/state")).json()
     assert pushed["push"] == fetched["push"] == {"key": "BPushKey"}
     assert pushed["links"] == fetched["links"]
-    assert set(pushed["trips"][0]) == set(fetched["trips"][0]) >= {"booking_url", "hold"}
+    assert set(trips(pushed)[0]) == set(trips(fetched)[0]) >= {"booking_url", "hold"}
     await ann.close()
 
 

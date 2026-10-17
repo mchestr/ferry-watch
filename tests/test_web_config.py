@@ -157,3 +157,25 @@ async def test_the_spa_is_served_on_explicit_routes_only(tmp_path: Path, aiohttp
     assert (await client.get("/manifest.webmanifest")).status == 200
     assert (await client.get("/c/not-a-trip")).status == 404
     assert (await client.get("/anything-else")).status == 404
+
+
+async def test_the_spa_serves_the_watch_routes(tmp_path: Path, aiohttp_client: Any) -> None:
+    """docs/waitlist/design.md §6.8: the dashboard, New watch (with a provider), a watch's page and the checkout."""
+    (tmp_path / "index.html").write_text("<html>app</html>")
+    app = web.Application()
+    add_static(app, tmp_path)
+    client: TestClient = await aiohttp_client(app)
+    for path in (
+        "/",
+        "/new",
+        "/new/buntzen",
+        "/new/bcferries",
+        "/w/3f9c0a1b2c3d4e5f",
+        "/c/3f9c0a1b2c3d4e5f",
+        "/settings",
+    ):
+        response = await client.get(path)
+        assert (response.status, await response.text()) == (200, "<html>app</html>"), path
+        assert response.headers["Cache-Control"] == "no-cache"
+    for path in ("/new/Buntzen", "/new/b", "/new/" + "x" * 33, "/w/not-a-watch", "/w/3F9C0A1B2C3D4E5F", "/watches"):
+        assert (await client.get(path)).status == 404, path

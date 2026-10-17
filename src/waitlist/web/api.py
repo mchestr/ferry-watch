@@ -35,6 +35,7 @@ from .repo import CheckoutViewer, WebStore
 STORE = web.AppKey("store", WebStore)
 TERMINALS = web.AppKey("terminals", TerminalDirectory)
 PUBLIC = web.AppKey("public", dict[str, Any])  # what every snapshot carries: links, the push key
+PUBLIC_KEYS = frozenset({"links", "push"})  # and nothing else: never a key a snapshot builds per user
 MAX_CART_ID = 32
 _HHMM = re.compile(r"([01][0-9]|2[0-3]):[0-5][0-9]")  # 00:00 to 23:59
 
@@ -79,12 +80,15 @@ def _cart_id(body: dict[str, Any]) -> str:
 
 
 async def user_state(app: web.Application, uid: str) -> dict[str, Any]:
-    """The user's whole state, as both GET /api/state and the live socket send it."""
+    """The user's whole state, as both GET /api/state and the live socket send it (docs/waitlist/design.md §6.3).
+
+    `app[PUBLIC]` holds only `links` and `push` (web/app.py checks it): `providers`, `capacity` and `watches` are
+    each snapshot's own, and the right side of `|` would win."""
     state = await app[STORE].snapshot(uid)
     directory = app.get(TERMINALS)
     terminals = directory.cached if directory is not None else None
-    for trip in state["trips"]:
-        trip["booking_url"] = _booking_url(trip["trip"], terminals)
+    for watch in (w for w in state["watches"] if w["provider"] == "bcferries" and "trip" in w):
+        watch["booking_url"] = _booking_url(watch["trip"], terminals)
     state["settings"]["stream_viewer_offered"] = offered(app, is_admin=state["me"]["is_admin"])
     return state | app[PUBLIC]
 

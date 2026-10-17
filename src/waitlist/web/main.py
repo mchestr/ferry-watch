@@ -39,7 +39,16 @@ from .repo import WebStore
 
 log = logging.getLogger("waitlist.web")
 
-SPA_ROUTES = ("/", "/c/{trip_id:[a-f0-9]{16}}", "/admin", "/settings", "/auth/callback")  # all serve index.html
+SPA_ROUTES = (
+    "/",
+    "/new",
+    "/new/{provider:[a-z][a-z0-9_]{1,31}}",
+    "/w/{watch_id:[a-f0-9]{16}}",
+    "/c/{trip_id:[a-f0-9]{16}}",
+    "/admin",
+    "/settings",
+    "/auth/callback",
+)  # all serve index.html
 
 
 def add_static(app: web.Application, static_dir: Path) -> None:
@@ -84,7 +93,7 @@ async def run_web(
             app = build(
                 accounts,
                 OidcClient(http, config.oidc_settings(client_secret)),
-                WebStore(pool, limits, config.policy(), clock=time.time),
+                WebStore(pool, limits, config.policy(), clock=time.time, offers=config.offers()),
                 checkout,
                 pool=pool,
                 limits=limits,
