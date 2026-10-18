@@ -3894,6 +3894,11 @@ The fetcher has **no** field.
 
 ### 8.5 What W4 also changes in the app repo
 
+> **Superseded (2026-10-18).** The app repo no longer keeps a copy of the HelmRelease: `deploy/`,
+> `tests/deploy.py`, `tests/test_deploy.py` and `tests/apiserver/` were removed. home-cluster's
+> `kubernetes/apps/waitlist/waitlist/app/helmrelease.yaml` is the only copy. Nothing tests the browser-pod
+> admission policies and RBAC on a real API server now.
+
 `deploy/helmrelease.yaml` is home-cluster's `kubernetes/apps/waitlist/waitlist/app/helmrelease.yaml`, **identical
 except two lines**, each a deployment's own choice:
 
