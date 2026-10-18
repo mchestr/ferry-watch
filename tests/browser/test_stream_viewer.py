@@ -906,7 +906,7 @@ async def test_a_name_keeps_what_was_typed_for_the_phones_capitals(phone: Viewer
     assert await phone.evaluate("document.getElementById('proxy').value") == ""
 
 
-EMAIL = "mikeachester@gmail.com"
+EMAIL = "mike@example.com"
 CARD = "4242 4242 4242 4242"
 BACKSPACE = {"t": "key", "k": "Backspace"}
 
@@ -1051,8 +1051,8 @@ async def tap_field(viewer: Viewer, session: Session, fields: list[dict[str, Any
 
 
 async def test_a_suggestion_replaces_the_word_it_completes(phone: Viewer, checkout: Edge) -> None:
-    """Found on an iPhone: "mike" typed into an email field, then the keyboard's suggestion "mikeachester@gmail.com"
-    tapped, gave the pod "mikemikeachester@gmail.com": the proxy kept nothing of an email for the suggestion to
+    """Found on an iPhone: "mike" typed into an email field, then the keyboard's suggestion "mike@example.com"
+    tapped, gave the pod "mikemike@example.com": the proxy kept nothing of an email for the suggestion to
     replace, so the whole address came as new text. It keeps what was typed now, lets the browser make the
     replacement, and sends the difference, however the suggestion arrives: as a replacement, as one `insertText` of
     the whole word over the word typed, or as deletes and then the word."""
@@ -1064,7 +1064,7 @@ async def test_a_suggestion_replaces_the_word_it_completes(phone: Viewer, checko
         {"t": "key", "c": "i"},
         {"t": "key", "c": "k"},
         {"t": "key", "c": "e"},
-        {"t": "text", "s": "achester@gmail.com"},
+        {"t": "text", "s": "@example.com"},
     ]
     assert kept == ["m", "mi", "mik", "mike", EMAIL]
 
@@ -1260,7 +1260,7 @@ async def test_the_keyboards_trackpad_moves_nothing(phone: Viewer, checkout: Edg
     cases = [
         (1, ["M", "i", "k", "e"], 2, ["x", "Backspace"], "Mike"),
         (2, ["m", "i", "k", "e"], 2, ["x", "Backspace"], "mike"),
-        (2, [*"mikeachster@gmail.com"], 15, ["w", "Backspace", "e"], "mikeachster@gmail.come"),
+        (2, [*"mike@example.com"], 10, ["w", "Backspace", "e"], "mike@example.come"),
         (1, ["a", "👍🏽", "b"], 5, ["x"], "a👍🏽bx"),
     ]
     for fid, typed, left, then, expected in cases:
@@ -1299,8 +1299,8 @@ async def test_a_line_break_typed_stays_in_the_pod(phone: Viewer, checkout: Edge
 async def test_an_ime_composing_over_a_word_kept_replaces_it(phone: Viewer, checkout: Edge, browser: Browser) -> None:
     """Found in review: Gboard re-opens the word before the caret (after a Backspace into it, or to offer a
     suggestion for it) as its composition, and each composition was sent as new text at the pod's caret, after the
-    word the pod already had: "mike", tapping the suggestion "mikeachester@gmail.com" for it, gave
-    "mikemikeachester@gmail.com" in an email field, the owner's bug the Android way. A composition over text the proxy
+    word the pod already had: "mike", tapping the suggestion "mike@example.com" for it, gave
+    "mikemike@example.com" in an email field, the owner's bug the Android way. A composition over text the proxy
     keeps is an edit to that text: it is deleted in the pod and composed there again, and what follows it in the
     proxy follows it."""
     session, seq = await started(phone, checkout)
