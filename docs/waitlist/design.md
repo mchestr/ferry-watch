@@ -150,6 +150,19 @@ card's Check now is now enabled for `quiet` as well.
   offset, `max(1rem, env(safe-area-inset-bottom))`, plus 4rem, so scrolled to the end the last card's actions
   sit above the button on a phone with a home indicator too.
 
+### Amendment 6 (review round 7): a failure no wanted pass needed
+
+- **A failed query that leaves no wanted option `unchecked` is no error of the watch's.** A watch's queries
+  don't depend on the time (§2.3), so after noon a watch on the all-day and morning passes still asks for the
+  half-day place, whose only wanted pass is `over` whatever it answers. §4.5's *Partial* records counted any
+  failed query, so that place failing put the card in "Problem" and, after `FAILING_ALERT_AFTER`, told the owner
+  to check Yodel themselves about a pass they no longer want. `HttpChecks` now evaluates what did answer first,
+  and when no wanted option is `unchecked` it writes a *Success*: no counter, no `check_failed`, no `failing`,
+  and the watch keeps its interval (no `OUR_SIDE_RETRY_S` retry either). Provider-wide effects are unchanged: a
+  site's 429 or 401/403 still cools the provider down, and `site_changed` still tells an admin. The query is
+  still fetched until `closes_at`; giving `queries` the tick's `now` would drop it, but changes §2.3's protocol
+  for every provider, so it is left for later.
+
 ---
 
 ## 0. Decisions at a glance

@@ -494,6 +494,10 @@ class HttpChecks:
                     return False  # deleted, edited, archived, disabled or paused since planning: the next tick replans
                 if ok:
                     options, outcome = await self._evaluate(conn, watch, ok, now)
+                    if failed and not any(o.wanted and o.status == "unchecked" for o in options):
+                        # What failed served only options that are over or unwanted (a {full_day, morning} pass
+                        # after noon still queries the half-day place): nothing the owner wants went unseen.
+                        failed, theirs = [], []
                     if not failed:
                         await self._success(conn, watch, options, outcome, now)
                     elif theirs:

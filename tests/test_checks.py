@@ -791,3 +791,47 @@ async def test_a_half_day_answer_failing_never_stops_an_all_day_opening(rig: Rig
     (opening,) = await rig.notifications("opening")
     assert opening["params"] == {"options": ["full_day"], "uncertain": []}
     assert (await rig.runtime())["backoff_until"] is None
+
+
+@pytest.mark.parametrize("failure", [theirs("site_changed"), theirs("upstream_error"), ours()])
+async def test_a_failing_query_that_serves_no_pass_still_wanted_counts_nothing(rig: Rig, failure: CheckFailed) -> None:
+    """After noon an all-day and morning watch still asks for the half-day place, whose only wanted pass is over:
+    its failing is no error of the watch's, and the all-day pass keeps its pace."""
+    rig.checks = rig.loop(REGISTRY)
+    await rig.add(spec={"date": DAY.isoformat(), "passes": ["full_day", "morning"], "release_reminder": False})
+    places: list[int] = []
+
+    def answer(query: msgspec.Struct) -> msgspec.Struct:
+        place = msgspec.to_builtins(query)["place_id"]
+        places.append(place)
+        if place != 10671:
+            raise failure
+        items = [{"period": "full_day", "availability": "sold_out", "status": "Sold Out"}]
+        inventory: msgspec.Struct = msgspec.convert(
+            {"place_id": place, "date": DAY.isoformat(), "items": items}, BUNTZEN.inventory_type
+        )
+        return inventory
+
+    rig.client.inventories = answer
+    rig.clock[0] = NOON + 3600
+    for _ in range(6):
+        await rig.tick()
+        runtime = await rig.runtime()
+        assert (runtime["failures"], runtime["backoff_until"]) == (0, None)
+        assert 54 <= runtime["next_check_at"].timestamp() - rig.clock[0] <= 66  # never OUR_SIDE_RETRY_S either
+        rig.clock[0] = await rig.due_at()
+    assert places.count(10672) == 6  # the half-day place was asked, and failed, every time
+    result = await rig.result()
+    assert result is not None
+    assert (result["outcome"], result["error_class"], result["consecutive_errors"], result["error_since"]) == (
+        "ok",
+        None,
+        0,
+        None,
+    )
+    assert options(result) == [("full_day", "sold_out"), ("morning", "over"), ("afternoon", "unchecked")]
+    assert await rig.events("check_failed") == []
+    assert await rig.notifications("failing") == []
+    # The site's trouble is still the admin's to hear about.
+    expected = [{"provider": "buntzen"}] if failure.kind == "site_changed" else []
+    assert [n["params"] for n in await rig.notifications("site_changed")] == expected
