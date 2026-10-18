@@ -2,12 +2,12 @@
 
 The pod's own processes (KasmVNC's Xvnc with the pod's flags, and matchbox), Chromium launched as the agent
 launches it, the agent's screen (xrandr and xsettingsd), its dialog keeper, the VNC gate with the stream session
-behind it, and a viewer: a Python client speaking fw.cast1 as PROTOCOL.md §8 says a viewer must. The checkout is
+behind it, and a viewer: a Python client speaking wl.cast1 as PROTOCOL.md §8 says a viewer must. The checkout is
 the test site in tests/fixtures/checkout-site, served on two loopback addresses so that its card iframe is
 cross-site: its own renderer process and CDP target, as a payment provider's is.
 
 Needs Xvnc (KasmVNC's), matchbox-window-manager, xrandr and xsettingsd on PATH (CI installs them, as the browser
-image does), and FW_KASMVNC_WWW for the test that hands the checkout to the classic viewer.
+image does), and WL_KASMVNC_WWW for the test that hands the checkout to the classic viewer.
 """
 
 from __future__ import annotations
@@ -32,18 +32,18 @@ from aiohttp import web
 from aiohttp.test_utils import TestServer, unused_port
 from playwright.async_api import Browser, BrowserContext, Page
 
-from ferry_watch.agent import cast_fields
-from ferry_watch.agent.cast_frames import jpeg_size
-from ferry_watch.agent.cast_protocol import Clock, CloseCode, ImageHeader
-from ferry_watch.agent.dialogs import DialogKeeper
-from ferry_watch.agent.gate import Gate, GateSettings, ViewerKind
-from ferry_watch.agent.processes import pod_processes
-from ferry_watch.agent.screen import Screen
-from ferry_watch.agent.stream import CastPod, ClassicScreen, factory
-from ferry_watch.bcferries.site import PodBrowser
 from tests.browser import test_checkout_edge as edge
 from tests.browser import test_checkout_screen as screen
 from tests.castclient import WAIT_S, Viewer
+from waitlist.agent import cast_fields
+from waitlist.agent.cast_frames import jpeg_size
+from waitlist.agent.cast_protocol import Clock, CloseCode, ImageHeader
+from waitlist.agent.dialogs import DialogKeeper
+from waitlist.agent.gate import Gate, GateSettings, ViewerKind
+from waitlist.agent.processes import pod_processes
+from waitlist.agent.screen import Screen
+from waitlist.agent.stream import CastPod, ClassicScreen, factory
+from waitlist.bcferries.site import PodBrowser
 
 pytestmark = [pytest.mark.browser, pytest.mark.timeout(120)]
 
@@ -122,7 +122,7 @@ async def pod() -> AsyncIterator[Pod]:
     for tool in ("Xvnc", "matchbox-window-manager", "xrandr", "xsettingsd"):
         if not shutil.which(tool):
             pytest.skip(f"{tool} isn't on PATH")
-    work = Path(tempfile.mkdtemp(prefix="fw-"))
+    work = Path(tempfile.mkdtemp(prefix="wl-"))
     (work / "home").mkdir()
     display = screen._free_display()
     env = {"DISPLAY": display, "HOME": str(work / "home"), "TMPDIR": str(work), "TZ": "America/Vancouver"}
@@ -175,7 +175,7 @@ class Rig:
         `hello` and got `ready`."""
         if ticket is None and not self.viewers:
             ticket = edge.ticket()
-        protocols = ["fw.cast1", f"fw.n1.{nonce}", *([f"fw.t1.{ticket}"] if ticket else [])]
+        protocols = ["wl.cast1", f"wl.n1.{nonce}", *([f"wl.t1.{ticket}"] if ticket else [])]
         ws = await self.http.ws_connect(f"{self.origin}{self.path}", protocols=protocols, origin=self.origin)
         viewer = Viewer(ws)
         viewer.start()
@@ -1182,11 +1182,11 @@ async def test_the_classic_viewer_finds_the_pods_own_screen_after_a_stream(
 
         # The classic viewer on the same device: the landing page, then KasmVNC's client, by the stream's nonce.
         await page.goto(f"{rig.origin}/gone.html")
-        await page.evaluate(DEVICE_RECORD, [f"fw:{edge.TRIP}:{edge.GEN}", NONCE, int(time.time()) + 3600])
+        await page.evaluate(DEVICE_RECORD, [f"wl:{edge.TRIP}:{edge.GEN}", NONCE, int(time.time()) + 3600])
         await page.goto(f"{rig.origin}{edge.LANDING}")
         await page.click("#open")
         await page.wait_for_selector("html.noVNC_connected")
-        assert sorted(offers[-1]) == sorted(["binary", f"fw.n1.{NONCE}"])
+        assert sorted(offers[-1]) == sorted(["binary", f"wl.n1.{NONCE}"])
 
         inner = await page.evaluate("[innerWidth, innerHeight]")
         sizes = await _until(lambda: rig.tab("window.__sizes"), lambda s: bool(s) and s[-1] == [*inner, 1])
@@ -1195,7 +1195,7 @@ async def test_the_classic_viewer_finds_the_pods_own_screen_after_a_stream(
         assert [1280, 1000, 1] in sizes[:-1], f"the pod's own screen wasn't there before the client's resize: {sizes}"
         assert all(dpr == 1 for _, _, dpr in sizes)
         assert not await _xsettingsd_running(pod.work / "xsettings")
-        assert " fw" not in await _modes(pod), "a stream's RandR mode was left behind"
+        assert " wl" not in await _modes(pod), "a stream's RandR mode was left behind"
         assert rig.screen.current is None
 
         # And KasmVNC's client works as test_checkout_screen.py has it: fitted, the checkout's colour, a click
@@ -1221,8 +1221,8 @@ async def test_the_classic_viewer_finds_the_pods_own_screen_after_a_stream(
 async def test_classic_then_a_stream_then_classic_again_finds_the_pods_own_screen(
     pod: Pod, sites: Sites, site: edge.Site, browser: Browser, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """A user opens the checkout in the classic viewer on a phone, turns the beta on and opens it again from Ferry
-    Watch (a stream, by the same nonce), then goes back to the classic viewer. KasmVNC's first resize took Xvnc's own
+    """A user opens the checkout in the classic viewer on a phone, turns the beta on and opens it again from
+    Waitlist (a stream, by the same nonce), then goes back to the classic viewer. KasmVNC's first resize took Xvnc's own
     1280x1000 mode away; the restore before the second classic viewer still finds the pod's own screen."""
     caplog.set_level(logging.WARNING)
     path = f"/t/{edge.TRIP}/g/{edge.GEN}/ws"
@@ -1256,7 +1256,7 @@ async def test_classic_then_a_stream_then_classic_again_finds_the_pods_own_scree
             assert "Couldn't restore" not in caplog.text
             assert not rig.screen.changed  # nothing left to undo before the next classic viewer
             modes = await _modes(pod)
-            assert "fw780x1328" not in modes, "the stream's mode was left behind"
+            assert "wl780x1328" not in modes, "the stream's mode was left behind"
             in_use = [line.split()[0] for line in modes.splitlines() if line.startswith("   ") and "*" in line]
             assert in_use == ["390x664"]  # KasmVNC's own
         finally:

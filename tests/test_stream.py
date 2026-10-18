@@ -20,17 +20,17 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient
 
-from ferry_watch.agent import cast_cdp, cast_frames, stream
-from ferry_watch.agent.cast_cdp import Cdp, Worlds
-from ferry_watch.agent.cast_fields import FieldRef
-from ferry_watch.agent.cast_input import ImageRing, InputMapper
-from ferry_watch.agent.cast_protocol import REPEAT, Clock, CloseCode, Wheel
-from ferry_watch.agent.dialogs import KeptDialog
-from ferry_watch.agent.screen import ScreenError
-from ferry_watch.agent.stream import CastPod, CastSession, InboundQueue
-from ferry_watch.holds import HoldLimits, HoldState, release_due
 from tests.castclient import Viewer
 from tests.castfakes import FakeCdp, FakeContext, FakePage, jpeg
+from waitlist.agent import cast_cdp, cast_frames, stream
+from waitlist.agent.cast_cdp import Cdp, Worlds
+from waitlist.agent.cast_fields import FieldRef
+from waitlist.agent.cast_input import ImageRing, InputMapper
+from waitlist.agent.cast_protocol import REPEAT, Clock, CloseCode, Wheel
+from waitlist.agent.dialogs import KeptDialog
+from waitlist.agent.screen import ScreenError
+from waitlist.agent.stream import CastPod, CastSession, InboundQueue
+from waitlist.holds import HoldLimits, HoldState, release_due
 
 PHONE = {"t": "hello", "v": 1, "w": 390, "h": 664, "dpr": 3}
 CARD_NUMBER = "4242 4242 4242 4242"
@@ -114,7 +114,7 @@ class Rig:
     viewers: list[Viewer] = field(default_factory=list)
 
     async def connect(self, hello: dict[str, Any] | None = PHONE, *, ack: bool = True) -> Viewer:
-        ws = await self.client.ws_connect("/ws", protocols=["fw.cast1"])
+        ws = await self.client.ws_connect("/ws", protocols=["wl.cast1"])
         viewer = Viewer(ws, ack=ack)
         viewer.start()
         self.viewers.append(viewer)
@@ -179,7 +179,7 @@ async def rig(aiohttp_client: Callable[..., Any]) -> AsyncIterator[Rig]:
     )
 
     async def handle(request: web.Request) -> web.WebSocketResponse:
-        ws = web.WebSocketResponse(protocols=("fw.cast1",), max_msg_size=4097)
+        ws = web.WebSocketResponse(protocols=("wl.cast1",), max_msg_size=4097)
         await ws.prepare(request)
         session = CastSession(ws, lambda: verdict[0], pod)
         sessions.append(session)

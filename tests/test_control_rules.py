@@ -7,7 +7,7 @@ from datetime import date, datetime, time
 
 import pytest
 
-from ferry_watch.control.configure import (
+from waitlist.control.configure import (
     Allowance,
     HubSettings,
     StreamViewer,
@@ -20,11 +20,11 @@ from ferry_watch.control.configure import (
     stretch,
     worth_pushing,
 )
-from ferry_watch.control.kube import AGENT_USERNAME, ObservedPod, pod_identity
-from ferry_watch.control.limits import Effective, Limits
-from ferry_watch.models import PACIFIC, FarePreference, Trip, Vehicle
-from ferry_watch.polling import QuietHours
-from ferry_watch.protocol import Brake, Configure
+from waitlist.control.kube import AGENT_USERNAME, ObservedPod, pod_identity
+from waitlist.control.limits import Effective, Limits
+from waitlist.models import PACIFIC, FarePreference, Trip, Vehicle
+from waitlist.polling import QuietHours
+from waitlist.protocol import Brake, Configure
 
 TRIP = Trip(id="3f9c0a1b2c3d4e5f", origin="SWB", destination="TSA", date=date(2026, 10, 16), earliest=time(7))
 NOON = datetime(2026, 10, 15, 12, 0, tzinfo=PACIFIC)
@@ -253,7 +253,7 @@ def review(**user: object) -> dict[str, object]:
         "username": AGENT_USERNAME,
         "extra": {
             "authentication.kubernetes.io/pod-uid": ["uid-1"],
-            "authentication.kubernetes.io/pod-name": ["fw-3f9c0a1b2c3d4e5f-g1"],
+            "authentication.kubernetes.io/pod-name": ["wl-3f9c0a1b2c3d4e5f-g1"],
         },
     }
     return {"status": {"authenticated": True, "user": base | user}}
@@ -262,16 +262,16 @@ def review(**user: object) -> dict[str, object]:
 def test_a_token_review_names_a_browser_pod() -> None:
     identity = pod_identity(review())
     assert identity is not None
-    assert (identity.pod_uid, identity.pod_name) == ("uid-1", "fw-3f9c0a1b2c3d4e5f-g1")
+    assert (identity.pod_uid, identity.pod_name) == ("uid-1", "wl-3f9c0a1b2c3d4e5f-g1")
     assert pod_identity({"status": {"authenticated": False}}) is None
-    assert pod_identity(review(username="system:serviceaccount:ferry-watch:ferry-control")) is None
+    assert pod_identity(review(username="system:serviceaccount:waitlist:waitlist-control")) is None
     assert pod_identity(review(extra={})) is None  # a token not bound to a pod
 
 
 def test_observed_pods() -> None:
     pod = ObservedPod.from_api(
         {
-            "metadata": {"name": "fw-x", "uid": "u", "labels": {"a": "b"}, "deletionTimestamp": "2026-10-15T00:00:00Z"},
+            "metadata": {"name": "wl-x", "uid": "u", "labels": {"a": "b"}, "deletionTimestamp": "2026-10-15T00:00:00Z"},
             "spec": {"nodeName": "n1"},
             "status": {
                 "phase": "Failed",

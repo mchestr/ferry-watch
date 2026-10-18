@@ -1,44 +1,23 @@
 /**
- * The app as ferry-web serves it: each person signs in (OIDC) and sees only their own trips
- * (docs/multi-tenant/design-reference.md §10).
+ * The app as waitlist-web serves it: each person signs in (OIDC) and sees only their own watches, on every provider
+ * (docs/multi-tenant/design-reference.md §10, docs/waitlist/design.md §7).
  */
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Loader2, LogOut, Plus, Settings, Shield, Ship } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { TripSheetView, type SheetMode, type TripSource } from "@/components/TripSheet";
+import { useQuery } from "@tanstack/react-query";
+import { AlertTriangle, BellRing, Loader2, LogOut, Settings, Shield } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { configureBearerAuth, errorMessage, hasStatus, type AuthReason } from "@/lib/api";
-import type { TripSettings } from "@/lib/schema";
-import { timeLabel } from "@/lib/time";
+import { useTerminals } from "@/lib/hooks";
 import { AccountCard } from "./AccountCard";
 import { AdminPage } from "./AdminPage";
 import { MY_STATE_KEY, myApi } from "./api";
 import { completeSignIn, isSignedOut, markSignedOut, signOut, startSignIn, token } from "./auth";
 import { CheckoutPage } from "./CheckoutPage";
+import { Dashboard } from "./Dashboard";
 import { useMyLive } from "./live";
-import { MyTripCard } from "./MyTripCard";
+import { WatchSheets } from "./NewWatchSheet";
 import { navigate, useRoute } from "./router";
-import type { MyState } from "./schema";
-import { tripTitle } from "./trips";
-
-/** A new trip's defaults; the form fills in the date. */
-const DEFAULTS: TripSettings = {
-  enabled: true,
-  from: "",
-  to: "",
-  date: "",
-  adults: 1,
-  children: 0,
-  infants: 0,
-  seniors: 0,
-  vehicle: "standard",
-  height_ft: 8,
-  earliest: "00:00",
-  latest: "23:59",
-  auto_cart: true,
-  fare: "cheapest",
-};
+import { WatchPage } from "./WatchPage";
 
 function Centered({ children }: { children: React.ReactNode }) {
   return <div className="mx-auto flex max-w-md flex-col items-center gap-3 py-24 text-center">{children}</div>;
@@ -48,11 +27,13 @@ function SignedOut({ message }: { message?: string }) {
   const [error, setError] = useState<string | null>(null);
   return (
     <Centered>
-      <div className="grid size-12 place-items-center rounded-2xl bg-accent text-accent-foreground">
-        <Ship className="size-6" aria-hidden />
+      <div className="grid size-12 place-items-center rounded-2xl bg-primary text-primary-foreground">
+        <BellRing className="size-6" aria-hidden />
       </div>
-      <h1 className="text-xl font-bold">Ferry Watch</h1>
-      <p className="text-sm text-muted-foreground">{message ?? "Sign in to watch your BC Ferries sailings."}</p>
+      <h1 className="text-xl font-bold">Waitlist</h1>
+      <p className="text-sm text-muted-foreground">
+        {message ?? "Get an alert the moment a reservation opens: BC Ferries sailings and Buntzen Lake passes."}
+      </p>
       <Button
         size="lg"
         onClick={() => {
@@ -87,37 +68,6 @@ function Callback({ onSignedIn }: { onSignedIn: () => void }) {
   );
 }
 
-function useTripSource(state: MyState | undefined, terminals: ReturnType<typeof useTerminalList>): TripSource {
-  const qc = useQueryClient();
-  return useMemo(() => {
-    const write = (next: MyState) => qc.setQueryData(MY_STATE_KEY, next);
-    return {
-      defaults: DEFAULTS,
-      trips: (state?.trips ?? []).map((t) => ({
-        ...t.trip,
-        title: tripTitle(t, terminals.data),
-        cart: t.browser.cart,
-      })),
-      save: async (request) => {
-        write(
-          request.kind === "add"
-            ? await myApi.addTrip(request.settings)
-            : await myApi.updateTrip(request.id, request.patch),
-        );
-      },
-      remove: async (id) => {
-        write(await myApi.removeTrip(id));
-      },
-      autoCartHint: "Holds the sailing in a cart; you check out in a browser we keep for you.",
-      addedMessage: "Trip added. It'll be checked shortly.",
-    };
-  }, [qc, state, terminals.data]);
-}
-
-function useTerminalList() {
-  return useQuery({ queryKey: ["terminals"], queryFn: ({ signal }) => myApi.terminals(signal), staleTime: 3_600_000 });
-}
-
 function SignedIn() {
   const route = useRoute();
   const live = useMyLive();
@@ -126,11 +76,9 @@ function SignedIn() {
     queryFn: ({ signal }) => myApi.state(signal),
     refetchInterval: live ? false : 15_000,
   });
-  const terminals = useTerminalList();
+  // The one terminals query (lib/hooks): the same key with other options would stop its retries after one.
+  const terminals = useTerminals();
   const state = query.data;
-  const source = useTripSource(state, terminals);
-  const [sheet, setSheet] = useState<SheetMode>({ kind: "closed" });
-  const closeSheet = useCallback(() => setSheet({ kind: "closed" }), []);
 
   if (!state) {
     if (query.error && hasStatus(query.error, 403)) return <SignedOut message={errorMessage(query.error)} />;
@@ -149,80 +97,51 @@ function SignedIn() {
   }
 
   return (
-    <div className="min-h-screen">
-      <header className="border-b bg-card">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
-          <button type="button" className="flex items-center gap-2 font-bold" onClick={() => navigate("/")}>
-            <Ship className="size-5" aria-hidden /> Ferry Watch
-          </button>
-          <div className="flex items-center gap-1">
-            <span className="hidden text-sm text-muted-foreground sm:inline">
-              {state.me.display ?? state.me.username}
-            </span>
-            {state.me.is_admin && (
-              <Button variant="ghost" size="icon" aria-label="Admin" onClick={() => navigate("/admin")}>
-                <Shield aria-hidden />
+    <WatchSheets state={state} route={route}>
+      <div className="min-h-screen">
+        <header className="border-b bg-card">
+          <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
+            <button type="button" className="flex items-center gap-2 font-bold" onClick={() => navigate("/")}>
+              <span className="grid size-7 place-items-center rounded-lg bg-primary text-primary-foreground">
+                <BellRing className="size-4" aria-hidden />
+              </span>
+              Waitlist
+            </button>
+            <div className="flex items-center gap-1">
+              <span className="hidden text-sm text-muted-foreground sm:inline">
+                {state.me.display ?? state.me.username}
+              </span>
+              {state.me.is_admin && (
+                <Button variant="ghost" size="icon" aria-label="Admin" onClick={() => navigate("/admin")}>
+                  <Shield aria-hidden />
+                </Button>
+              )}
+              <Button variant="ghost" size="icon" aria-label="Settings" onClick={() => navigate("/settings")}>
+                <Settings aria-hidden />
               </Button>
-            )}
-            <Button variant="ghost" size="icon" aria-label="Settings" onClick={() => navigate("/settings")}>
-              <Settings aria-hidden />
-            </Button>
-            <Button variant="ghost" size="icon" aria-label="Sign out" onClick={() => void signOut()}>
-              <LogOut aria-hidden />
-            </Button>
-          </div>
-        </div>
-      </header>
-      <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
-        {route.page === "checkout" ? (
-          <CheckoutPage state={state} tripId={route.tripId} terminals={terminals.data} />
-        ) : route.page === "admin" && state.me.is_admin ? (
-          <AdminPage meId={state.me.id} />
-        ) : route.page === "settings" ? (
-          <div className="mx-auto max-w-xl">
-            <AccountCard state={state} />
-          </div>
-        ) : (
-          <div className="mx-auto max-w-3xl space-y-4">
-            <div className="flex items-end justify-between gap-4">
-              <div>
-                <h1 className="text-xl font-bold tracking-tight">Your trips</h1>
-                <p className="text-sm text-muted-foreground">
-                  {state.trips.length} of {state.limits.maxTrips?.value ?? 3} watched
-                  {state.quiet_hours?.now && (
-                    <>
-                      {" · "}
-                      <span className="whitespace-nowrap">quiet until {timeLabel(state.quiet_hours.end)} PT</span>
-                    </>
-                  )}
-                </p>
-              </div>
-              <Button onClick={() => setSheet({ kind: "adding" })} disabled={!state.capacity.can_add}>
-                <Plus aria-hidden /> Add trip
+              <Button variant="ghost" size="icon" aria-label="Sign out" onClick={() => void signOut()}>
+                <LogOut aria-hidden />
               </Button>
             </div>
-            {state.trips.length ? (
-              state.trips.map((trip) => (
-                <MyTripCard
-                  key={trip.trip.id}
-                  trip={trip}
-                  terminals={terminals.data}
-                  onEdit={() => setSheet({ kind: "editing", tripId: trip.trip.id })}
-                />
-              ))
-            ) : (
-              <Card className="px-6 py-16 text-center">
-                <h2 className="font-semibold">No trips yet</h2>
-                <p className="mx-auto mt-1 max-w-sm text-sm text-muted-foreground">
-                  Add a route and a date within the next 30 days, and you'll hear the moment a reservation opens up.
-                </p>
-              </Card>
-            )}
           </div>
-        )}
-      </main>
-      <TripSheetView mode={sheet} onClose={closeSheet} source={source} />
-    </div>
+        </header>
+        <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
+          {route.page === "checkout" ? (
+            <CheckoutPage state={state} tripId={route.tripId} terminals={terminals.data} />
+          ) : route.page === "watch" ? (
+            <WatchPage state={state} watchId={route.watchId} />
+          ) : route.page === "admin" && state.me.is_admin ? (
+            <AdminPage meId={state.me.id} />
+          ) : route.page === "settings" ? (
+            <div className="mx-auto max-w-xl">
+              <AccountCard state={state} />
+            </div>
+          ) : (
+            <Dashboard state={state} />
+          )}
+        </main>
+      </div>
+    </WatchSheets>
   );
 }
 

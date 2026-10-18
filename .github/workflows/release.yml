@@ -2,7 +2,9 @@ name: Release
 
 # Releases what main says it is: tags v<version> (pyproject.toml) on main's head, creates the GitHub release,
 # and starts CI on the tag, which tests it and pushes the version's images. Run it from the Actions tab (or
-# `gh workflow run release.yml`) after merging a "chore: release x.y.z" change.
+# `gh workflow run release.yml`) after merging a "chore: release x.y.z" change, which bumps the version in
+# pyproject.toml and runs `uv lock`: a uv.lock that disagrees is refused before anything is tagged, since CI's and
+# the Dockerfile's `uv sync --locked` would fail on the tag.
 #
 # A tag pushed with this workflow's own token doesn't start CI by itself, so the run is dispatched explicitly;
 # CI publishes for a dispatched run only on a v* tag (its PUBLISH variable).
@@ -31,6 +33,11 @@ jobs:
           version="$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
           if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::pyproject.toml's version '$version' isn't x.y.z"
+            exit 1
+          fi
+          locked="$(python3 -c 'import tomllib; print(next(p["version"] for p in tomllib.load(open("uv.lock", "rb"))["package"] if p["name"] == "waitlist"))')"
+          if [[ "$locked" != "$version" ]]; then
+            echo "::error::uv.lock has waitlist $locked but pyproject.toml says $version: run uv lock and commit both"
             exit 1
           fi
           if git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null; then

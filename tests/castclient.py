@@ -1,4 +1,4 @@
-"""A streamed viewer for tests: a client that speaks fw.cast1 as PROTOCOL.md §8 says a viewer must."""
+"""A streamed viewer for tests: a client that speaks wl.cast1 as PROTOCOL.md §8 says a viewer must."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from typing import Any
 
 import aiohttp
 
-from ferry_watch.agent.cast_protocol import ImageHeader
+from waitlist.agent.cast_protocol import ImageHeader
 
 WAIT_S = 10.0
 

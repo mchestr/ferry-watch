@@ -7,7 +7,7 @@ devices). The viewer is driven as a person would drive it: real touches, clicks,
 pickers. An init script records what crosses the viewer's socket, without changing what the viewer does, so the
 tests can wait for what it has drawn and see when it sent what.
 
-Needs what both of those files need: FW_KASMVNC_WWW, and Xvnc, matchbox-window-manager, xrandr and xsettingsd on
+Needs what both of those files need: WL_KASMVNC_WWW, and Xvnc, matchbox-window-manager, xrandr and xsettingsd on
 PATH.
 """
 
@@ -43,7 +43,7 @@ WAIT_S = 10.0
 # What crosses the viewer's socket, kept in window.__wire: every JSON message each way, with Date.now(), and every
 # image's header. Only on viewer.html (the shim on vnc.html wraps WebSocket itself). It observes and changes nothing.
 WIRE = """(() => {
-  if (location.pathname !== "/fw/viewer.html") return;
+  if (location.pathname !== "/wl/viewer.html") return;
   const wire = { sockets: 0, sent: [], got: [], images: [] };
   Object.defineProperty(window, "__wire", { value: wire });
   const Native = WebSocket;
@@ -215,8 +215,8 @@ async def field_for(viewer: Viewer, pod: Pod, selector: str, frame: str | None =
 
 
 async def opened(viewer: Viewer, checkout: Checkout, page: str = "index.html") -> dict[str, Any]:
-    """The pod at the shop's `page`, and the viewer opened through the landing page with a stream ticket, as Ferry
-    Watch opens it. The first image it drew."""
+    """The pod at the shop's `page`, and the viewer opened through the landing page with a stream ticket, as
+    Waitlist opens it. The first image it drew."""
     await checkout.pod.at(f"{checkout.sites.shop}/{page}")
     await viewer.page.goto(f"{checkout.url}{edge.LANDING}#v=s1&t={edge.ticket()}")
     await viewer.page.click("#open")

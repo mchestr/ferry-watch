@@ -1,6 +1,6 @@
 // The checkout landing page, /t/<trip>/g/<gen>/#<ticket> (docs/multi-tenant/design-reference.md §7.9).
 //
-// It turns the ticket Ferry Watch put in the fragment into a pending ticket for this tab, and gives
+// It turns the ticket Waitlist put in the fragment into a pending ticket for this tab, and gives
 // the device a nonce N it keeps in localStorage, keyed by (trip, gen); then it opens vnc.html, whose
 // shim offers both to the pod's gate. Once a connect succeeds the gate locks the cart to sha256(N),
 // so only this device can come back, and it comes back with N alone.
@@ -8,13 +8,13 @@
 // The ticket's display fields are signed but not checked here: they are shown as text, never markup.
 (() => {
   "use strict";
-  const app = document.querySelector('meta[name="fw-app"]').content;
+  const app = document.querySelector('meta[name="wl-app"]').content;
   const where = /^\/t\/([a-f0-9]{16})\/g\/([0-9]{1,6})\/$/.exec(location.pathname);
   if (!where) return;
   const [, trip, gen] = where;
-  const key = `fw:${trip}:${gen}`;
+  const key = `wl:${trip}:${gen}`;
   const now = Date.now();
-  const TICKET = /^fw1\.[a-z0-9]{1,16}\.([A-Za-z0-9_-]+)\.[A-Za-z0-9_-]+$/;
+  const TICKET = /^wl1\.[a-z0-9]{1,16}\.([A-Za-z0-9_-]+)\.[A-Za-z0-9_-]+$/;
   const MAX_TICKET_LENGTH = 1024;
   const OPEN_AFTER_MS = 2000;
   const MAX_HOLD_MS = 90 * 60 * 1000; // protocol.MAX_HARD_S, for a ticket that doesn't say
@@ -61,7 +61,7 @@
   // Forget checkouts whose holds are over (and anything unreadable).
   try {
     for (const name of Object.keys(localStorage)) {
-      if (!name.startsWith("fw:")) continue;
+      if (!name.startsWith("wl:")) continue;
       const old = read(localStorage, name);
       if (!old || !(old.hard_deadline * 1000 > now)) localStorage.removeItem(name);
     }
@@ -76,7 +76,7 @@
   const opened = Boolean(record && record.opened);
 
   if (claims && claims.exp * 1000 <= now && !opened) {
-    location.replace(`${app}/c/${trip}`); // too slow to arrive: Ferry Watch opens it again
+    location.replace(`${app}/c/${trip}`); // too slow to arrive: Waitlist opens it again
     return;
   }
   if (claims && claims.exp * 1000 > now) {
@@ -100,7 +100,7 @@
   if (!opened && !(pending && pending.exp * 1000 > now)) {
     fail(
       "No checkout here",
-      "No checkout is open on this device. Open it from Ferry Watch, on the device you want to pay on.",
+      "No checkout is open on this device. Open it from Waitlist, on the device you want to pay on.",
     );
     return;
   }

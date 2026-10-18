@@ -14,8 +14,8 @@ import {
 
 const CONFIG = {
   authorization_endpoint: "https://auth.chestr.dev/api/oidc/authorization",
-  client_id: "ferry-watch",
-  redirect_uri: "https://ferry.chestr.dev/auth/callback",
+  client_id: "waitlist",
+  redirect_uri: "https://waitlist.chestr.dev/auth/callback",
   scopes: "openid profile email groups",
 };
 

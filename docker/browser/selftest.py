@@ -2,7 +2,7 @@
 
     docker exec <container> python3 -I /smoke/selftest.py
 
-The agent's own Chromium starts only when ferry-control sends it a trip, so the smoke test launches one
+The agent's own Chromium starts only when waitlist-control sends it a trip, so the smoke test launches one
 the same way the agent does (PodBrowser, with the self-test after the launch) and runs the same checks: the
 policy blocks browser internals, files and view-source, an outside host doesn't load, page script can't reach
 the gate or Xvnc, and the only listeners are the gate, the probes and Xvnc's unix socket.
@@ -28,9 +28,9 @@ from typing import Any
 
 from playwright.async_api import BrowserContext, Page
 
-from ferry_watch.agent.lockdown import Lockdown, self_test
-from ferry_watch.agent.screen import Screen
-from ferry_watch.bcferries.site import PodBrowser
+from waitlist.agent.lockdown import Lockdown, self_test
+from waitlist.agent.screen import Screen
+from waitlist.bcferries.site import PodBrowser
 
 DISPLAY = ":99"
 RFB_SOCKET = Path("/tmp/kasm/rfb.sock")  # noqa: S108 - the container's memory-backed /tmp

@@ -34,7 +34,7 @@ jobs:
       - run: uv run ruff check --output-format=github
       - run: uv run mypy
       - run: uv run lint-imports
-      - run: uv run pytest -m "not browser and not apiserver" --cov=ferry_watch --cov-report=term-missing
+      - run: uv run pytest -m "not browser and not apiserver" --cov=waitlist --cov-report=term-missing
       - name: Playwright package matches the image's browsers
         run: |
           lock="$(uv export --locked --no-hashes --no-dev --extra browser | sed -n 's/^playwright==\([0-9.]*\).*/\1/p')"
@@ -75,7 +75,7 @@ jobs:
           apt-get update
           apt-get install -y --no-install-recommends matchbox-window-manager xsettingsd x11-xserver-utils "$deb"
           for tool in Xvnc matchbox-window-manager xrandr xsettingsd; do command -v "$tool"; done
-          echo "FW_KASMVNC_WWW=/usr/share/kasmvnc/www" >> "$GITHUB_ENV"
+          echo "WL_KASMVNC_WWW=/usr/share/kasmvnc/www" >> "$GITHUB_ENV"
       - run: uv run pytest -m browser
 
   deploy:
@@ -99,7 +99,7 @@ jobs:
           id="$(docker create "$HELM_IMAGE")"
           docker cp "$id:/usr/bin/helm" "$RUNNER_TEMP/helm"
           docker rm "$id"
-          echo "FW_HELM=$RUNNER_TEMP/helm" >> "$GITHUB_ENV"
+          echo "WL_HELM=$RUNNER_TEMP/helm" >> "$GITHUB_ENV"
       # deploy/helmrelease.yaml (home-cluster's copy) through app-template, as helm-controller renders it.
       - run: uv run python -m tests.deploy > rendered.yaml
       - name: kubeconform
@@ -133,8 +133,8 @@ jobs:
           id="$(docker create "$HELM_IMAGE")"
           docker cp "$id:/usr/bin/helm" "$RUNNER_TEMP/helm"
           docker rm "$id"
-          echo "FW_ENVTEST_BIN=$RUNNER_TEMP/controller-tools/envtest" >> "$GITHUB_ENV"
-          echo "FW_HELM=$RUNNER_TEMP/helm" >> "$GITHUB_ENV"
+          echo "WL_ENVTEST_BIN=$RUNNER_TEMP/controller-tools/envtest" >> "$GITHUB_ENV"
+          echo "WL_HELM=$RUNNER_TEMP/helm" >> "$GITHUB_ENV"
       - run: uv run pytest -m apiserver --timeout 300
 
   web:
@@ -156,7 +156,7 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
-      # The streamed checkout viewer's DOM-free modules, against the fw.cast1 conformance pack. No npm packages.
+      # The streamed checkout viewer's DOM-free modules, against the wl.cast1 conformance pack. No npm packages.
       - name: vnc-edge viewer modules
         working-directory: .
         run: node --test vnc-edge/tests/*.test.mjs
@@ -172,9 +172,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - target: app # today's single-container app
-            suffix: ""
-          - target: control # ferry-web and ferry-control
+          - target: control # waitlist-web and waitlist-control
             suffix: -control
           - target: browser # one browser pod
             suffix: -browser
@@ -198,24 +196,12 @@ jobs:
           target: ${{ matrix.target }}
           platforms: linux/amd64
           load: true
-          tags: ferry-watch-${{ matrix.target }}:ci
+          tags: waitlist-${{ matrix.target }}:ci
           cache-from: type=gha,scope=${{ matrix.target }}
           # Only trusted pushes write the shared build cache; pull requests just read it.
           cache-to: ${{ env.PUBLISH == 'true' && format('type=gha,mode=max,scope={0}', matrix.target) || '' }}
       - name: Smoke test
-        if: matrix.target == 'app'
-        run: |
-          docker run -d --name smoke -p 8765:8765 -p 6080:6080 ferry-watch-app:ci
-          for _ in $(seq 30); do curl -fsS localhost:8765/healthz && break; sleep 2; done
-          curl -fsS localhost:8765/ | grep -q '<div id="root">'
-          curl -fsS localhost:8765/api/state | python3 -c 'import json, sys; assert json.load(sys.stdin)["trips"] == []'
-          curl -fsS -o /dev/null localhost:6080/vnc/vnc.html
-      - name: Smoke test
-        if: matrix.target != 'app'
-        run: docker/${{ matrix.target }}/smoke-test.sh ferry-watch-${{ matrix.target }}:ci
-      - name: Smoke test logs
-        if: always() && matrix.target == 'app'
-        run: docker logs smoke || true
+        run: docker/${{ matrix.target }}/smoke-test.sh waitlist-${{ matrix.target }}:ci
       - if: env.PUBLISH == 'true'
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
@@ -260,7 +246,7 @@ jobs:
           context: vnc-edge
           platforms: linux/amd64
           load: true
-          tags: ferry-watch-vnc-edge:ci
+          tags: waitlist-vnc-edge:ci
           cache-from: type=gha,scope=vnc-edge
           cache-to: ${{ env.PUBLISH == 'true' && 'type=gha,mode=max,scope=vnc-edge' || '' }}
       - name: Smoke test
@@ -269,7 +255,7 @@ jobs:
           # resolver's name at startup, so point that name somewhere.
           docker run -d --name smoke -p 8080:8080 --read-only --tmpfs /tmp --cap-drop ALL \
             --security-opt no-new-privileges --user 101:101 \
-            --add-host kube-dns.kube-system.svc.cluster.local:127.0.0.1 ferry-watch-vnc-edge:ci
+            --add-host kube-dns.kube-system.svc.cluster.local:127.0.0.1 waitlist-vnc-edge:ci
           for _ in $(seq 30); do curl -fsS -o /dev/null localhost:8080/vnc.html && break; sleep 1; done
           vnc-edge/smoke-test.sh http://localhost:8080
       - name: Smoke test logs

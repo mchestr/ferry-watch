@@ -1,5 +1,5 @@
 {
-  "protocol": "fw.cast1",
+  "protocol": "wl.cast1",
   "cases": [
     {"id": "main-zoomed-postal", "sec": "11.3", "s": 2, "ox": 150, "oy": 150, "origins": [],
      "clip": [150, 150, 187.5, 332], "client": [12, 292.5, 351, 38.5], "r": [-276, 285, 702, 77],

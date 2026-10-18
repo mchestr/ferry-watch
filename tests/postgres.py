@@ -1,7 +1,7 @@
 """A throwaway PostgreSQL for the control plane's tests.
 
 Starts a private cluster (unix socket only, in a temp dir) once per session, migrates a template
-database, and gives each test its own copy. Set FW_TEST_PGHOST (and FW_TEST_PGPORT, FW_TEST_PGUSER) to
+database, and gives each test its own copy. Set WL_TEST_PGHOST (and WL_TEST_PGPORT, WL_TEST_PGUSER) to
 use an existing server instead; its user must be able to create roles and databases. Without either,
 these tests skip.
 """
@@ -23,11 +23,11 @@ from typing import Any
 import asyncpg
 import pytest
 
-from ferry_watch.control.db import Roles, grant, migrate
+from waitlist.control.db import Roles, grant, migrate
 
-OWNER = "ferrywatch"
+OWNER = "waitlist"
 ROLES = Roles()
-TEMPLATE = "fw_template"
+TEMPLATE = "wl_template"
 _names = itertools.count(1)
 
 
@@ -71,8 +71,8 @@ def _as_postgres(argv: list[str]) -> list[str]:
 def _private_cluster() -> Iterator[Server]:
     binaries = _binaries()
     if binaries is None:
-        pytest.skip("PostgreSQL isn't installed (or set FW_TEST_PGHOST)")
-    root = Path(tempfile.mkdtemp(prefix="fwpg"))
+        pytest.skip("PostgreSQL isn't installed (or set WL_TEST_PGHOST)")
+    root = Path(tempfile.mkdtemp(prefix="wlpg"))
     data = root / "data"
     if os.geteuid() == 0:
         shutil.chown(root, "postgres", "postgres")
@@ -131,10 +131,10 @@ def _run(coro: Coroutine[Any, Any, None]) -> None:
 
 @pytest.fixture(scope="session")
 def pg_server() -> Iterator[Server]:
-    host = os.environ.get("FW_TEST_PGHOST")
+    host = os.environ.get("WL_TEST_PGHOST")
     if host:  # a server CI provides
         server = Server(
-            host, int(os.environ.get("FW_TEST_PGPORT", "5432")), os.environ.get("FW_TEST_PGUSER", "postgres")
+            host, int(os.environ.get("WL_TEST_PGPORT", "5432")), os.environ.get("WL_TEST_PGUSER", "postgres")
         )
         _run(_prepare(server))
         yield server
@@ -147,7 +147,7 @@ def pg_server() -> Iterator[Server]:
 @pytest.fixture
 async def db(pg_server: Server) -> AsyncIterator[Database]:
     """A fresh, migrated database for one test."""
-    name = f"fw_test_{os.getpid()}_{next(_names)}"
+    name = f"wl_test_{os.getpid()}_{next(_names)}"
     admin = await asyncpg.connect(pg_server.dsn(pg_server.admin, "postgres"))
     try:
         await admin.execute(f"CREATE DATABASE {name} TEMPLATE {TEMPLATE} OWNER {OWNER}")

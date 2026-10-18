@@ -8,8 +8,8 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 
-from ferry_watch.bcferries.errors import BookingError
-from ferry_watch.bcferries.terminals import TerminalDirectory, Terminals
+from waitlist.bcferries.errors import BookingError
+from waitlist.bcferries.terminals import TerminalDirectory, Terminals
 
 
 def test_terminal_names(terminals: Terminals) -> None:

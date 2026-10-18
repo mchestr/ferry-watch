@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { backing, box, toFrame, toView, viewport } from "../site/fw/viewer/core/layout.js";
+import { backing, box, toFrame, toView, viewport } from "../site/wl/viewer/core/layout.js";
 import { pack } from "./pack.mjs";
 
 const { hello_env: env } = pack("messages.json");

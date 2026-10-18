@@ -4,7 +4,7 @@ from dataclasses import replace
 from datetime import datetime, time, timedelta
 from typing import Any
 
-from ferry_watch.control.planner import (
+from waitlist.control.planner import (
     MAX_STARTS_PER_HOUR,
     Drain,
     FleetView,
@@ -14,8 +14,8 @@ from ferry_watch.control.planner import (
     UserView,
     plan,
 )
-from ferry_watch.models import PACIFIC, Trip
-from ferry_watch.polling import PollPolicy, QuietHours
+from waitlist.models import PACIFIC, Trip
+from waitlist.polling import PollPolicy, QuietHours
 
 NOW_AT = datetime(2026, 10, 11, 12, 0, tzinfo=PACIFIC)
 NOW = NOW_AT.timestamp()
@@ -37,7 +37,7 @@ def trip(n: int, days: int, *, user: str = "ann", **kw: Any) -> TripView:
 
 
 def pod(view: TripView, phase: str = "watching", mode: str = "warm", user: str | None = None) -> PodView:
-    return PodView(f"fw-{view.id}-g1", view.id, user or view.user_id, mode, phase)  # type: ignore[arg-type]
+    return PodView(f"wl-{view.id}-g1", view.id, user or view.user_id, mode, phase)  # type: ignore[arg-type]
 
 
 ANN = UserView("ann")
@@ -74,7 +74,7 @@ def test_one_warm_browser_and_short_checks_for_the_rest() -> None:
 def test_a_nearer_trip_takes_the_browser_only_from_a_watching_pod() -> None:
     old, nearer = trip(1, 5), trip(2, 1)
     result = run([old, nearer], [pod(old, "watching")])
-    assert result.drain == [Drain(f"fw-{old.id}-g1", "superseded")]
+    assert result.drain == [Drain(f"wl-{old.id}-g1", "superseded")]
     assert result.start == []  # the new warm pod waits until the old one is gone
     for phase in ("starting", "holding", "draining"):
         result = run([old, nearer], [pod(old, phase)])
@@ -95,9 +95,9 @@ def test_ineligible_trips_lose_their_browser_unless_it_holds_a_cart() -> None:
     gone = trip(3, -2)
     result = run([off, asked, gone], [pod(off), pod(asked, "starting"), pod(gone)])
     assert sorted(result.drain, key=lambda d: d.pod) == [
-        Drain(f"fw-{off.id}-g1", "paused"),
-        Drain(f"fw-{asked.id}-g1", "paused"),
-        Drain(f"fw-{gone.id}-g1", "past"),
+        Drain(f"wl-{off.id}-g1", "paused"),
+        Drain(f"wl-{asked.id}-g1", "paused"),
+        Drain(f"wl-{gone.id}-g1", "past"),
     ]
     assert result.start == []
     result = run([off], [pod(off, "holding")])
@@ -107,11 +107,11 @@ def test_ineligible_trips_lose_their_browser_unless_it_holds_a_cart() -> None:
 def test_a_suspended_user_and_maintenance_stop_everything() -> None:
     a = trip(1, 2)
     result = run([a], [pod(a)], users=[UserView("ann", active=False)])
-    assert result.drain == [Drain(f"fw-{a.id}-g1", "suspended")]
+    assert result.drain == [Drain(f"wl-{a.id}-g1", "suspended")]
     result = run([a], [pod(a)], maintenance=True)
-    assert result.drain == [Drain(f"fw-{a.id}-g1", "maintenance")]
+    assert result.drain == [Drain(f"wl-{a.id}-g1", "maintenance")]
     result = run([a], [pod(a)], users=[UserView("ann", paused=True)])  # an old "Pause all", for a release
-    assert result.drain == [Drain(f"fw-{a.id}-g1", "paused")]
+    assert result.drain == [Drain(f"wl-{a.id}-g1", "paused")]
     assert run([a], maintenance=True).start == []
 
 
@@ -128,14 +128,14 @@ def test_quiet_hours_stop_a_users_trips_unless_lifted() -> None:
     result = plan([ann, bob], [near, later, bobs], [], FleetView(), POLICY, night)
     assert result.start == [Start(bobs.id, "bob", "warm")]  # quiet hours are Ann's own: Bob's start at 1 am
     result = plan([ann], [near, later], [pod(near)], FleetView(), POLICY, night)
-    assert result.drain == [Drain(f"fw-{near.id}-g1", "paused")]
+    assert result.drain == [Drain(f"wl-{near.id}-g1", "paused")]
     assert plan([ann], [near], [pod(near, "holding")], FleetView(), POLICY, night).drain == []
     assert plan([ann], [near], [], FleetView(), POLICY, NOW).start == [Start(near.id, "ann", "warm")]  # noon
 
     lifted = replace(near, quiet_lifted_until=night + 600)
     assert plan([ann], [lifted, later], [], FleetView(), POLICY, night).start == [Start(near.id, "ann", "warm")]
     lapsed = replace(near, quiet_lifted_until=night - 1)
-    assert plan([ann], [lapsed], [pod(near)], FleetView(), POLICY, night).drain == [Drain(f"fw-{near.id}-g1", "paused")]
+    assert plan([ann], [lapsed], [pod(near)], FleetView(), POLICY, night).drain == [Drain(f"wl-{near.id}-g1", "paused")]
 
 
 def test_everyone_has_quiet_hours_from_10_pm_to_5_am_unless_they_change_them() -> None:
@@ -147,7 +147,7 @@ def test_everyone_has_quiet_hours_from_10_pm_to_5_am_unless_they_change_them() -
 
     assert ANN.quiet == QuietHours(time(22), time(5))
     assert plan([ANN], [near], [], FleetView(), POLICY, at(23)).start == []
-    assert plan([ANN], [near], [pod(near)], FleetView(), POLICY, at(23)).drain == [Drain(f"fw-{near.id}-g1", "paused")]
+    assert plan([ANN], [near], [pod(near)], FleetView(), POLICY, at(23)).drain == [Drain(f"wl-{near.id}-g1", "paused")]
     for hour in (5, 12, 21):
         assert plan([ANN], [near], [], FleetView(), POLICY, at(hour)).start == [Start(near.id, "ann", "warm")]
 
@@ -169,25 +169,25 @@ def test_a_cart_held_for_a_quiet_trip_leaves_a_lifted_trip_to_short_checks() -> 
 
 def test_a_pod_for_a_deleted_trip_is_drained() -> None:
     orphan = trip(9, 2)
-    assert run([], [pod(orphan)]).drain == [Drain(f"fw-{orphan.id}-g1", "deleted")]
+    assert run([], [pod(orphan)]).drain == [Drain(f"wl-{orphan.id}-g1", "deleted")]
 
 
 def test_removing_a_trip_drains_its_pod_even_while_it_holds_a_cart() -> None:
     """Nobody can check out of a removed trip's cart, so it isn't kept: draining lets it go."""
-    removed = trip(9, 2, archived=True, enabled=False)  # as ferry-web archives it
-    assert run([removed], [pod(removed, "holding")]).drain == [Drain(f"fw-{removed.id}-g1", "deleted")]
+    removed = trip(9, 2, archived=True, enabled=False)  # as waitlist-web archives it
+    assert run([removed], [pod(removed, "holding")]).drain == [Drain(f"wl-{removed.id}-g1", "deleted")]
     assert run([removed], [pod(removed, "holding")], maintenance=True).drain == [
-        Drain(f"fw-{removed.id}-g1", "deleted")
+        Drain(f"wl-{removed.id}-g1", "deleted")
     ]
     assert run([removed], [pod(removed, "draining")]).drain == []  # already on its way out
-    # A trip that isn't in the inputs at all may only be one ferry-control can't read: its cart is kept.
+    # A trip that isn't in the inputs at all may only be one waitlist-control can't read: its cart is kept.
     assert run([], [pod(trip(8, 3), "holding")]).drain == []
 
 
 def test_a_removed_trip_s_held_warm_browser_hands_over_to_the_next_trip() -> None:
     removed, next_trip = trip(9, 1, archived=True, enabled=False), trip(2, 2)
     result = run([removed, next_trip], [pod(removed, "holding")])
-    assert result.drain == [Drain(f"fw-{removed.id}-g1", "deleted")]
+    assert result.drain == [Drain(f"wl-{removed.id}-g1", "deleted")]
     assert result.start == []  # no short check meanwhile: the warm browser comes once the old pod is gone
 
 

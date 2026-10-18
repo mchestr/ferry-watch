@@ -1,9 +1,3 @@
-# local runtime files
-/config.json
-/alerted.json
-/terminals.json
-*.invalid-*
-
 # Python
 __pycache__/
 .venv/

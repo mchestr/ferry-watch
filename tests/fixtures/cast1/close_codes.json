@@ -1,5 +1,5 @@
 {
-  "protocol": "fw.cast1", "delays": [0.5, 1, 2, 5, 10],
+  "protocol": "wl.cast1", "delays": [0.5, 1, 2, 5, 10],
   "cases": [
     {
       "id": "code-1000", "sec": "3.6",

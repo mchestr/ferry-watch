@@ -3,9 +3,9 @@ import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
-/** The release this bundle belongs to: FW_VERSION if set, else pyproject.toml's version, else "dev". */
+/** The release this bundle belongs to: WL_VERSION if set, else pyproject.toml's version, else "dev". */
 function appVersion(): string {
-  if (process.env.FW_VERSION) return process.env.FW_VERSION;
+  if (process.env.WL_VERSION) return process.env.WL_VERSION;
   try {
     // The repo's root in a checkout; /pyproject.toml in the image's web stage.
     const pyproject = readFileSync(new URL("../pyproject.toml", import.meta.url), "utf8");
@@ -29,7 +29,7 @@ export default defineConfig({
     },
   },
   server: {
-    // `npm run dev` talks to a watcher running locally (./run.sh). Leave `changeOrigin` off:
+    // `npm run dev` proxies the API (and its WebSocket) to a server on :8765. Leave `changeOrigin` off:
     // the server refuses cross-origin requests, so the proxied Host must stay the dev server's.
     proxy: { "/api": { target: "http://localhost:8765", ws: true } },
   },

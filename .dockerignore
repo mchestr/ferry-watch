@@ -12,7 +12,4 @@ scripts
 web/node_modules
 web/dist
 web/coverage
-config.json
-alerted.json
-terminals.json
 deploy

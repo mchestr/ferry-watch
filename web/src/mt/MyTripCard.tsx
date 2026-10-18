@@ -1,7 +1,10 @@
-/** One of the user's trips: its browser's status, its sailings, a held cart and the questions it raises. */
+/**
+ * One of the user's BC Ferries trips: its browser's status, its sailings, a held cart and the questions it raises.
+ * BcferriesCard puts it on the dashboard (a BcferriesWatch is a MyTrip plus the fields every watch has).
+ */
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, Loader2, Pause, Pencil, Play, RefreshCw, ShoppingCart, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { RemoveTripDialog } from "@/components/RemoveTripDialog";
 import { SailingsList } from "@/components/SailingsList";
@@ -16,11 +19,12 @@ import { MY_STATE_KEY, myApi } from "./api";
 import { BookedQuestion } from "./BookedQuestion";
 import { useRelease } from "./release";
 import { navigate } from "./router";
-import type { MyState, MyTrip } from "./schema";
+import type { MyTrip } from "./schema";
 import { NotHeld } from "./NotHeld";
+import type { WaitlistState } from "./watch-schema";
 import { asSailings, minutesLeft, nextCheck, tripBadge, tripTitle, unheld } from "./trips";
 
-function useMyMutation<A>(fn: (arg: A) => Promise<MyState>, success?: string | ((arg: A) => string)) {
+function useMyMutation<A>(fn: (arg: A) => Promise<WaitlistState>, success?: string | ((arg: A) => string)) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: fn,
@@ -28,7 +32,7 @@ function useMyMutation<A>(fn: (arg: A) => Promise<MyState>, success?: string | (
       qc.setQueryData(MY_STATE_KEY, state);
       if (success) toast.success(typeof success === "string" ? success : success(arg));
     },
-    onError: (error) => reportError(qc, error),
+    onError: (error) => reportError(error),
   });
 }
 
@@ -76,14 +80,14 @@ function HeldCart({ trip }: { trip: MyTrip }) {
 }
 
 /**
- * Remove, after asking. ferry-control drains the trip's browser even while it holds a cart, so the dialog's
+ * Remove, after asking. waitlist-control drains the trip's browser even while it holds a cart, so the dialog's
  * "releases the sailing in your cart" is what happens.
  */
 function RemoveButton({ trip, title }: { trip: MyTrip; title: string }) {
   const qc = useQueryClient();
   const [confirming, setConfirming] = useState(false);
   const remove = useMutation({
-    mutationFn: () => myApi.removeTrip(trip.trip.id),
+    mutationFn: () => myApi.removeWatch(trip.trip.id),
     onSuccess: (state) => {
       qc.setQueryData(MY_STATE_KEY, state);
       toast.success("Trip removed");
@@ -92,7 +96,7 @@ function RemoveButton({ trip, title }: { trip: MyTrip; title: string }) {
       if (hasStatus(error, 404)) {
         toast.info("That trip was already removed.");
         void qc.invalidateQueries({ queryKey: MY_STATE_KEY });
-      } else reportError(qc, error);
+      } else reportError(error);
     },
   });
   return (
@@ -101,6 +105,8 @@ function RemoveButton({ trip, title }: { trip: MyTrip; title: string }) {
         <Trash2 aria-hidden /> Remove
       </Button>
       <RemoveTripDialog
+        title="Remove this trip?"
+        confirmLabel="Remove trip"
         trip={{ title, cart: trip.browser.cart }}
         open={confirming}
         onOpenChange={setConfirming}
@@ -122,16 +128,28 @@ export function MyTripCard({
   trip,
   terminals,
   onEdit,
+  header,
+  heading,
+  showHeldCart = true,
+  headingLevel = 2,
 }: {
   trip: MyTrip;
   terminals: readonly Terminal[] | undefined;
   onEdit: () => void;
+  /** Above the title, inside the card: the provider line. */
+  header?: ReactNode;
+  /** The title, when the header already says the date; the route and date otherwise. */
+  heading?: string;
+  /** False where the page shows the held cart's checkout itself (the watch page). */
+  showHeldCart?: boolean;
+  /** 1 where the title is the page's (the watch page, when no checkout heads it). */
+  headingLevel?: 1 | 2;
 }) {
   const badge = tripBadge(trip);
-  const check = useMyMutation(() => myApi.checkNow(trip.trip.id), "Checking now");
+  const check = useMyMutation(() => myApi.checkWatch(trip.trip.id), "Checking now");
   const held = trip.browser.cart?.status === "ready";
   const pause = useMyMutation(
-    (enabled: boolean) => myApi.updateTrip(trip.trip.id, { enabled }),
+    (enabled: boolean) => myApi.updateWatch(trip.trip.id, { enabled }),
     // Pausing doesn't let go of a held cart: that's Release.
     (enabled) => (enabled ? "Trip resumed" : held ? "Trip paused. Your cart is still held." : "Trip paused"),
   );
@@ -144,11 +162,15 @@ export function MyTripCard({
   const checked = trip.browser.checked_at;
   const next = nextCheck(trip);
   const title = tripTitle(trip, terminals);
+  const Heading = headingLevel === 1 ? "h1" : "h2";
   return (
     <Card className="space-y-4 p-4 sm:p-5">
+      {header}
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <h2 className="truncate font-semibold">{title}</h2>
+          <Heading className={heading === undefined ? "truncate font-semibold" : "font-semibold"}>
+            {heading ?? title}
+          </Heading>
           <p className="text-sm text-muted-foreground">
             {timeLabel(trip.trip.earliest)}–{timeLabel(trip.trip.latest)}
             {checked ? ` · checked ${clock(checked * 1000)}` : ""}
@@ -158,7 +180,7 @@ export function MyTripCard({
         <Badge variant={badge.tone}>{badge.text}</Badge>
       </div>
       <BookedQuestion trip={trip} />
-      <HeldCart trip={trip} />
+      {showHeldCart && <HeldCart trip={trip} />}
       <NotHeld trip={trip} />
       {failed && (
         <div className="flex items-center justify-between gap-3 rounded-xl border p-3 text-sm">

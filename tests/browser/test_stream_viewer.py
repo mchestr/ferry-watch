@@ -1,7 +1,7 @@
 """The streamed checkout viewer in a real browser, against a stand-in agent (docs/multi-tenant/streamed-viewer/DESIGN.md
 §10.3).
 
-vnc-edge's real files (the landing page, fw/session.js, viewer.html and its modules) are served as
+vnc-edge's real files (the landing page, wl/session.js, viewer.html and its modules) are served as
 test_checkout_edge.py serves them, with viewer.html under its own Content-Security-Policy (C38), and the checkout's
 socket goes to tests/browser/fake_agent.py, which checks everything the viewer sends against PROTOCOL.md and sends
 what each test scripts. The viewer runs as an iPhone-sized phone (390x664 CSS px at 3x, touch), a 1280x800 computer
@@ -10,7 +10,7 @@ and a 2560x1440 one, wider than any viewport the viewer may ask for.
 Playwright's wait_for_function compiles its predicate with eval, which the viewer's policy refuses: these tests poll
 with evaluate instead.
 
-Needs FW_KASMVNC_WWW, as test_checkout_edge.py does.
+Needs WL_KASMVNC_WWW, as test_checkout_edge.py does.
 """
 
 from __future__ import annotations
@@ -29,11 +29,11 @@ import pytest
 from aiohttp.test_utils import TestServer, unused_port
 from playwright.async_api import Browser, BrowserContext, Page
 
-from ferry_watch.agent import cast_protocol
-from ferry_watch.agent.cast_cdp import Cdp
-from ferry_watch.agent.cast_input import ImageRing, InputMapper
 from tests.browser import test_checkout_edge as edge
 from tests.browser.fake_agent import Context, FakeAgent, Hello, Image, Refused, Session, decode, pack, valid
+from waitlist.agent import cast_protocol
+from waitlist.agent.cast_cdp import Cdp
+from waitlist.agent.cast_input import ImageRing, InputMapper
 
 pytestmark = pytest.mark.browser
 
@@ -159,11 +159,11 @@ async def phone(browser: Browser) -> AsyncIterator[Viewer]:
 
 def _reported(text: str) -> bool:
     """A policy report, or a message the viewer's own encoder refused to send."""
-    return "Content Security Policy" in text or "Trusted" in text or text.startswith("fw.cast1: ")
+    return "Content Security Policy" in text or "Trusted" in text or text.startswith("wl.cast1: ")
 
 
 async def open_viewer(viewer: Viewer, checkout: Edge, *, hold_s: int = 3600) -> str:
-    """Through the landing page with a stream ticket, as Ferry Watch opens it. The ticket."""
+    """Through the landing page with a stream ticket, as Waitlist opens it. The ticket."""
     issued = edge.ticket(hold_s=hold_s)
     await viewer.page.goto(f"{checkout.url}{edge.LANDING}#v=s1&t={issued}")
     await viewer.page.click("#open")
@@ -252,7 +252,7 @@ async def status(viewer: Viewer) -> dict[str, Any]:
             classic: visible("status-classic"),
             prominent: document.getElementById("status-classic").classList.contains("primary"),
             back: visible("status-back"),
-            escape: visible("fw-escape"),
+            escape: visible("wl-escape"),
           };
         }"""
     )
@@ -278,7 +278,7 @@ async def test_the_viewer_says_hello_and_draws_each_image_in_order_then_acks_it(
     session = await checkout.agent.session(0)
     assert session.hello == HELLOS[viewer.device]
     nonce = (await device_record(viewer))["n"]
-    assert session.offered == ["fw.cast1", f"fw.n1.{nonce}", f"fw.t1.{issued}"]
+    assert session.offered == ["wl.cast1", f"wl.n1.{nonce}", f"wl.t1.{issued}"]
     # The first open locks the checkout to the device: the ticket is spent.
     assert (await device_record(viewer))["opened"] is True
     assert await viewer.evaluate("(key) => sessionStorage.getItem(key)", f"{edge.RECORD}:ticket") is None
@@ -334,7 +334,7 @@ async def test_a_reconnect_says_hello_again_and_numbers_from_the_start(phone: Vi
 
     second = await checkout.agent.session(1)
     nonce = (await device_record(phone))["n"]
-    assert second.offered == ["fw.cast1", f"fw.n1.{nonce}"]  # no ticket once opened
+    assert second.offered == ["wl.cast1", f"wl.n1.{nonce}"]  # no ticket once opened
     assert second.hello == HELLOS["phone"]
     await second.start()
     seq = await shown_image(phone, second, BLUE, dsf=2, first=True)
@@ -468,7 +468,7 @@ async def test_after_the_hold_ends_the_viewer_goes_to_gone_html(phone: Viewer, c
 
 
 async def test_without_its_module_the_viewer_still_offers_the_classic_viewer(phone: Viewer, checkout: Edge) -> None:
-    await phone.page.route("**/fw/viewer/main.js", lambda route: route.fulfill(status=404, body="Not found"))
+    await phone.page.route("**/wl/viewer/main.js", lambda route: route.fulfill(status=404, body="Not found"))
     await open_viewer(phone, checkout)
     loaded = time.monotonic()
     shown = await until(lambda: status(phone), lambda s: s["escape"], wait_s=5)
@@ -476,14 +476,14 @@ async def test_without_its_module_the_viewer_still_offers_the_classic_viewer(pho
     assert time.monotonic() - loaded < 3.5
     assert shown["title"] == "Opening your checkout…"
     assert checkout.agent.sessions == []
-    await phone.page.tap("#fw-escape-classic")
+    await phone.page.tap("#wl-escape-classic")
     await phone.page.wait_for_url(f"{checkout.url}{edge.classic_url(touch=True)}")
     assert (await device_record(phone))["viewer_fallback"] is True
 
 
 async def test_a_module_that_throws_shows_the_escape_bar_at_once(phone: Viewer, checkout: Edge) -> None:
     await phone.page.route(
-        "**/fw/viewer/frames.js",
+        "**/wl/viewer/frames.js",
         lambda route: route.fulfill(body=BROKEN_MODULE, content_type="text/javascript"),
     )
     await open_viewer(phone, checkout)
@@ -1953,7 +1953,7 @@ async def test_what_the_checkouts_pages_say_is_shown_as_text(phone: Viewer, chec
     title = await until(lambda: phone.page.text_content("#menu-pages .page-title"), lambda t: t == MARKUP)
     assert title == MARKUP
     assert await phone.evaluate("document.querySelectorAll('img').length") == 0
-    assert await phone.evaluate("document.title") == "Ferry Watch checkout"
+    assert await phone.evaluate("document.title") == "Waitlist checkout"
 
 
 async def test_the_proxy_follows_the_pods_focus(viewer: Viewer, checkout: Edge) -> None:

@@ -1,4 +1,4 @@
-"""ferry-control's hub endpoint, end to end: the agent's own client and store against it, on real Postgres."""
+"""waitlist-control's hub endpoint, end to end: the agent's own client and store against it, on real Postgres."""
 
 from __future__ import annotations
 
@@ -17,14 +17,15 @@ import msgspec
 import pytest
 from aiohttp.test_utils import TestServer
 
-from ferry_watch.agent.hub import HubClient, Identity
-from ferry_watch.agent.store import OneTripStore
-from ferry_watch.control.configure import HubSettings, StreamViewer
-from ferry_watch.control.hub import CLOSE_NOT_YET_RECORDED, CLOSE_VIOLATION, PATH, HubEndpoint
-from ferry_watch.control.kube import ObservedPod, PodIdentity
-from ferry_watch.control.store import CLAIM_LAPSE_SECONDS, ControlStore
-from ferry_watch.models import PACIFIC, Trip
-from ferry_watch.protocol import (
+from tests.postgres import ROLES, Database
+from waitlist.agent.hub import HubClient, Identity
+from waitlist.agent.store import OneTripStore
+from waitlist.control.configure import HubSettings, StreamViewer
+from waitlist.control.hub import CLOSE_NOT_YET_RECORDED, CLOSE_VIOLATION, PATH, HubEndpoint
+from waitlist.control.kube import ObservedPod, PodIdentity
+from waitlist.control.store import CLAIM_LAPSE_SECONDS, ControlStore
+from waitlist.models import PACIFIC, Trip
+from waitlist.protocol import (
     Alert,
     AlertParams,
     Bye,
@@ -39,12 +40,11 @@ from ferry_watch.protocol import (
     decode_control_message,
     encode,
 )
-from tests.postgres import ROLES, Database
 
 USER = "a" * 20
 OTHER_USER = "b" * 20
 TRIP = Trip(id="3f9c0a1b2c3d4e5f", origin="SWB", destination="TSA", date=date(2026, 10, 16), earliest=time(7))
-POD = f"fw-{TRIP.id}-g1"
+POD = f"wl-{TRIP.id}-g1"
 UID = "11111111-2222-3333-4444-555555555555"
 NOON = datetime(2026, 10, 15, 12, 0, tzinfo=PACIFIC).timestamp()  # 19 h before the trip: the 60 s tier
 NIGHT = datetime(2026, 10, 15, 23, 30, tzinfo=PACIFIC).timestamp()
@@ -56,7 +56,7 @@ class FakeCluster:
     deleted: list[str] = field(default_factory=list)
 
     async def review_token(self, token: str, audience: str) -> PodIdentity | None:
-        assert audience == "ferry-watch-agent"
+        assert audience == "waitlist-agent"
         return self.tokens.get(token)
 
     async def list_pods(self) -> list[ObservedPod]:
@@ -77,7 +77,7 @@ async def seed(db: Database, *, uid: str | None = UID, trip: Trip = TRIP, user: 
     try:
         await owner.execute("INSERT INTO users (id, username) VALUES ($1, $1) ON CONFLICT DO NOTHING", user)
         await owner.execute(
-            "INSERT INTO trips (id, user_id, spec, rev) VALUES ($1, $2, $3, 3)",
+            "INSERT INTO trips (id, user_id, provider, spec, rev) VALUES ($1, $2, 'bcferries', $3, 3)",
             trip.id,
             user,
             json.dumps(trip.to_json()),
@@ -203,8 +203,8 @@ async def test_an_unknown_token_is_refused(rig: Rig) -> None:
 
 async def test_a_pod_not_yet_recorded_is_asked_to_retry(rig: Rig) -> None:
     other = Trip(id="ffffffffffffffff", origin="SWB", destination="TSA", date=date(2026, 10, 17))
-    await seed(rig.db, uid=None, trip=other, pod=f"fw-{other.id}-g1")
-    rig.cluster.tokens["token-2"] = PodIdentity("9999", f"fw-{other.id}-g1")
+    await seed(rig.db, uid=None, trip=other, pod=f"wl-{other.id}-g1")
+    rig.cluster.tokens["token-2"] = PodIdentity("9999", f"wl-{other.id}-g1")
     async with aiohttp.ClientSession() as http:
         ws = await http.ws_connect(rig.server.make_url(PATH), headers={"Authorization": "Bearer token-2"})
         await ws.receive()
@@ -270,7 +270,9 @@ async def test_checkout_seconds_are_counted_once_across_reconnects(rig: Rig, age
 
     agent.client.publish(watched(90))
     await eventually(rig, "SELECT 1 FROM usage_ledger WHERE kind = 'vnc_seconds' AND amount = 90")
-    await rig.hub._peers[POD].ws.close()  # a dropped socket, or a restarted ferry-control: the agent says hello again
+    await rig.hub._peers[
+        POD
+    ].ws.close()  # a dropped socket, or a restarted waitlist-control: the agent says hello again
     await until(lambda: rig.hub.connected(POD) and rig.hub._peers[POD].vnc_seconds == 90)
     assert await counted() == 90  # the hello's snapshot repeats the running total; it isn't counted again
     agent.client.publish(watched(150))
@@ -278,7 +280,7 @@ async def test_checkout_seconds_are_counted_once_across_reconnects(rig: Rig, age
 
 
 async def test_checkout_seconds_already_counted_before_0003_are_not_counted_again(rig: Rig, agent: Agent) -> None:
-    """A pod live when 0003 ran: the old ferry-control counted its seconds, so its next total is the baseline."""
+    """A pod live when 0003 ran: the old waitlist-control counted its seconds, so its next total is the baseline."""
     owner = await rig.db.connect()
     try:
         await owner.execute("UPDATE browser_pods SET vnc_boot = 'pre-0003'")
@@ -448,6 +450,11 @@ async def test_a_bookable_alert_says_why_nothing_was_held(rig: Rig, agent: Agent
             spec = TRIP.to_json() | {"auto_cart": False}
             await owner.execute("UPDATE trips SET spec = $1", json.dumps(spec))
         elif setup == "elsewhere":
+            # The user's other BC Ferries trip (only those have cart claims), holding the one cart.
+            await owner.execute(
+                "INSERT INTO trips (id, user_id, provider, spec) VALUES ('ffffffffffffffff', $1, 'bcferries', '{}')",
+                USER,
+            )
             await owner.execute(
                 "INSERT INTO hold_claims (user_id, trip_id, pod, cart_id) VALUES ($1, 'ffffffffffffffff', 'x', 'c1')",
                 USER,
@@ -575,7 +582,7 @@ async def test_an_admins_recycle_drains_the_pod(rig: Rig, agent: Agent) -> None:
 async def test_the_fleet_loop_can_drain_a_pod(rig: Rig, agent: Agent) -> None:
     assert await rig.hub.command(POD, "drain", "superseded")
     await until(lambda: any(isinstance(m, Command) and m.op == "drain" for m in agent.received))
-    assert not await rig.hub.command("fw-ffffffffffffffff-g1", "drain", "past")
+    assert not await rig.hub.command("wl-ffffffffffffffff-g1", "drain", "past")
 
 
 # ---- the streamed checkout viewer's kill switch (cast_allowed)
@@ -726,7 +733,7 @@ async def test_a_change_in_who_may_stream_is_pushed(rig: Rig) -> None:
 async def test_turning_the_beta_off_withdraws_it_from_running_pods(
     rig: Rig, aiohttp_server: Callable[..., Any]
 ) -> None:
-    """Changing checkout.streamViewer rolls ferry-control; each agent dials the new one, whose first configure
+    """Changing checkout.streamViewer rolls waitlist-control; each agent dials the new one, whose first configure
     withdraws the streamed viewer (the pod's gate then closes a live stream with 4005)."""
     async with raw_agent(rig.server, "0.7.0") as agent:
         assert cast_allowed(await agent.configure()) is True

@@ -1,5 +1,5 @@
 /**
- * ferry-web's admin API (docs/multi-tenant/design-reference.md §9.4). Every change carries a reason, which
+ * waitlist-web's admin API (docs/multi-tenant/design-reference.md §9.4). Every change carries a reason, which
  * lands in the audit log. Admins see people, limits and the fleet; never a tenant's screen or sailings.
  */
 import { z } from "zod";
@@ -12,7 +12,7 @@ const OkSchema = z.object({}).passthrough();
 export const AdminLimitSchema = z.object({ value: z.number().int(), source: z.string() });
 
 /**
- * What ferry-control's last fleet pass knew (fleet_state "fleet_report"). It reports only what it computes,
+ * What waitlist-control's last fleet pass knew (fleet_state "fleet_report"). It reports only what it computes,
  * so every part may be missing.
  */
 export const FleetReportSchema = z.object({
@@ -35,6 +35,43 @@ export const FleetReportSchema = z.object({
   breaker: z.string().nullish(),
 });
 
+/**
+ * One HTTP-checked provider in waitlist-control's check report (fleet_state "check_report", docs/waitlist/design.md
+ * §6.6). Every part may be missing or unreadable; it then shows as unknown rather than breaking the page.
+ */
+export const ProviderChecksSchema = z.object({
+  running: z.boolean().nullish().catch(null),
+  paused: z.boolean().nullish().catch(null),
+  fetcher: z.string().nullish().catch(null), // "ok" or "down"
+  fetcher_down_since: epoch.nullish().catch(null),
+  budget_per_minute: z.number().nullish().catch(null),
+  demand_per_minute: z.number().nullish().catch(null),
+  fetches_last_hour: z.number().int().nullish().catch(null),
+  errors_last_hour: z.number().int().nullish().catch(null),
+  last_ok_at: epoch.nullish().catch(null),
+  last_error: z.string().nullish().catch(null), // a CheckErrorKind
+  last_error_at: epoch.nullish().catch(null),
+  cooldown_until: epoch.nullish().catch(null),
+  watches: z.number().int().nullish().catch(null),
+  checking: z.number().int().nullish().catch(null),
+  deferred: z.number().int().nullish().catch(null),
+});
+
+/** The check loop's last report: when, which release, and each provider's part. */
+export const CheckReportSchema = z.object({
+  at: epoch.nullish().catch(null),
+  version: z.string().nullish().catch(null),
+  providers: z.record(z.string(), ProviderChecksSchema.nullable().catch(null)).catch({}),
+});
+
+/** An HTTP-checked provider as the admin overview lists it: who it's offered to, and whether an admin paused it. */
+export const AdminProviderSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  offer: z.string(), // "off", "admins" or "everyone"
+  paused: z.boolean(),
+});
+
 export const AttentionSchema = z.object({
   kind: z.string(),
   trip: z.string().nullable(),
@@ -44,7 +81,7 @@ export const AttentionSchema = z.object({
   detail: z.string().nullish().catch(null),
 });
 
-/** Which release runs where. Each part may be missing: from an older server, or before ferry-control's first pass. */
+/** Which release runs where. Each part may be missing: from an older server, or before waitlist-control's first pass. */
 export const VersionsSchema = z.object({
   web: z.object({ version: z.string() }).nullish().catch(null),
   control: z.object({ version: z.string(), at: epoch.nullish() }).nullish().catch(null),
@@ -80,11 +117,19 @@ export const OverviewSchema = z.object({
   outcomes_7d: z.record(z.string(), z.number().int()),
   // A report this page can't read shows as missing rather than breaking the page.
   fleet: FleetReportSchema.nullish().catch(null),
-  /** When ferry-control last said it was alive (epoch seconds, its clock), or null if it never has. */
+  /** When waitlist-control last said it was alive (epoch seconds, its clock), or null if it never has. */
   control_seen: epoch.nullish(),
   /** Newest first: ids and usernames only, never sailings. */
   attention: z.array(AttentionSchema).optional(),
   versions: VersionsSchema.nullish().catch(null),
+  /** fleet_state "check_report" as waitlist-control wrote it, or null. */
+  checks: CheckReportSchema.nullish().catch(null),
+  /** One entry per HTTP-checked provider; missing from an older server. */
+  providers: z
+    .array(AdminProviderSchema.nullable().catch(null))
+    .transform((items) => items.filter((p) => p !== null))
+    .optional()
+    .catch(undefined),
 });
 
 export const AdminUserSchema = z.object({
@@ -93,7 +138,9 @@ export const AdminUserSchema = z.object({
   email: z.string().nullable(),
   state: z.string(),
   is_admin: z.boolean(),
-  trips: z.number().int(),
+  trips: z.number().int(), // BC Ferries trips
+  /** Live watches by provider, every registered provider present (0 if none). */
+  watches: z.record(z.string(), z.number().int()).optional().catch(undefined),
   created_at: epoch,
   last_seen_at: epoch.nullable(),
   limits: z.record(z.string(), AdminLimitSchema),
@@ -124,6 +171,8 @@ export const UnmatchedSchema = z.array(
 );
 
 export type FleetReport = z.infer<typeof FleetReportSchema>;
+export type ProviderChecks = z.infer<typeof ProviderChecksSchema>;
+export type AdminProvider = z.infer<typeof AdminProviderSchema>;
 export type Attention = z.infer<typeof AttentionSchema>;
 export type Overview = z.infer<typeof OverviewSchema>;
 export type Versions = z.infer<typeof VersionsSchema>;
@@ -144,6 +193,7 @@ export const ADMIN_KEYS = {
 /** Each limit, in the words the People page uses. */
 export const LIMIT_LABELS: Readonly<Record<string, string>> = {
   maxTrips: "Trips watched",
+  maxAlertOnlyWatches: "Alert-only watches",
   maxActiveBrowsers: "Browsers at once",
   maxHoldsPerDay: "Holds a day",
   maxCartAttemptsPerDay: "Cart attempts a day",
@@ -245,7 +295,14 @@ export const adminApi = {
     request(`${userPath(id)}/limits`, { method: "POST", body: { key, value, reason }, schema: AdminLimitSchema }),
   setSwitch: (name: FleetSwitch, on: boolean, reason: string) =>
     request("/api/admin/switches", { method: "POST", body: { switch: name, on, reason }, schema: OkSchema }),
-  /** Only ferry-control opens the breaker; an admin can only close it. */
+  /** Stops (or restarts) checks for one HTTP-checked provider, at once and with no deploy. */
+  pauseProvider: (provider: string, on: boolean, reason: string) =>
+    request("/api/admin/switches", {
+      method: "POST",
+      body: { switch: "pause_provider", provider, on, reason },
+      schema: OkSchema,
+    }),
+  /** Only waitlist-control opens the breaker; an admin can only close it. */
   closeBreaker: (reason: string) =>
     request("/api/admin/switches", {
       method: "POST",
@@ -255,7 +312,7 @@ export const adminApi = {
   /** Empties the trip's held cart and tells its owner. */
   releaseCart: (trip: string, reason: string) =>
     request(`${tripPath(trip)}/release`, { method: "POST", body: { reason }, schema: OkSchema }),
-  /** Restarts the trip's browser; ferry-control starts the next one. */
+  /** Restarts the trip's browser; waitlist-control starts the next one. */
   recyclePod: (trip: string, reason: string) =>
     request(`${tripPath(trip)}/recycle`, { method: "POST", body: { reason }, schema: OkSchema }),
 };

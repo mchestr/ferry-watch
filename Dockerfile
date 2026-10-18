@@ -1,9 +1,8 @@
 # syntax=docker/dockerfile:1
 
 # Targets:
-#   control  ferry-watch-control: ferry-web and ferry-control (no browser libraries at all)
-#   browser  ferry-watch-browser: one browser pod (docs/multi-tenant/design-reference.md §5, §11.2)
-#   app      today's single-container app, the default target until cutover
+#   control  waitlist-control: waitlist-web and waitlist-control (no browser libraries at all); the default
+#   browser  waitlist-browser: one browser pod (docs/multi-tenant/design-reference.md §5, §11.2)
 
 # ---- frontend
 FROM node:22.11.0-alpine@sha256:b64ced2e7cd0a4816699fe308ce6e8a08ccba463c757c00c14cd372e3d2c763e AS web
@@ -17,35 +16,14 @@ RUN npm run build
 
 FROM ghcr.io/astral-sh/uv:0.7.8@sha256:0178a92d156b6f6dbe60e3b52b33b421021f46d634aa9f81f42b91445bb81cdf AS uv
 
-# ---- the control plane: python:3.12-slim (with tzdata, which models.py needs at import), uid 65532
-FROM python:3.12.14-slim-bookworm@sha256:392307d22300de8b5986851a12d9176dfc0fc073e65bf6523ebd7dcbeb23564e AS control
-ENV UV_PROJECT_ENVIRONMENT=/opt/venv \
-    UV_PYTHON=/usr/local/bin/python3 \
-    UV_PYTHON_DOWNLOADS=never \
-    UV_COMPILE_BYTECODE=1 \
-    UV_LINK_MODE=copy \
-    PATH=/opt/venv/bin:$PATH \
-    PYTHONUNBUFFERED=1
-WORKDIR /app
-COPY pyproject.toml uv.lock README.md ./
-RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
-    uv sync --locked --no-dev --extra control --no-install-project
-COPY src/ src/
-RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
-    uv sync --locked --no-dev --extra control --no-editable && rm -rf src
-COPY --from=web /web/dist /app/static
-USER 65532:65532
-EXPOSE 8765 8766 9090
-CMD ["ferry-web", "run"]
-
-# ---- the virtual display, shared by the browser pod and the single-container app
+# ---- the virtual display, for the browser pod
 # Playwright's image ships Chromium and its system libraries. Its version must match the
 # `playwright` package in uv.lock (CI checks this).
 FROM mcr.microsoft.com/playwright/python:v1.56.0-noble@sha256:a7f6cf3ae520c9d670ad956572c13747ed5abdbba5123a01526f873ed1662528 AS display
 
 # KasmVNC is the virtual display: an X server with a built-in web viewer that resizes the
 # screen to fit whoever is looking (phone or desktop). matchbox keeps the browser window
-# full-screen at that size. tini forwards signals so the app can shut down cleanly. xrandr
+# full-screen at that size. tini forwards signals so the agent can shut down cleanly. xrandr
 # (x11-xserver-utils) and xsettingsd size the screen and set its scale for a streamed viewer.
 ARG TARGETARCH
 ARG KASMVNC_VERSION=1.5.0
@@ -87,28 +65,31 @@ FROM display AS browser
 # (COPY --chmod would also apply 0444 to the directories it creates, leaving them untraversable.)
 RUN --mount=source=docker/browser/chromium-policy.json,target=/run/policy.json \
     for dir in /etc/chromium /etc/opt/chrome_for_testing /etc/opt/chrome; do \
-      install -D -m 0444 -o root -g root /run/policy.json "${dir}/policies/managed/ferry-watch.json"; \
+      install -D -m 0444 -o root -g root /run/policy.json "${dir}/policies/managed/waitlist.json"; \
     done \
     && rm -rf /ms-playwright/firefox-* /ms-playwright/webkit-* /ms-playwright/ffmpeg-* /app/src
 USER 1001:1001
 EXPOSE 6080 8080
-ENTRYPOINT ["/usr/bin/tini", "--", "ferry-watch-agent"]
+ENTRYPOINT ["/usr/bin/tini", "--", "waitlist-agent"]
 
-# ---- today's single-container app (the default target)
-FROM display AS app
-# Serve KasmVNC's viewer under /vnc so it shares a hostname with the app.
-RUN mkdir -p /opt/vnc-web /config \
-    && ln -s /usr/share/kasmvnc/www /opt/vnc-web/vnc \
-    && chown pwuser:pwuser /config
+# ---- the control plane (the default target, so last): python:3.12-slim (with tzdata, which models.py needs at
+# import), uid 65532
+FROM python:3.12.14-slim-bookworm@sha256:392307d22300de8b5986851a12d9176dfc0fc073e65bf6523ebd7dcbeb23564e AS control
+ENV UV_PROJECT_ENVIRONMENT=/opt/venv \
+    UV_PYTHON=/usr/local/bin/python3 \
+    UV_PYTHON_DOWNLOADS=never \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    PATH=/opt/venv/bin:$PATH \
+    PYTHONUNBUFFERED=1
+WORKDIR /app
+COPY pyproject.toml uv.lock README.md ./
+RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
+    uv sync --locked --no-dev --extra control --no-install-project
+COPY src/ src/
+RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
+    uv sync --locked --no-dev --extra control --no-editable && rm -rf src
 COPY --from=web /web/dist /app/static
-COPY entrypoint.sh /app/entrypoint.sh
-
-ENV BCF_HOST=0.0.0.0 \
-    BCF_PORT=8765 \
-    BCF_CONFIG=/config/config.json \
-    BCF_STATIC=/app/static \
-    DISPLAY=:99
-
-USER pwuser
-EXPOSE 8765 6080
-ENTRYPOINT ["/usr/bin/tini", "-g", "--", "/app/entrypoint.sh"]
+USER 65532:65532
+EXPOSE 8765 8766 9090
+CMD ["waitlist-web", "run"]

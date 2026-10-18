@@ -1,5 +1,5 @@
 /**
- * Releasing a held cart. ferry-web only passes the request on, so the cart stays held until the trip's browser
+ * Releasing a held cart. waitlist-web only passes the request on, so the cart stays held until the trip's browser
  * lets it go: until then the trip card and /c/<trip> both say "Releasing…".
  */
 import { useMutation, useMutationState, useQueryClient } from "@tanstack/react-query";
@@ -20,7 +20,7 @@ export function useRelease(tripId: string, cart: CartInfo | null | undefined) {
       qc.setQueryData(MY_STATE_KEY, state);
       toast.success("Releasing the cart");
     },
-    onError: (error) => reportError(qc, error),
+    onError: (error) => reportError(error),
   });
   // Every release asked for, here or on the other page (a mutation outlives the page that ran it). The filter
   // stays fixed: useMutationState only looks again when a mutation changes, not when the cart does.

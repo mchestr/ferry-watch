@@ -4,8 +4,8 @@ from datetime import UTC, date, datetime, time, timedelta
 
 import pytest
 
-from ferry_watch.models import PACIFIC, Trip
-from ferry_watch.polling import (
+from waitlist.models import PACIFIC, Trip
+from waitlist.polling import (
     DEFAULT_QUIET_HOURS,
     PollPolicy,
     QuietHours,

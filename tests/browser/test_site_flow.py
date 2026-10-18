@@ -21,16 +21,14 @@ from aiohttp.test_utils import TestServer
 from multidict import MultiDictProxy
 from playwright.async_api import Browser, BrowserContext, async_playwright
 
-from ferry_watch.bcferries.errors import CartMismatch, LoginFailed, NotBookable, RouteRejected, SessionExpired
-from ferry_watch.bcferries.site import SiteSession
-from ferry_watch.bcferries.terminals import Terminals
-from ferry_watch.bcferries.urls import Credentials
-from ferry_watch.models import FarePreference, Trip
+from waitlist.bcferries.errors import CartMismatch, NotBookable, RouteRejected, SessionExpired
+from waitlist.bcferries.site import SiteSession
+from waitlist.bcferries.terminals import Terminals
+from waitlist.models import FarePreference, Trip
 
 pytestmark = pytest.mark.browser
 
 FLOW = Path(__file__).parent.parent / "fixtures" / "flow"
-CREDENTIALS = Credentials("me@example.com", "correct-horse")
 # Any hostname under .localhost is loopback in Chromium; this one contains "queue-it.net", which is
 # how the session recognises BC Ferries' waiting room.
 QUEUE_HOST = "bcferries.queue-it.net.localhost"
@@ -139,9 +137,6 @@ class FakeBCFerries:
             self.redirect("/fare-selection" if walk_on else "/VehicleSelectionPage")
         if path.endswith("/search"):
             self.redirect("/fare-selection")
-        if path == "/j_spring_security_check":
-            ok = form.get("j_username") == CREDENTIALS.username and form.get("j_password") == CREDENTIALS.password
-            self.redirect("/my-account" if ok else "/login?error=true")
         raise web.HTTPNotFound
 
 
@@ -262,20 +257,6 @@ async def test_add_to_cart_for_a_sailing_thats_gone(session: SiteSession) -> Non
     await session.search(trip())
     with pytest.raises(NotBookable):
         await session.add_to_cart(time(6), FarePreference.SAVER)
-
-
-async def test_login(session: SiteSession) -> None:
-    await session.login(CREDENTIALS)
-    assert session.logged_in
-
-
-async def test_a_failed_login_never_mentions_the_password(session: SiteSession) -> None:
-    wrong = Credentials(CREDENTIALS.username, "wrong-password-123")
-    with pytest.raises(LoginFailed) as exc:
-        await session.login(wrong)
-    assert "wrong-password-123" not in str(exc.value)
-    assert exc.value.__suppress_context__  # the Playwright error (with its call log) is dropped
-    assert not session.logged_in
 
 
 async def test_empty_cart(session: SiteSession) -> None:

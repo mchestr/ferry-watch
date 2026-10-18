@@ -1,4 +1,4 @@
-"""The fw.cast1 conformance pack (tests/fixtures/cast1/README.md), as the agent's tests load it."""
+"""The wl.cast1 conformance pack (tests/fixtures/cast1/README.md), as the agent's tests load it."""
 
 from __future__ import annotations
 

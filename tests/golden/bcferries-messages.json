@@ -1,0 +1,572 @@
+{
+  "bookable-auto-cart-off/no-terminals": {
+    "also": null,
+    "body": "Auto-hold is off for this trip. Open Waitlist to hold it now.",
+    "title": "Bookable: 9:00 am TSA → SWB, Sat Jul 3",
+    "topic": null,
+    "ttl": 3600,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "bookable-auto-cart-off/terminals": {
+    "also": [
+      "Or book it yourself on bcferries.com",
+      "https://www.bcferries.com/?sailing=true&departureLocation=TSA&departureLocationName=Delta+-+Vancouver+%28Tsawwassen%29&arrivalLocation=SWB&arrivalLocationName=Sidney+-+Victoria+%28Swartz+Bay%29&departingDateTime=07%2F03%2F2027"
+    ],
+    "body": "Auto-hold is off for this trip. Open Waitlist to hold it now.",
+    "title": "Bookable: 9:00 am Tsawwassen → Swartz Bay, Sat Jul 3",
+    "topic": null,
+    "ttl": 3600,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "bookable-elsewhere/no-terminals": {
+    "also": null,
+    "body": "You're holding a cart on another trip, so we didn't hold this one.",
+    "title": "Bookable: 9:00 am TSA → SWB, Sat Jul 3",
+    "topic": null,
+    "ttl": 3600,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "bookable-elsewhere/terminals": {
+    "also": [
+      "Or book it yourself on bcferries.com",
+      "https://www.bcferries.com/?sailing=true&departureLocation=TSA&departureLocationName=Delta+-+Vancouver+%28Tsawwassen%29&arrivalLocation=SWB&arrivalLocationName=Sidney+-+Victoria+%28Swartz+Bay%29&departingDateTime=07%2F03%2F2027"
+    ],
+    "body": "You're holding a cart on another trip, so we didn't hold this one.",
+    "title": "Bookable: 9:00 am Tsawwassen → Swartz Bay, Sat Jul 3",
+    "topic": null,
+    "ttl": 3600,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "bookable-limit/no-terminals": {
+    "also": null,
+    "body": "You've reached today's limit for holding carts, so we didn't hold it.",
+    "title": "Bookable: 9:00 am TSA → SWB, Sat Jul 3",
+    "topic": null,
+    "ttl": 3600,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "bookable-limit/terminals": {
+    "also": [
+      "Or book it yourself on bcferries.com",
+      "https://www.bcferries.com/?sailing=true&departureLocation=TSA&departureLocationName=Delta+-+Vancouver+%28Tsawwassen%29&arrivalLocation=SWB&arrivalLocationName=Sidney+-+Victoria+%28Swartz+Bay%29&departingDateTime=07%2F03%2F2027"
+    ],
+    "body": "You've reached today's limit for holding carts, so we didn't hold it.",
+    "title": "Bookable: 9:00 am Tsawwassen → Swartz Bay, Sat Jul 3",
+    "topic": null,
+    "ttl": 3600,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "bookable-many/no-terminals": {
+    "also": null,
+    "body": "We couldn't hold it this time. Open Waitlist to try again.",
+    "title": "Bookable: 7:00 am, 9:00 am, 10:30 am and 1 more TSA → SWB, Sat Jul 3",
+    "topic": null,
+    "ttl": 3600,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "bookable-many/terminals": {
+    "also": [
+      "Or book it yourself on bcferries.com",
+      "https://www.bcferries.com/?sailing=true&departureLocation=TSA&departureLocationName=Delta+-+Vancouver+%28Tsawwassen%29&arrivalLocation=SWB&arrivalLocationName=Sidney+-+Victoria+%28Swartz+Bay%29&departingDateTime=07%2F03%2F2027"
+    ],
+    "body": "We couldn't hold it this time. Open Waitlist to try again.",
+    "title": "Bookable: 7:00 am, 9:00 am, 10:30 am and 1 more Tsawwassen → Swartz Bay, Sat Jul 3",
+    "topic": null,
+    "ttl": 3600,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "bookable-no-departures/no-terminals": {
+    "also": null,
+    "body": "We couldn't hold it this time. Open Waitlist to try again.",
+    "title": "Bookable: A sailing TSA → SWB, Sat Jul 3",
+    "topic": null,
+    "ttl": 3600,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "bookable-no-departures/terminals": {
+    "also": [
+      "Or book it yourself on bcferries.com",
+      "https://www.bcferries.com/?sailing=true&departureLocation=TSA&departureLocationName=Delta+-+Vancouver+%28Tsawwassen%29&arrivalLocation=SWB&arrivalLocationName=Sidney+-+Victoria+%28Swartz+Bay%29&departingDateTime=07%2F03%2F2027"
+    ],
+    "body": "We couldn't hold it this time. Open Waitlist to try again.",
+    "title": "Bookable: A sailing Tsawwassen → Swartz Bay, Sat Jul 3",
+    "topic": null,
+    "ttl": 3600,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "bookable-no-holds/no-terminals": {
+    "also": null,
+    "body": "You've used today's holds, so we didn't hold it.",
+    "title": "Bookable: 9:00 am TSA → SWB, Sat Jul 3",
+    "topic": null,
+    "ttl": 3600,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "bookable-no-holds/terminals": {
+    "also": [
+      "Or book it yourself on bcferries.com",
+      "https://www.bcferries.com/?sailing=true&departureLocation=TSA&departureLocationName=Delta+-+Vancouver+%28Tsawwassen%29&arrivalLocation=SWB&arrivalLocationName=Sidney+-+Victoria+%28Swartz+Bay%29&departingDateTime=07%2F03%2F2027"
+    ],
+    "body": "You've used today's holds, so we didn't hold it.",
+    "title": "Bookable: 9:00 am Tsawwassen → Swartz Bay, Sat Jul 3",
+    "topic": null,
+    "ttl": 3600,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "bookable-paused/no-terminals": {
+    "also": null,
+    "body": "Holding carts is paused right now, so we didn't hold it.",
+    "title": "Bookable: 9:00 am TSA → SWB, Sat Jul 3",
+    "topic": null,
+    "ttl": 3600,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "bookable-paused/terminals": {
+    "also": [
+      "Or book it yourself on bcferries.com",
+      "https://www.bcferries.com/?sailing=true&departureLocation=TSA&departureLocationName=Delta+-+Vancouver+%28Tsawwassen%29&arrivalLocation=SWB&arrivalLocationName=Sidney+-+Victoria+%28Swartz+Bay%29&departingDateTime=07%2F03%2F2027"
+    ],
+    "body": "Holding carts is paused right now, so we didn't hold it.",
+    "title": "Bookable: 9:00 am Tsawwassen → Swartz Bay, Sat Jul 3",
+    "topic": null,
+    "ttl": 3600,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "bookable-quiet/no-terminals": {
+    "also": null,
+    "body": "It's in your quiet hours, so we didn't hold it. Open Waitlist to hold it now.",
+    "title": "Bookable: 9:00 am TSA → SWB, Sat Jul 3",
+    "topic": null,
+    "ttl": 3600,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "bookable-quiet/terminals": {
+    "also": [
+      "Or book it yourself on bcferries.com",
+      "https://www.bcferries.com/?sailing=true&departureLocation=TSA&departureLocationName=Delta+-+Vancouver+%28Tsawwassen%29&arrivalLocation=SWB&arrivalLocationName=Sidney+-+Victoria+%28Swartz+Bay%29&departingDateTime=07%2F03%2F2027"
+    ],
+    "body": "It's in your quiet hours, so we didn't hold it. Open Waitlist to hold it now.",
+    "title": "Bookable: 9:00 am Tsawwassen → Swartz Bay, Sat Jul 3",
+    "topic": null,
+    "ttl": 3600,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "bookable-unknown-reason/no-terminals": {
+    "also": null,
+    "body": "We couldn't hold it this time. Open Waitlist to try again.",
+    "title": "Bookable: 9:00 am TSA → SWB, Sat Jul 3",
+    "topic": null,
+    "ttl": 3600,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "bookable-unknown-reason/terminals": {
+    "also": [
+      "Or book it yourself on bcferries.com",
+      "https://www.bcferries.com/?sailing=true&departureLocation=TSA&departureLocationName=Delta+-+Vancouver+%28Tsawwassen%29&arrivalLocation=SWB&arrivalLocationName=Sidney+-+Victoria+%28Swartz+Bay%29&departingDateTime=07%2F03%2F2027"
+    ],
+    "body": "We couldn't hold it this time. Open Waitlist to try again.",
+    "title": "Bookable: 9:00 am Tsawwassen → Swartz Bay, Sat Jul 3",
+    "topic": null,
+    "ttl": 3600,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "bookable/no-terminals": {
+    "also": null,
+    "body": "We couldn't hold it this time. Open Waitlist to try again.",
+    "title": "Bookable: 9:00 am TSA → SWB, Sat Jul 3",
+    "topic": null,
+    "ttl": 3600,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "bookable/terminals": {
+    "also": [
+      "Or book it yourself on bcferries.com",
+      "https://www.bcferries.com/?sailing=true&departureLocation=TSA&departureLocationName=Delta+-+Vancouver+%28Tsawwassen%29&arrivalLocation=SWB&arrivalLocationName=Sidney+-+Victoria+%28Swartz+Bay%29&departingDateTime=07%2F03%2F2027"
+    ],
+    "body": "We couldn't hold it this time. Open Waitlist to try again.",
+    "title": "Bookable: 9:00 am Tsawwassen → Swartz Bay, Sat Jul 3",
+    "topic": null,
+    "ttl": 3600,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "booked/no-terminals": {
+    "also": null,
+    "body": "9:00 am TSA → SWB, Sat Jul 3. Have a good trip.",
+    "title": "Booked!",
+    "topic": null,
+    "ttl": 86400,
+    "urgency": "normal",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "booked/terminals": {
+    "also": null,
+    "body": "9:00 am Tsawwassen → Swartz Bay, Sat Jul 3. Have a good trip.",
+    "title": "Booked!",
+    "topic": null,
+    "ttl": 86400,
+    "urgency": "normal",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "booked_it/no-terminals": {
+    "also": null,
+    "body": "You checked out the 9:00 am TSA → SWB sailing. Tell us, so we know whether to keep watching.",
+    "title": "Did you book it?",
+    "topic": null,
+    "ttl": 86400,
+    "urgency": "normal",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "booked_it/terminals": {
+    "also": null,
+    "body": "You checked out the 9:00 am Tsawwassen → Swartz Bay sailing. Tell us, so we know whether to keep watching.",
+    "title": "Did you book it?",
+    "topic": null,
+    "ttl": 86400,
+    "urgency": "normal",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "cart_expired-no-minutes/no-terminals": {
+    "also": null,
+    "body": "TSA → SWB, Sat Jul 3.",
+    "title": "Released the 9:00 am cart",
+    "topic": null,
+    "ttl": 3600,
+    "urgency": "normal",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "cart_expired-no-minutes/terminals": {
+    "also": null,
+    "body": "Tsawwassen → Swartz Bay, Sat Jul 3.",
+    "title": "Released the 9:00 am cart",
+    "topic": null,
+    "ttl": 3600,
+    "urgency": "normal",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "cart_expired/no-terminals": {
+    "also": null,
+    "body": "TSA → SWB, Sat Jul 3.",
+    "title": "Released the 9:00 am cart after 60 minutes",
+    "topic": null,
+    "ttl": 3600,
+    "urgency": "normal",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "cart_expired/terminals": {
+    "also": null,
+    "body": "Tsawwassen → Swartz Bay, Sat Jul 3.",
+    "title": "Released the 9:00 am cart after 60 minutes",
+    "topic": null,
+    "ttl": 3600,
+    "urgency": "normal",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "cart_failed-markup/no-terminals": {
+    "also": null,
+    "body": "BC Ferries didn't let us hold it (the site's pages changed). Open Waitlist to try again.",
+    "title": "Bookable, but we couldn't hold it: 9:00 am TSA → SWB, Sat Jul 3",
+    "topic": null,
+    "ttl": 3600,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "cart_failed-markup/terminals": {
+    "also": [
+      "Or book it yourself on bcferries.com",
+      "https://www.bcferries.com/?sailing=true&departureLocation=TSA&departureLocationName=Delta+-+Vancouver+%28Tsawwassen%29&arrivalLocation=SWB&arrivalLocationName=Sidney+-+Victoria+%28Swartz+Bay%29&departingDateTime=07%2F03%2F2027"
+    ],
+    "body": "BC Ferries didn't let us hold it (the site's pages changed). Open Waitlist to try again.",
+    "title": "Bookable, but we couldn't hold it: 9:00 am Tsawwassen → Swartz Bay, Sat Jul 3",
+    "topic": null,
+    "ttl": 3600,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "cart_failed-mismatch/no-terminals": {
+    "also": null,
+    "body": "BC Ferries didn't let us hold it (the site's pages changed). Open Waitlist to try again.",
+    "title": "Bookable, but we couldn't hold it: 9:00 am TSA → SWB, Sat Jul 3",
+    "topic": null,
+    "ttl": 3600,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "cart_failed-mismatch/terminals": {
+    "also": [
+      "Or book it yourself on bcferries.com",
+      "https://www.bcferries.com/?sailing=true&departureLocation=TSA&departureLocationName=Delta+-+Vancouver+%28Tsawwassen%29&arrivalLocation=SWB&arrivalLocationName=Sidney+-+Victoria+%28Swartz+Bay%29&departingDateTime=07%2F03%2F2027"
+    ],
+    "body": "BC Ferries didn't let us hold it (the site's pages changed). Open Waitlist to try again.",
+    "title": "Bookable, but we couldn't hold it: 9:00 am Tsawwassen → Swartz Bay, Sat Jul 3",
+    "topic": null,
+    "ttl": 3600,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "cart_failed-queue/no-terminals": {
+    "also": null,
+    "body": "BC Ferries didn't let us hold it (the site was too busy). Open Waitlist to try again.",
+    "title": "Bookable, but we couldn't hold it: 9:00 am TSA → SWB, Sat Jul 3",
+    "topic": null,
+    "ttl": 3600,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "cart_failed-queue/terminals": {
+    "also": [
+      "Or book it yourself on bcferries.com",
+      "https://www.bcferries.com/?sailing=true&departureLocation=TSA&departureLocationName=Delta+-+Vancouver+%28Tsawwassen%29&arrivalLocation=SWB&arrivalLocationName=Sidney+-+Victoria+%28Swartz+Bay%29&departingDateTime=07%2F03%2F2027"
+    ],
+    "body": "BC Ferries didn't let us hold it (the site was too busy). Open Waitlist to try again.",
+    "title": "Bookable, but we couldn't hold it: 9:00 am Tsawwassen → Swartz Bay, Sat Jul 3",
+    "topic": null,
+    "ttl": 3600,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "cart_failed-timeout/no-terminals": {
+    "also": null,
+    "body": "BC Ferries didn't let us hold it (the site was too slow). Open Waitlist to try again.",
+    "title": "Bookable, but we couldn't hold it: 9:00 am TSA → SWB, Sat Jul 3",
+    "topic": null,
+    "ttl": 3600,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "cart_failed-timeout/terminals": {
+    "also": [
+      "Or book it yourself on bcferries.com",
+      "https://www.bcferries.com/?sailing=true&departureLocation=TSA&departureLocationName=Delta+-+Vancouver+%28Tsawwassen%29&arrivalLocation=SWB&arrivalLocationName=Sidney+-+Victoria+%28Swartz+Bay%29&departingDateTime=07%2F03%2F2027"
+    ],
+    "body": "BC Ferries didn't let us hold it (the site was too slow). Open Waitlist to try again.",
+    "title": "Bookable, but we couldn't hold it: 9:00 am Tsawwassen → Swartz Bay, Sat Jul 3",
+    "topic": null,
+    "ttl": 3600,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "cart_failed-unknown/no-terminals": {
+    "also": null,
+    "body": "BC Ferries didn't let us hold it. Open Waitlist to try again.",
+    "title": "Bookable, but we couldn't hold it: 9:00 am TSA → SWB, Sat Jul 3",
+    "topic": null,
+    "ttl": 3600,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "cart_failed-unknown/terminals": {
+    "also": [
+      "Or book it yourself on bcferries.com",
+      "https://www.bcferries.com/?sailing=true&departureLocation=TSA&departureLocationName=Delta+-+Vancouver+%28Tsawwassen%29&arrivalLocation=SWB&arrivalLocationName=Sidney+-+Victoria+%28Swartz+Bay%29&departingDateTime=07%2F03%2F2027"
+    ],
+    "body": "BC Ferries didn't let us hold it. Open Waitlist to try again.",
+    "title": "Bookable, but we couldn't hold it: 9:00 am Tsawwassen → Swartz Bay, Sat Jul 3",
+    "topic": null,
+    "ttl": 3600,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "cart_failed/no-terminals": {
+    "also": null,
+    "body": "BC Ferries didn't let us hold it (it may have just sold out). Open Waitlist to try again.",
+    "title": "Bookable, but we couldn't hold it: 9:00 am TSA → SWB, Sat Jul 3",
+    "topic": null,
+    "ttl": 3600,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "cart_failed/terminals": {
+    "also": [
+      "Or book it yourself on bcferries.com",
+      "https://www.bcferries.com/?sailing=true&departureLocation=TSA&departureLocationName=Delta+-+Vancouver+%28Tsawwassen%29&arrivalLocation=SWB&arrivalLocationName=Sidney+-+Victoria+%28Swartz+Bay%29&departingDateTime=07%2F03%2F2027"
+    ],
+    "body": "BC Ferries didn't let us hold it (it may have just sold out). Open Waitlist to try again.",
+    "title": "Bookable, but we couldn't hold it: 9:00 am Tsawwassen → Swartz Bay, Sat Jul 3",
+    "topic": null,
+    "ttl": 3600,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "cart_held-no-deadline/no-terminals": {
+    "also": null,
+    "body": "Check out soon. Have your card and phone ready; your bank may ask you to approve in its app. A computer is easiest.",
+    "title": "Held for you: 9:00 am TSA → SWB, Sat Jul 3",
+    "topic": "cart_hel-a1b2c3d4e5f60718",
+    "ttl": 1800,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "cart_held-no-deadline/terminals": {
+    "also": null,
+    "body": "Check out soon. Have your card and phone ready; your bank may ask you to approve in its app. A computer is easiest.",
+    "title": "Held for you: 9:00 am Tsawwassen → Swartz Bay, Sat Jul 3",
+    "topic": "cart_hel-a1b2c3d4e5f60718",
+    "ttl": 1800,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "cart_held/no-terminals": {
+    "also": null,
+    "body": "Check out by 10:10 am. Have your card and phone ready; your bank may ask you to approve in its app. A computer is easiest.",
+    "title": "Held for you: 9:00 am TSA → SWB, Sat Jul 3",
+    "topic": "cart_hel-a1b2c3d4e5f60718",
+    "ttl": 1800,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "cart_held/terminals": {
+    "also": null,
+    "body": "Check out by 10:10 am. Have your card and phone ready; your bank may ask you to approve in its app. A computer is easiest.",
+    "title": "Held for you: 9:00 am Tsawwassen → Swartz Bay, Sat Jul 3",
+    "topic": "cart_hel-a1b2c3d4e5f60718",
+    "ttl": 1800,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "cart_lost/no-terminals": {
+    "also": null,
+    "body": "TSA → SWB, Sat Jul 3. We'll keep watching.",
+    "title": "Lost the held 9:00 am cart",
+    "topic": null,
+    "ttl": 3600,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "cart_lost/terminals": {
+    "also": null,
+    "body": "Tsawwassen → Swartz Bay, Sat Jul 3. We'll keep watching.",
+    "title": "Lost the held 9:00 am cart",
+    "topic": null,
+    "ttl": 3600,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "checkout_blocked/no-terminals": {
+    "also": null,
+    "body": "Something in your checkout couldn't load. Try again, or book on bcferries.com.",
+    "title": "Checkout hit a blocked page",
+    "topic": null,
+    "ttl": 3600,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "checkout_blocked/terminals": {
+    "also": null,
+    "body": "Something in your checkout couldn't load. Try again, or book on bcferries.com.",
+    "title": "Checkout hit a blocked page",
+    "topic": null,
+    "ttl": 3600,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "failing/no-terminals": {
+    "also": null,
+    "body": "We'll keep trying. If BC Ferries changed their site, an update is on the way.",
+    "title": "Having trouble checking TSA → SWB",
+    "topic": null,
+    "ttl": 3600,
+    "urgency": "low",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "failing/terminals": {
+    "also": null,
+    "body": "We'll keep trying. If BC Ferries changed their site, an update is on the way.",
+    "title": "Having trouble checking Tsawwassen → Swartz Bay",
+    "topic": null,
+    "ttl": 3600,
+    "urgency": "low",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "hold_ending-no-cart/no-terminals": {
+    "also": null,
+    "body": "Check out soon.",
+    "title": "Checkout closes soon: 9:00 am TSA → SWB",
+    "topic": "hold_end-a1b2c3d4e5f60718",
+    "ttl": 600,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "hold_ending-no-cart/terminals": {
+    "also": null,
+    "body": "Check out soon.",
+    "title": "Checkout closes soon: 9:00 am Tsawwassen → Swartz Bay",
+    "topic": "hold_end-a1b2c3d4e5f60718",
+    "ttl": 600,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "hold_ending/no-terminals": {
+    "also": null,
+    "body": "Check out by 10:25 am.",
+    "title": "Checkout closes soon: 9:00 am TSA → SWB",
+    "topic": "hold_end-a1b2c3d4e5f60718",
+    "ttl": 600,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "hold_ending/terminals": {
+    "also": null,
+    "body": "Check out by 10:25 am.",
+    "title": "Checkout closes soon: 9:00 am Tsawwassen → Swartz Bay",
+    "topic": "hold_end-a1b2c3d4e5f60718",
+    "ttl": 600,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "hold_reminder-unclaimed/no-terminals": {
+    "also": null,
+    "body": "Check out by 10:10 am.",
+    "title": "Your cart is still held: 9:00 am TSA → SWB",
+    "topic": "hold_rem-a1b2c3d4e5f60718",
+    "ttl": 600,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "hold_reminder-unclaimed/terminals": {
+    "also": null,
+    "body": "Check out by 10:10 am.",
+    "title": "Your cart is still held: 9:00 am Tsawwassen → Swartz Bay",
+    "topic": "hold_rem-a1b2c3d4e5f60718",
+    "ttl": 600,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "hold_reminder/no-terminals": {
+    "also": null,
+    "body": "Check out by 10:25 am.",
+    "title": "Your cart is still held: 9:00 am TSA → SWB",
+    "topic": "hold_rem-a1b2c3d4e5f60718",
+    "ttl": 600,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  },
+  "hold_reminder/terminals": {
+    "also": null,
+    "body": "Check out by 10:25 am.",
+    "title": "Your cart is still held: 9:00 am Tsawwassen → Swartz Bay",
+    "topic": "hold_rem-a1b2c3d4e5f60718",
+    "ttl": 600,
+    "urgency": "high",
+    "url": "https://waitlist.chestr.dev/c/a1b2c3d4e5f60718"
+  }
+}

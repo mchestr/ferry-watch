@@ -11,7 +11,7 @@ import {
   parseHeader,
   proxyAutocomplete,
   resize,
-} from "../site/fw/viewer/core/protocol.js";
+} from "../site/wl/viewer/core/protocol.js";
 import { bytes, forViewer, pack } from "./pack.mjs";
 
 const messages = pack("messages.json");

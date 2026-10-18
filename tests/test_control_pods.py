@@ -6,13 +6,13 @@ from typing import Any
 
 import pytest
 
-from ferry_watch.control.pods import DEADLINE_SECONDS, PodParams, browser_pod, memory_mib, pod_name
+from waitlist.control.pods import DEADLINE_SECONDS, PodParams, browser_pod, memory_mib, pod_name
 
 PARAMS = PodParams(
-    image="ghcr.io/mchestr/ferry-watch-browser@sha256:" + "b" * 64,
-    hub_url="ws://ferry-control.ferry-watch.svc.cluster.local.:8766/agent/v1",
+    image="ghcr.io/mchestr/waitlist-browser@sha256:" + "b" * 64,
+    hub_url="ws://waitlist-control.waitlist.svc.cluster.local.:8766/agent/v1",
     vnc_pubkeys="k1:AAAA",
-    vnc_origin="https://ferry-checkout.chestr.dev",
+    vnc_origin="https://waitlist-checkout.chestr.dev",
 )
 TRIP = "3f9c0a1b2c3d4e5f"
 OWNER = "u5yq2kz7m4c3x8a1b2d3e"
@@ -24,10 +24,10 @@ def pod(**kw: Any) -> dict[str, Any]:
 
 def test_the_pod_is_the_documented_shape() -> None:
     spec = pod()
-    assert spec["metadata"]["name"] == pod_name(TRIP, 7) == "fw-3f9c0a1b2c3d4e5f-g7"
+    assert spec["metadata"]["name"] == pod_name(TRIP, 7) == "wl-3f9c0a1b2c3d4e5f-g7"
     labels = spec["metadata"]["labels"]
-    assert labels["ferry-watch.io/egress"] == "allowlist"
-    assert labels["ferry-watch.io/owner"] == OWNER
+    assert labels["waitlist.chestr.dev/egress"] == "allowlist"
+    assert labels["waitlist.chestr.dev/owner"] == OWNER
     assert "ownerReferences" not in spec["metadata"]  # a bare pod
     body = spec["spec"]
     assert body["automountServiceAccountToken"] is False
@@ -49,19 +49,19 @@ def test_the_pod_is_the_documented_shape() -> None:
 def test_exactly_eight_literal_env_vars() -> None:
     env = pod()["spec"]["containers"][0]["env"]
     assert [e["name"] for e in env] == [
-        "FW_TRIP_ID",
-        "FW_OWNER",
-        "FW_POD_NAME",
-        "FW_DEADLINE_AT",
-        "FW_HUB_URL",
-        "FW_VNC_PUBKEYS",
-        "FW_VNC_ORIGIN",
-        "FW_SANDBOX",
+        "WL_TRIP_ID",
+        "WL_OWNER",
+        "WL_POD_NAME",
+        "WL_DEADLINE_AT",
+        "WL_HUB_URL",
+        "WL_VNC_PUBKEYS",
+        "WL_VNC_ORIGIN",
+        "WL_SANDBOX",
     ]
     assert all(set(e) == {"name", "value"} for e in env)  # no valueFrom: nothing read from secrets
     values = {e["name"]: e["value"] for e in env}
-    assert values["FW_DEADLINE_AT"] == str(1_790_000_000 + DEADLINE_SECONDS)
-    assert values["FW_SANDBOX"] == "0"
+    assert values["WL_DEADLINE_AT"] == str(1_790_000_000 + DEADLINE_SECONDS)
+    assert values["WL_SANDBOX"] == "0"
 
 
 def test_the_only_token_is_the_hub_token() -> None:
@@ -74,7 +74,7 @@ def test_the_only_token_is_the_hub_token() -> None:
                 "sources": [
                     {
                         "serviceAccountToken": {
-                            "audience": "ferry-watch-agent",
+                            "audience": "waitlist-agent",
                             "expirationSeconds": 600,
                             "path": "token",
                         }
@@ -92,9 +92,9 @@ def test_optional_hardening_is_a_values_change() -> None:
     assert body["hostUsers"] is False
     assert body["securityContext"]["seccompProfile"] == {
         "type": "Localhost",
-        "localhostProfile": "profiles/fw-chromium.json",
+        "localhostProfile": "profiles/wl-chromium.json",
     }
-    assert {"name": "FW_SANDBOX", "value": "1"} in body["containers"][0]["env"]
+    assert {"name": "WL_SANDBOX", "value": "1"} in body["containers"][0]["env"]
 
 
 @pytest.mark.parametrize(
@@ -108,9 +108,9 @@ def test_nothing_unexpected_reaches_the_spec(trip: str, owner: str, gen: int) ->
 
 def test_the_image_is_pinned_by_digest() -> None:
     with pytest.raises(ValueError, match="digest"):
-        PodParams(image="ghcr.io/mchestr/ferry-watch-browser:latest", hub_url="", vnc_pubkeys="", vnc_origin="")
+        PodParams(image="ghcr.io/mchestr/waitlist-browser:latest", hub_url="", vnc_pubkeys="", vnc_origin="")
     # A tag may ride along for people and Renovate; the digest still decides what runs.
-    tagged = "ghcr.io/mchestr/ferry-watch-browser:0.6.0@sha256:" + "b" * 64
+    tagged = "ghcr.io/mchestr/waitlist-browser:0.6.0@sha256:" + "b" * 64
     assert PodParams(image=tagged, hub_url="", vnc_pubkeys="", vnc_origin="").image == tagged
 
 

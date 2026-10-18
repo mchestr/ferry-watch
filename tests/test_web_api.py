@@ -1,4 +1,4 @@
-"""Each user's API on ferry-web, on real Postgres: scoping, limits, commands, answers and checkout tickets."""
+"""Each user's API on waitlist-web, on real Postgres: scoping, limits, commands, answers and checkout tickets."""
 
 from __future__ import annotations
 
@@ -18,25 +18,25 @@ import pytest
 from aiohttp.test_utils import TestClient
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from ferry_watch import __version__
-from ferry_watch.control.configure import StreamViewer
-from ferry_watch.control.limits import Limits
-from ferry_watch.models import PACIFIC
-from ferry_watch.polling import PollPolicy
-from ferry_watch.tickets import verify
-from ferry_watch.web.accounts import Accounts, IdentityPolicy
-from ferry_watch.web.api import CheckoutSigner, checkout_url
-from ferry_watch.web.app import build
-from ferry_watch.web.identity import OidcClient, OidcSettings, Principal
-from ferry_watch.web.repo import WebStore
 from tests.postgres import ROLES, Database
+from waitlist import __version__
+from waitlist.control.configure import StreamViewer
+from waitlist.control.limits import Limits
+from waitlist.models import PACIFIC
+from waitlist.polling import PollPolicy
+from waitlist.tickets import verify
+from waitlist.web.accounts import Accounts, IdentityPolicy
+from waitlist.web.api import CheckoutSigner, checkout_url
+from waitlist.web.app import build
+from waitlist.web.identity import OidcClient, OidcSettings, Principal
+from waitlist.web.repo import WebStore
 
 ANN, BOB = "a" * 20, "b" * 20
 ISSUER = "https://idp"
 BOOTSTRAP = frozenset({(ISSUER, "boss")})  # whoever signs in as "boss" is an admin by config
 KEY = Ed25519PrivateKey.generate()
-ORIGIN = "https://ferry-checkout.chestr.dev"
-SITE = "https://ferry.chestr.dev"  # the dashboard's own origin (baseUrl)
+ORIGIN = "https://waitlist-checkout.chestr.dev"
+SITE = "https://waitlist.chestr.dev"  # the dashboard's own origin (baseUrl)
 
 
 def soon(days: int = 3) -> str:
@@ -48,12 +48,17 @@ def today_at(hour: int, minute: int = 0) -> float:
     return datetime.combine(datetime.now(PACIFIC).date(), dt_time(hour, minute), PACIFIC).timestamp()
 
 
+def trips(state: dict[str, Any]) -> list[dict[str, Any]]:
+    """The state's BC Ferries trips: its watches on BC Ferries (docs/waitlist/design.md §6.3)."""
+    return [w for w in state["watches"] if w["provider"] == "bcferries"]
+
+
 @dataclass
 class Rig:
     client: TestClient
     db: Database
     tokens: dict[str, str]
-    clock: list[float]  # what ferry-web takes as now; 0: the real time
+    clock: list[float]  # what waitlist-web takes as now; 0: the real time
 
     async def call(self, method: str, path: str, user: str = ANN, **kw: Any) -> aiohttp.ClientResponse:
         headers = {"Authorization": f"Bearer {self.tokens[user]}"} | kw.pop("headers", {})
@@ -63,7 +68,7 @@ class Rig:
         body = {"from": "SWB", "to": "TSA", "date": soon()} | trip
         response = await self.call("POST", "/api/trips", user, json=body)
         assert response.status == 200, await response.text()
-        return str((await response.json())["trips"][-1]["trip"]["id"])
+        return str(trips(await response.json())[-1]["trip"]["id"])
 
     async def sql(self, query: str, *args: Any) -> list[asyncpg.Record]:
         conn = await self.db.connect()
@@ -75,7 +80,7 @@ class Rig:
 
 @pytest.fixture
 async def rig(db: Database, aiohttp_client: Callable[..., Any], request: pytest.FixtureRequest) -> AsyncIterator[Rig]:
-    """ferry-web for Ann and Bob. `checkout.streamViewer` is "off" unless a test passes it as the rig's param."""
+    """waitlist-web for Ann and Bob. `checkout.streamViewer` is "off" unless a test passes it as the rig's param."""
     stream_viewer: StreamViewer = getattr(request, "param", "off")
     owner = await db.connect()
     try:
@@ -120,8 +125,8 @@ async def test_adding_a_trip(rig: Rig) -> None:
     trip_id = await rig.add()
     assert len(trip_id) == 16
     state = await (await rig.call("GET", "/api/state")).json()
-    assert [t["trip"]["id"] for t in state["trips"]] == [trip_id]
-    assert state["trips"][0]["browser"]["mode"] == "off"
+    assert [t["trip"]["id"] for t in trips(state)] == [trip_id]
+    assert trips(state)[0]["browser"]["mode"] == "off"
     assert state["limits"]["maxTrips"] == {"value": 3, "source": "default"}
     assert (await rig.sql("SELECT next_check_at FROM trip_runtime"))[0]["next_check_at"] is None  # checked at once
 
@@ -155,7 +160,7 @@ async def test_another_users_trip_looks_missing(rig: Rig) -> None:
         response = await rig.call(method, path, json=body)
         assert response.status == 404, path
     state = await (await rig.call("GET", "/api/state")).json()
-    assert state["trips"] == []
+    assert trips(state) == []
 
 
 async def test_editing_and_removing(rig: Rig) -> None:
@@ -197,6 +202,17 @@ def sailing(depart: str, status: str = "available") -> dict[str, Any]:
     return {"depart": depart, "arrive": "10:35", "vessel": "Queen of Oak Bay", "status": status, "fares": []}
 
 
+async def removed_trip(rig: Rig, trip_id: str, user: str = ANN) -> None:
+    """A BC Ferries trip of the user's that was removed: what an old pod or cart claim belongs to. (Only BC
+    Ferries trips have pods and claims, so each one's trip is a row; docs/waitlist/design.md §3.1.)"""
+    await rig.sql(
+        "INSERT INTO trips (id, user_id, provider, spec, enabled, archived_at)"
+        " VALUES ($1, $2, 'bcferries', '{}', false, now())",
+        trip_id,
+        user,
+    )
+
+
 async def seen(rig: Rig, trip_id: str, *sailings: dict[str, Any], cart: dict[str, Any] | None = None) -> None:
     """What the trip's pod last reported."""
     await rig.sql(
@@ -213,7 +229,7 @@ async def test_hold_it_for_me(rig: Rig) -> None:
     before = time.time()
     response = await rig.call("POST", f"/api/trips/{trip_id}/hold")
     assert response.status == 200, await response.text()
-    (trip,) = (await response.json())["trips"]
+    (trip,) = trips(await response.json())
     assert trip["hold"]["can_request"] is True
     assert before + 590 < trip["hold"]["requested_until"] < time.time() + 610  # quiet hours are lifted for 10 min
     assert trip["hold"]["requested_until"] - trip["hold"]["requested_at"] == 600
@@ -238,6 +254,7 @@ async def test_hold_it_for_me_needs_something_to_hold(rig: Rig) -> None:
 async def test_hold_it_for_me_keeps_the_other_limits(rig: Rig) -> None:
     trip_id = await rig.add()
     await seen(rig, trip_id, sailing("09:00"))
+    await removed_trip(rig, "f" * 16)
     await rig.sql(
         "INSERT INTO hold_claims (user_id, trip_id, pod, cart_id) VALUES ($1, 'ffffffffffffffff', 'x', 'c')", ANN
     )
@@ -247,7 +264,7 @@ async def test_hold_it_for_me_keeps_the_other_limits(rig: Rig) -> None:
         "You're already holding a cart on another trip",
     )
     state = await (await rig.call("GET", "/api/state")).json()
-    assert state["trips"][0]["hold"] == {
+    assert trips(state)[0]["hold"] == {
         "reason": "holding_elsewhere",
         "can_request": False,
         "holdable": ["09:00"],
@@ -275,11 +292,11 @@ async def test_no_hold_is_offered_for_a_sailing_already_held_once(rig: Rig) -> N
     await seen(rig, trip_id, sailing("09:00"), sailing("11:00"))
     await rig.sql("INSERT INTO alert_memory (trip_id, key_hash, alerted) VALUES ($1, '', '{09:00}')", trip_id)
     state = await (await rig.call("GET", "/api/state")).json()
-    assert state["trips"][0]["hold"]["holdable"] == ["11:00"]
-    assert state["trips"][0]["hold"]["can_request"] is True
+    assert trips(state)[0]["hold"]["holdable"] == ["11:00"]
+    assert trips(state)[0]["hold"]["can_request"] is True
     await rig.sql("UPDATE alert_memory SET alerted = '{09:00,11:00}'")
     state = await (await rig.call("GET", "/api/state")).json()
-    hold = state["trips"][0]["hold"]
+    hold = trips(state)[0]["hold"]
     assert (hold["reason"], hold["can_request"], hold["holdable"]) == ("already_held", False, [])
     response = await rig.call("POST", f"/api/trips/{trip_id}/hold")
     assert (response.status, (await response.json())["error"]) == (
@@ -294,7 +311,7 @@ async def test_a_paused_trip_offers_no_hold(rig: Rig) -> None:
     response = await rig.call("PATCH", f"/api/trips/{trip_id}", json={"enabled": False})
     assert response.status == 200
     state = await response.json()
-    assert state["trips"][0]["hold"] == {
+    assert trips(state)[0]["hold"] == {
         "reason": "paused",
         "can_request": False,
         "holdable": [],
@@ -309,6 +326,7 @@ async def test_a_lapsed_claim_isnt_a_hold_elsewhere(rig: Rig) -> None:
     """A claim whose cart never came (a failed try on an old pod, a claim that timed out) lapses after 2 min."""
     trip_id = await rig.add()
     await seen(rig, trip_id, sailing("09:00"))
+    await removed_trip(rig, "f" * 16)
     await rig.sql(
         "INSERT INTO hold_claims (user_id, trip_id, pod, claimed_at) VALUES ($1, 'ffffffffffffffff', 'x',"
         " now() - interval '5 minutes')",
@@ -329,14 +347,14 @@ async def test_a_sailing_the_state_cant_read_doesnt_break_it(rig: Rig) -> None:
     trip_id = await rig.add()
     await seen(rig, trip_id, {"depart": "9am", "status": "available"}, sailing("09:00"))
     state = await (await rig.call("GET", "/api/state")).json()
-    assert state["trips"][0]["hold"]["holdable"] == ["09:00"]
+    assert trips(state)[0]["hold"]["holdable"] == ["09:00"]
 
 
 async def test_the_state_says_why_a_trip_wouldnt_be_held(rig: Rig) -> None:
     trip_id = await rig.add(auto_cart=False)
     rig.clock[0] = today_at(12)  # outside the quiet hours everyone has
     state = await (await rig.call("GET", "/api/state")).json()
-    hold = state["trips"][0]["hold"]
+    hold = trips(state)[0]["hold"]
     assert hold == {
         "reason": "auto_cart_off",
         "can_request": True,
@@ -346,8 +364,8 @@ async def test_the_state_says_why_a_trip_wouldnt_be_held(rig: Rig) -> None:
     }
     await rig.sql("UPDATE fleet_state SET value = 'true' WHERE key = 'pause_carting'")
     state = await (await rig.call("GET", "/api/state")).json()
-    assert state["trips"][0]["hold"]["reason"] == "carting_paused"
-    assert state["trips"][0]["hold"]["can_request"] is False
+    assert trips(state)[0]["hold"]["reason"] == "carting_paused"
+    assert trips(state)[0]["hold"]["can_request"] is False
     assert trip_id
 
 
@@ -399,7 +417,7 @@ async def test_no_cancel_stops_watching_the_trip(rig: Rig) -> None:
         assert (response.status, (await response.json())["field"]) == (400, "stop")
     response = await rig.call("POST", path, json={"booked": False, "stop": True})
     assert response.status == 200
-    assert [t["trip"]["id"] for t in (await response.json())["trips"]] == [other]  # its slot is free again
+    assert [t["trip"]["id"] for t in trips(await response.json())] == [other]  # its slot is free again
     assert await archived(rig, trip_id) == (True, False, None, 2, True, None)
     assert await answers(rig) == ["cancelled"]
     assert (await rig.call("POST", path, json={"booked": False, "stop": True})).status == 409  # answered
@@ -409,7 +427,7 @@ async def test_pausing_and_resuming_one_trip(rig: Rig) -> None:
     """Trips are paused one at a time ("pause all" is gone); resuming one checks it soon."""
     trip_id, other = await rig.add(), await rig.add()
     state = await (await rig.call("PATCH", f"/api/trips/{trip_id}", json={"enabled": False})).json()
-    assert [(t["trip"]["id"], t["trip"]["enabled"]) for t in state["trips"]] == [(trip_id, False), (other, True)]
+    assert [(t["trip"]["id"], t["trip"]["enabled"]) for t in trips(state)] == [(trip_id, False), (other, True)]
     assert state["me"]["paused"] is False  # kept a release for the old dashboard; always false
     await rig.sql("UPDATE trip_runtime SET next_check_at = now() + interval '6 hours'")
     assert (await rig.call("PATCH", f"/api/trips/{trip_id}", json={"enabled": True})).status == 200
@@ -418,15 +436,15 @@ async def test_pausing_and_resuming_one_trip(rig: Rig) -> None:
 
 
 async def test_the_old_account_pause_moves_onto_each_trip(rig: Rig) -> None:
-    """A "Pause all" from a ferry-web before 0004 (users.paused) becomes each live trip paused, as 0004 did,
+    """A "Pause all" from a waitlist-web before 0004 (users.paused) becomes each live trip paused, as 0004 did,
     the next time the user's state is read; the account itself is never shown paused."""
     trip_id, other = await rig.add(), await rig.add()
     await rig.call("PATCH", f"/api/trips/{other}", json={"enabled": False})
-    await rig.sql("UPDATE users SET paused = true WHERE id = $1", ANN)  # as a ferry-web before 0004 could
+    await rig.sql("UPDATE users SET paused = true WHERE id = $1", ANN)  # as a waitlist-web before 0004 could
     before = {r["id"]: r["rev"] for r in await rig.sql("SELECT id, rev FROM trips")}
     state = await (await rig.call("GET", "/api/state")).json()
     assert state["me"]["paused"] is False
-    assert [t["trip"]["enabled"] for t in state["trips"]] == [False, False]
+    assert [t["trip"]["enabled"] for t in trips(state)] == [False, False]
     rows = await rig.sql("SELECT id, enabled, spec->>'enabled' AS spec, rev FROM trips ORDER BY id = $1", trip_id)
     assert [(r["enabled"], r["spec"], r["rev"] - before[r["id"]]) for r in rows] == [
         (False, "false", 0),  # already paused: untouched
@@ -463,15 +481,15 @@ async def test_quiet_hours_are_each_users_own(rig: Rig) -> None:
     await rig.sql("UPDATE trip_runtime SET next_check_at = to_timestamp($1)", today_at(22, 45))
     bob = await (await rig.call("GET", "/api/state", BOB)).json()
     assert (bob["settings"]["quiet_hours"], bob["quiet_hours"]) == (DEFAULT, DEFAULT | {"now": True})
-    (trip,) = bob["trips"]
+    (trip,) = trips(bob)
     five = datetime.combine(datetime.now(PACIFIC).date() + timedelta(days=1), dt_time(5), PACIFIC).timestamp()
     assert (trip["trip"]["id"], trip["quiet"], trip["browser"]["next_check_at"]) == (bobs, True, five)
     state = await (await rig.call("GET", "/api/state")).json()
     assert state["quiet_hours"]["now"] is False  # Ann's start at 11 pm
 
 
-async def test_quiet_hours_a_063_ferry_web_turned_off_are_the_default(rig: Rig) -> None:
-    """During the rollout a 0.6.3 ferry-web can still store "off" (no times): everyone has quiet hours now."""
+async def test_quiet_hours_a_063_waitlist_web_turned_off_are_the_default(rig: Rig) -> None:
+    """During the rollout a 0.6.3 waitlist-web can still store "off" (no times): everyone has quiet hours now."""
     await rig.sql("INSERT INTO user_settings (user_id, quiet_start, quiet_end) VALUES ($1, NULL, NULL)", ANN)
     rig.clock[0] = today_at(23)
     state = await (await rig.call("GET", "/api/state")).json()
@@ -520,13 +538,13 @@ async def test_in_quiet_hours_a_trip_isnt_checked_until_lifted(rig: Rig) -> None
     await rig.call("PATCH", "/api/me", json={"quiet_hours": {"start": "23:00", "end": "06:00"}})
     rig.clock[0] = today_at(23, 30)
 
-    async def trips() -> dict[str, dict[str, Any]]:
+    async def by_id() -> dict[str, dict[str, Any]]:
         state = await (await rig.call("GET", "/api/state")).json()
-        return {t["trip"]["id"]: t for t in state["trips"]}
+        return {t["trip"]["id"]: t for t in trips(state)}
 
     state = await (await rig.call("GET", "/api/state")).json()
     assert state["quiet_hours"] == {"start": "23:00", "end": "06:00", "now": True}
-    for trip in (await trips()).values():
+    for trip in (await by_id()).values():
         assert trip["quiet"] is True
         # Not held for the quiet hours, but "Hold it for me" lifts them.
         assert (trip["hold"]["reason"], trip["hold"]["can_request"]) == ("quiet_hours", True)
@@ -535,18 +553,18 @@ async def test_in_quiet_hours_a_trip_isnt_checked_until_lifted(rig: Rig) -> None
     (row,) = await rig.sql("SELECT quiet_lifted_until FROM trip_runtime WHERE trip_id = $1", checked)
     assert row["quiet_lifted_until"].timestamp() == rig.clock[0] + 600
     assert (await rig.call("POST", f"/api/trips/{asked}/hold")).status == 200  # and so does asking for a hold
-    for trip in (await trips()).values():
+    for trip in (await by_id()).values():
         assert (trip["quiet"], trip["hold"]["reason"]) == (False, None)  # checked, and it may hold a cart
 
     rig.clock[0] += 601
-    assert [t["quiet"] for t in (await trips()).values()] == [True, True]  # 10 minutes, then quiet again
+    assert [t["quiet"] for t in (await by_id()).values()] == [True, True]  # 10 minutes, then quiet again
     await rig.sql("UPDATE trip_runtime SET next_check_at = to_timestamp($1)", today_at(23, 45))
     morning = datetime.combine(datetime.now(PACIFIC).date() + timedelta(days=1), dt_time(6), PACIFIC).timestamp()
-    assert [t["browser"]["next_check_at"] for t in (await trips()).values()] == [morning, morning]
+    assert [t["browser"]["next_check_at"] for t in (await by_id()).values()] == [morning, morning]
     rig.clock[0] = today_at(12)
     state = await (await rig.call("GET", "/api/state")).json()
     assert state["quiet_hours"]["now"] is False
-    assert [(t["quiet"], t["hold"]["reason"]) for t in state["trips"]] == [(False, None), (False, None)]
+    assert [(t["quiet"], t["hold"]["reason"]) for t in trips(state)] == [(False, None), (False, None)]
 
 
 # ---- checkout
@@ -554,7 +572,7 @@ async def test_in_quiet_hours_a_trip_isnt_checked_until_lifted(rig: Rig) -> None
 
 async def hold(rig: Rig, trip_id: str, *, gen: int = 2, agent_version: str | None = "0.6.4") -> None:
     """Ann's cart held by the trip's pod, whose agent said hello with `agent_version` (None: not yet)."""
-    pod = f"fw-{trip_id}-g{gen}"
+    pod = f"wl-{trip_id}-g{gen}"
     await rig.sql(
         "INSERT INTO browser_pods (name, trip_id, user_id, gen, mode, deadline_at, agent_version)"
         " VALUES ($1, $2, $3, $4, 'warm', now() + interval '1 day', $5)",
@@ -586,7 +604,7 @@ async def test_a_checkout_ticket_opens_only_the_owners_pod(rig: Rig) -> None:
     assert body["url"].startswith(prefix)
     assert (body["viewer"], body["nonce_key"]) == ("classic", f"{trip_id}:2")
     claims = verify(body["url"].removeprefix(prefix), {"k1": KEY.public_key()})
-    assert (claims.sub, claims.trip, claims.pod, claims.cart_id) == (ANN, trip_id, f"fw-{trip_id}-g2", "abc123")
+    assert (claims.sub, claims.trip, claims.pod, claims.cart_id) == (ANN, trip_id, f"wl-{trip_id}-g2", "abc123")
     assert claims.disp is not None
     assert claims.disp.depart == "09:00"
     assert [r["jti"] for r in await rig.sql("SELECT jti FROM vnc_mints")] == [claims.jti]
@@ -719,12 +737,12 @@ async def test_the_stream_link_needs_the_opt_in_and_an_agent_that_streams(rig: R
     await hold(rig, trip_id, agent_version="0.7.0")
     viewer, fragment = await opened(rig, trip_id)
     assert viewer == "classic"  # offered, but not turned on: 0.6.4's link
-    assert fragment.startswith("fw1.")
+    assert fragment.startswith("wl1.")
     assert "&" not in fragment
     assert (await rig.call("PATCH", "/api/me", json={"checkout_viewer": "stream"})).status == 200
     viewer, fragment = await opened(rig, trip_id)
     assert viewer == "stream"
-    assert fragment.startswith("v=s1&t=fw1.")
+    assert fragment.startswith("v=s1&t=wl1.")
     for newer in ("0.7.1", "0.8.0", "1.0.0", "0.7.0.post1", "0.7.1rc1", "0.7.0+local"):
         await rig.sql("UPDATE browser_pods SET agent_version = $1", newer)
         assert (await opened(rig, trip_id))[0] == "stream", newer
@@ -778,7 +796,7 @@ async def test_writes_must_be_same_site_json(rig: Rig) -> None:
 
 
 async def test_the_site_is_its_configured_origin_not_the_requests(rig: Rig) -> None:
-    """The gateway ends TLS, so ferry-web sees http://<host>; browsers on the site send https://<site>."""
+    """The gateway ends TLS, so waitlist-web sees http://<host>; browsers on the site send https://<site>."""
     body = {"from": "SWB", "to": "TSA", "date": soon()}
     response = await rig.call("POST", "/api/trips", json=body, headers={"Origin": SITE})
     assert response.status == 200, await response.text()
@@ -897,18 +915,20 @@ async def test_the_overview_shows_what_versions_run(rig: Rig) -> None:
         return dict((await (await rig.call("GET", "/api/admin/overview")).json())["versions"])
 
     assert await versions() == {"web": {"version": __version__}, "control": None, "browsers": []}
-    report = {"at": 1_000.0, "browsers": {"max": 7, "live": 3}}  # from a ferry-control too old to say
+    report = {"at": 1_000.0, "browsers": {"max": 7, "live": 3}}  # from a waitlist-control too old to say
     await rig.sql("INSERT INTO fleet_state (key, value) VALUES ('fleet_report', $1)", json.dumps(report))
     assert (await versions())["control"] is None
     await rig.sql(
         "UPDATE fleet_state SET value = $1 WHERE key = 'fleet_report'", json.dumps(report | {"version": "9.9"})
     )
-    image = "ghcr.io/mchestr/ferry-watch-browser:0.6.3@sha256:" + "b" * 64
+    image = "ghcr.io/mchestr/waitlist-browser:0.6.3@sha256:" + "b" * 64
+    for trip_id in ("1" * 16, "2" * 16, "3" * 16):
+        await removed_trip(rig, trip_id, BOB)
     for gen, version, ended in [(1, "0.6.2", True), (2, "0.6.3", False)]:  # the same trip's old pod and its new one
         await rig.sql(
             "INSERT INTO browser_pods (name, trip_id, user_id, gen, mode, deadline_at, image_digest, agent_version,"
             " ended_at) VALUES ($1, $2, $3, $4, 'warm', now(), $5, $6, CASE WHEN $7 THEN now() END)",
-            f"fw-{'1' * 16}-g{gen}",
+            f"wl-{'1' * 16}-g{gen}",
             "1" * 16,
             BOB,
             gen,
@@ -920,7 +940,7 @@ async def test_the_overview_shows_what_versions_run(rig: Rig) -> None:
         await rig.sql(
             "INSERT INTO browser_pods (name, trip_id, user_id, gen, mode, deadline_at, image_digest, agent_version)"
             " VALUES ($1, $2, $3, 1, 'short_check', now(), $4, $5)",
-            f"fw-{trip_id}-g1",
+            f"wl-{trip_id}-g1",
             trip_id,
             BOB,
             image,
@@ -935,7 +955,7 @@ async def test_the_overview_shows_what_versions_run(rig: Rig) -> None:
 
 async def held(rig: Rig, trip_id: str, user: str = BOB) -> str:
     """A live pod for the trip, holding cart abc123. Returns the pod's name."""
-    pod = f"fw-{trip_id}-g1"
+    pod = f"wl-{trip_id}-g1"
     await rig.sql(
         "INSERT INTO browser_pods (name, trip_id, user_id, gen, mode, deadline_at)"
         " VALUES ($1, $2, $3, 1, 'warm', now() + interval '1 day')",
@@ -1010,11 +1030,11 @@ async def test_an_admin_recycles_a_pod(rig: Rig) -> None:
     assert [(a["action"], json.loads(a["after"])) for a in audit] == [("recycle_pod", {"pod": pod})]
 
 
-async def test_only_ferry_control_opens_the_breaker(rig: Rig) -> None:
+async def test_only_waitlist_control_opens_the_breaker(rig: Rig) -> None:
     await make_admin(rig)
     await rig.sql("INSERT INTO fleet_state (key, value) VALUES ('breaker', '\"open\"')")
     response = await rig.call("POST", "/api/admin/switches", json={"switch": "breaker", "on": True, "reason": "x"})
-    assert (response.status, (await response.json())["error"]) == (400, "Only ferry-control opens the breaker")
+    assert (response.status, (await response.json())["error"]) == (400, "Only waitlist-control opens the breaker")
     body = {"switch": "breaker", "on": False, "reason": "BC Ferries is back"}
     assert (await rig.call("POST", "/api/admin/switches", json=body)).status == 200
     overview = await (await rig.call("GET", "/api/admin/overview")).json()
@@ -1203,10 +1223,10 @@ async def next_state(ws: aiohttp.ClientWebSocketResponse) -> dict[str, Any]:
 
 async def test_the_live_socket_follows_the_users_own_changes(rig: Rig) -> None:
     ann, bob = await live(rig), await live(rig, BOB)
-    assert (await next_state(ann))["trips"] == []
-    assert (await next_state(bob))["trips"] == []
+    assert trips(await next_state(ann)) == []
+    assert trips(await next_state(bob)) == []
     await rig.add()
-    assert len((await next_state(ann))["trips"]) == 1
+    assert len(trips(await next_state(ann))) == 1
     with pytest.raises(TimeoutError):
         await asyncio.wait_for(bob.receive(), 0.5)  # nothing of Ann's reaches Bob
     await ann.close()
@@ -1222,7 +1242,7 @@ async def test_the_live_socket_sends_the_same_state_as_the_api(rig: Rig) -> None
     fetched = await (await rig.call("GET", "/api/state")).json()
     assert pushed["push"] == fetched["push"] == {"key": "BPushKey"}
     assert pushed["links"] == fetched["links"]
-    assert set(pushed["trips"][0]) == set(fetched["trips"][0]) >= {"booking_url", "hold"}
+    assert set(trips(pushed)[0]) == set(trips(fetched)[0]) >= {"booking_url", "hold"}
     await ann.close()
 
 
@@ -1231,7 +1251,7 @@ async def test_the_live_socket_needs_a_token_first(rig: Rig, monkeypatch: pytest
     await ws.send_json({"type": "auth", "token": "nope"})
     await ws.receive()
     assert ws.close_code == 4401
-    monkeypatch.setattr("ferry_watch.web.live.AUTH_DEADLINE_SECONDS", 0.1)
+    monkeypatch.setattr("waitlist.web.live.AUTH_DEADLINE_SECONDS", 0.1)
     ws = await rig.client.ws_connect("/api/ws")
     await ws.receive()  # said nothing: closed
     assert ws.close_code == 4401
@@ -1242,7 +1262,7 @@ async def test_a_revoked_session_closes_its_socket(rig: Rig) -> None:
     await next_state(ws)
     await rig.call("POST", "/auth/logout")
     await rig.add(BOB)  # any change wakes the hub... but only Bob's sockets; so nudge Ann's
-    await rig.sql("SELECT pg_notify('fw_user', $1)", ANN)
+    await rig.sql("SELECT pg_notify('wl_user', $1)", ANN)
     frame = await asyncio.wait_for(ws.receive(), 5)
     assert frame.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSED)
     assert ws.close_code == 4401
@@ -1279,3 +1299,77 @@ async def test_an_invitation_with_an_email_is_sent(rig: Rig) -> None:
     assert (await rig.call("POST", "/api/admin/invites", json=body)).status == 201
     rows = await rig.sql("SELECT kind, to_email, user_id FROM notifications")
     assert [tuple(r) for r in rows] == [("invited", "cat@example.com", None)]
+
+
+# ---- admin: other providers (docs/waitlist/design.md §6.6)
+
+
+async def test_the_overview_has_the_check_report_and_the_providers(rig: Rig) -> None:
+    await make_admin(rig)
+    overview = await (await rig.call("GET", "/api/admin/overview")).json()
+    assert overview["checks"] is None
+    assert overview["providers"] == [{"id": "buntzen", "name": "Buntzen Lake", "offer": "off", "paused": False}]
+    assert overview["switches"]["paused_providers"] == []
+    report = {"at": 1_814_365_907.0, "version": "1.0.0", "providers": {"buntzen": {"running": True, "fetcher": "ok"}}}
+    await rig.sql("INSERT INTO fleet_state (key, value) VALUES ('check_report', $1)", json.dumps(report))
+    overview = await (await rig.call("GET", "/api/admin/overview")).json()
+    assert overview["checks"] == report
+    assert "check_report" not in overview["switches"]  # what the loop reported: not a switch
+    await rig.sql("UPDATE fleet_state SET value = 'true' WHERE key = 'maintenance'")
+    overview = await (await rig.call("GET", "/api/admin/overview")).json()
+    assert overview["switches"]["maintenance"] is True
+    assert overview["providers"][0]["paused"] is False  # no admin paused it: the switch shows paused_providers only
+
+
+async def test_pausing_a_providers_checks(rig: Rig) -> None:
+    await make_admin(rig)
+    body = {"switch": "pause_provider", "provider": "buntzen", "on": True, "reason": "Yodel asked"}
+    assert (await rig.call("POST", "/api/admin/switches", json=body)).status == 200
+    assert (await rig.call("POST", "/api/admin/switches", json=body)).status == 200  # already paused: still one
+    overview = await (await rig.call("GET", "/api/admin/overview")).json()
+    assert overview["switches"]["paused_providers"] == ["buntzen"]
+    assert overview["providers"][0]["paused"] is True
+    state = await (await rig.call("GET", "/api/state")).json()
+    assert [(p["id"], p["paused"]) for p in state["providers"]] == [("bcferries", False), ("buntzen", True)]
+    assert (await rig.call("POST", "/api/admin/switches", json=body | {"on": False, "reason": "OK now"})).status == 200
+    rows = await rig.sql(
+        "SELECT action, target_kind, target_id, after, reason FROM audit_log WHERE action = 'set_switch' ORDER BY id"
+    )
+    assert [(r["target_kind"], r["target_id"], json.loads(r["after"]), r["reason"]) for r in rows] == [
+        ("fleet", "pause_provider:buntzen", {"paused_providers": ["buntzen"]}, "Yodel asked"),
+        ("fleet", "pause_provider:buntzen", {"paused_providers": ["buntzen"]}, "Yodel asked"),
+        ("fleet", "pause_provider:buntzen", {"paused_providers": []}, "OK now"),
+    ]
+    for bad, field in [
+        (body | {"provider": "bcferries"}, "provider"),  # its pods have their own switches
+        (body | {"provider": "bcparks"}, "provider"),
+        (body | {"on": "yes"}, "on"),
+        ({k: v for k, v in body.items() if k != "reason"}, "reason"),
+    ]:
+        response = await rig.call("POST", "/api/admin/switches", json=bad)
+        assert (response.status, (await response.json())["field"]) == (400, field)
+    assert (await rig.call("POST", "/api/admin/switches", BOB, json=body)).status == 403
+
+
+async def test_users_list_their_watches_by_provider(rig: Rig) -> None:
+    await make_admin(rig)
+    await rig.add()
+    for watch_id in ("b" * 16, "c" * 16):
+        await rig.sql("INSERT INTO trips (id, user_id, provider, spec) VALUES ($1, $2, 'buntzen', '{}')", watch_id, ANN)
+    await rig.sql("UPDATE trips SET archived_at = now() WHERE id = $1", "c" * 16)
+    users = {u["id"]: u for u in (await (await rig.call("GET", "/api/admin/users")).json())["users"]}
+    assert (users[ANN]["trips"], users[ANN]["watches"]) == (1, {"bcferries": 1, "buntzen": 1})
+    assert (users[BOB]["trips"], users[BOB]["watches"]) == (0, {"bcferries": 0, "buntzen": 0})
+    assert users[ANN]["limits"]["maxAlertOnlyWatches"] == {"value": 6, "source": "default"}
+
+
+async def test_a_providers_trouble_needs_an_admin(rig: Rig) -> None:
+    await make_admin(rig)
+    await rig.sql(
+        "INSERT INTO notifications (user_id, kind, params) VALUES ($1, 'site_changed', '{\"provider\": \"buntzen\"}')",
+        ANN,
+    )  # (as the owner: waitlist-control queues these)
+    attention = (await (await rig.call("GET", "/api/admin/overview")).json())["attention"]
+    assert [(a["kind"], a["detail"]) for a in attention] == [
+        ("site_changed", "A provider's site changed shape; its checks are failing")
+    ]

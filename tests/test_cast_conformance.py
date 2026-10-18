@@ -1,4 +1,4 @@
-"""The agent against the shared fw.cast1 conformance pack (PROTOCOL.md §10.1): every case meant for the agent.
+"""The agent against the shared wl.cast1 conformance pack (PROTOCOL.md §10.1): every case meant for the agent.
 
 What cast_protocol.py decides on its own (each frame's outcome, the image header, the text the viewer sends, the
 scale factor, the outbound schema, `autocomplete` cleaning and message numbers), and the stream session's parts
@@ -13,10 +13,11 @@ from typing import Any, cast
 
 import pytest
 
-from ferry_watch.agent.cast_cdp import Cdp
-from ferry_watch.agent.cast_fields import frame_rect
-from ferry_watch.agent.cast_input import ImageInfo, ImageRing, InputMapper, choose_keys, date_chars
-from ferry_watch.agent.cast_protocol import (
+from tests.cast1 import PackKnown, agent_cases, load
+from waitlist.agent.cast_cdp import Cdp
+from waitlist.agent.cast_fields import frame_rect
+from waitlist.agent.cast_input import ImageInfo, ImageRing, InputMapper, choose_keys, date_chars
+from waitlist.agent.cast_protocol import (
     MAX_INBOUND_BYTES,
     OVERALL_RATE,
     RATES,
@@ -36,8 +37,7 @@ from ferry_watch.agent.cast_protocol import (
     scale_factor,
     strip_credential_tokens,
 )
-from ferry_watch.agent.stream import InboundQueue, RateLimiter
-from tests.cast1 import PackKnown, agent_cases, load
+from waitlist.agent.stream import InboundQueue, RateLimiter
 
 MESSAGES = load("messages")
 KNOWN = PackKnown.from_context(MESSAGES["context"])

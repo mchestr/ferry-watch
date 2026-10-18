@@ -9,7 +9,8 @@ from typing import Any, cast
 
 import pytest
 
-from ferry_watch.agent.cast_cdp import (
+from tests.castfakes import FakeCdp, FakeContext, FakeFrame, FakePage
+from waitlist.agent.cast_cdp import (
     ALLOWED,
     EVALUATE_TIMEOUT_MS,
     WORLD_NAME,
@@ -19,8 +20,7 @@ from ferry_watch.agent.cast_cdp import (
     Worlds,
     open_session,
 )
-from ferry_watch.agent.cast_scripts import FIELDS, SCRIPTS, STORE_OWNER, VIEWPORT, call, script_of
-from tests.castfakes import FakeCdp, FakeContext, FakeFrame, FakePage
+from waitlist.agent.cast_scripts import FIELDS, SCRIPTS, STORE_OWNER, VIEWPORT, call, script_of
 
 # ---- the fixed scripts
 

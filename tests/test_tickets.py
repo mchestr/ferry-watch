@@ -8,7 +8,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
-from ferry_watch.tickets import (
+from waitlist.tickets import (
     MAX_TOKEN_LENGTH,
     TTL_SECONDS,
     Claims,
@@ -26,7 +26,7 @@ KEYS = {"k1": KEY.public_key()}
 BINDING: dict[str, Any] = {
     "sub": "user-7",
     "trip": "3f9c0a1b2c3d4e5f",
-    "pod": "fw-3f9c0a1b2c3d4e5f-g1",
+    "pod": "wl-3f9c0a1b2c3d4e5f-g1",
     "cart_id": "c-1",
 }
 
@@ -41,7 +41,7 @@ def b64(data: bytes) -> str:
 
 def resign(payload: dict[str, object], key: Ed25519PrivateKey = KEY, key_id: str = "k1") -> str:
     """A ticket with these exact claims, properly signed: for the checks that come after the signature."""
-    signed = f"fw1.{key_id}.{b64(json.dumps(payload).encode())}"
+    signed = f"wl1.{key_id}.{b64(json.dumps(payload).encode())}"
     return f"{signed}.{b64(key.sign(signed.encode()))}"
 
 
@@ -52,7 +52,7 @@ def raw(public: Ed25519PrivateKey) -> str:
 def test_round_trip() -> None:
     claims = verify(ticket(), KEYS, now=NOW + 1)
     assert (claims.sub, claims.trip, claims.pod, claims.cart_id) == tuple(BINDING.values())
-    assert (claims.iss, claims.aud) == ("fw-web", "fw-vnc")
+    assert (claims.iss, claims.aud) == ("wl-web", "wl-vnc")
     assert claims.exp - claims.iat == TTL_SECONDS
 
 
@@ -123,7 +123,7 @@ def test_a_ticket_from_the_future_is_refused() -> None:
 @pytest.mark.parametrize(
     "change",
     [
-        {"aud": "fw-other"},
+        {"aud": "wl-other"},
         {"iss": "someone"},
         {"admin": True},
         {"sub": "User 7"},
@@ -138,7 +138,7 @@ def test_claims_are_strict(change: dict[str, object]) -> None:
 
 @pytest.mark.parametrize(
     "token",
-    ["", "fw1", "fw1.k1.e30", "fw2.k1.e30.AA", "fw1.k1.e30.AA.AA", "x" * (MAX_TOKEN_LENGTH + 1), "fw1.k1.e30.!!"],
+    ["", "wl1", "wl1.k1.e30", "wl2.k1.e30.AA", "wl1.k1.e30.AA.AA", "x" * (MAX_TOKEN_LENGTH + 1), "wl1.k1.e30.!!"],
 )
 def test_garbage(token: str) -> None:
     with pytest.raises(TicketError):

@@ -31,6 +31,8 @@ what's visible matches the real site.
 
 ## `vnc-edge-0.6.4/`
 
-The checkout landing page and its script exactly as vnc-edge 0.6.4 served them (release commit 1fd4302).
+The checkout landing page and its script as vnc-edge 0.6.4 served them (release commit 1fd4302), with the
+Ferry Watch names changed to Waitlist's (`wl-app`, `/wl/`, `wl:` records, `wl1.` tickets) and nothing else.
 During a rolling update of vnc-edge, or a rollback, a page and its script can come from different versions:
-`tests/browser/test_checkout_edge.py` opens the checkout with each pairing.
+`tests/browser/test_checkout_edge.py` opens the checkout with each pairing. Replace them with the first
+Waitlist release's files once one has shipped.

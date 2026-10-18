@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { makeSettings, makeTrip } from "@/test/fixtures";
+import { makeSettings } from "@/test/fixtures";
 import { ApiError } from "./api";
 import {
   changedSettings,
@@ -107,7 +107,8 @@ describe("validateDraft", () => {
 
 describe("drafts and patches", () => {
   it("picks only the settings from a trip", () => {
-    const settings = pickSettings(makeTrip({ title: "x", sailings: [] }));
+    const trip = { ...makeSettings(), id: "t1", title: "x", cart: null };
+    const settings = pickSettings(trip);
     expect(Object.keys(settings).sort()).toEqual(Object.keys(makeSettings()).sort());
   });
 

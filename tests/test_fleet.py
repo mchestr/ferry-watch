@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, time
@@ -12,9 +13,10 @@ from typing import Any
 import asyncpg
 import pytest
 
-from ferry_watch import __version__
-from ferry_watch.control.configure import HubSettings, curve_interval
-from ferry_watch.control.fleet import (
+from tests.postgres import ROLES, Database
+from waitlist import __version__
+from waitlist.control.configure import HubSettings, curve_interval
+from waitlist.control.fleet import (
     EGRESS_GIVE_UP_S,
     FAILED_RETENTION_S,
     ORPHAN_GRACE_S,
@@ -22,22 +24,21 @@ from ferry_watch.control.fleet import (
     STARTUP_TIMEOUT_S,
     Fleet,
 )
-from ferry_watch.control.kube import KubeError, ObservedPod
-from ferry_watch.control.pods import LABEL_EGRESS, PodParams
-from ferry_watch.models import PACIFIC, Trip
-from ferry_watch.polling import PollPolicy
-from ferry_watch.protocol import CommandOp, CommandReason
-from tests.postgres import ROLES, Database
+from waitlist.control.kube import KubeError, ObservedPod
+from waitlist.control.pods import LABEL_EGRESS, PodParams
+from waitlist.models import PACIFIC, Trip
+from waitlist.polling import PollPolicy
+from waitlist.protocol import CommandOp, CommandReason
 
 NOW = datetime(2026, 10, 12, 12, 0, tzinfo=PACIFIC).timestamp()
 ANN = "a" * 20
 NEAR = Trip(id="1" * 16, origin="SWB", destination="TSA", date=date(2026, 10, 14), earliest=time(7))
 FAR = Trip(id="2" * 16, origin="SWB", destination="TSA", date=date(2026, 10, 30))
 PARAMS = PodParams(
-    image="ghcr.io/mchestr/ferry-watch-browser@sha256:" + "b" * 64,
-    hub_url="ws://ferry-control.ferry-watch.svc.cluster.local.:8766/agent/v1",
+    image="ghcr.io/mchestr/waitlist-browser@sha256:" + "b" * 64,
+    hub_url="ws://waitlist-control.waitlist.svc.cluster.local.:8766/agent/v1",
     vnc_pubkeys="k1:AAAA",
-    vnc_origin="https://ferry-checkout.chestr.dev",
+    vnc_origin="https://waitlist-checkout.chestr.dev",
 )
 
 
@@ -109,7 +110,10 @@ class Rig:
     async def add_trip(self, trip: Trip, *, user: str = ANN) -> None:
         await self.run("INSERT INTO users (id, username) VALUES ($1, $1) ON CONFLICT DO NOTHING", user)
         await self.run(
-            "INSERT INTO trips (id, user_id, spec) VALUES ($1, $2, $3)", trip.id, user, json.dumps(trip.to_json())
+            "INSERT INTO trips (id, user_id, provider, spec) VALUES ($1, $2, 'bcferries', $3)",
+            trip.id,
+            user,
+            json.dumps(trip.to_json()),
         )
 
     async def pods(self) -> list[asyncpg.Record]:
@@ -138,24 +142,24 @@ async def rig(db: Database) -> AsyncIterator[Rig]:
 async def test_a_trip_within_a_week_gets_a_warm_pod(rig: Rig) -> None:
     await rig.add_trip(NEAR)
     report = await rig.fleet.reconcile()
-    name = f"fw-{NEAR.id}-g1"
+    name = f"wl-{NEAR.id}-g1"
     assert report.started == [name]
     (row,) = await rig.pods()
     assert (row["name"], row["mode"], row["phase"], row["uid"]) == (name, "warm", "starting", "uid-1")
     assert row["image_digest"] == PARAMS.image  # what it runs, for the admin page
-    assert rig.cluster.specs[name]["spec"]["containers"][0]["env"][1] == {"name": "FW_OWNER", "value": ANN}
+    assert rig.cluster.specs[name]["spec"]["containers"][0]["env"][1] == {"name": "WL_OWNER", "value": ANN}
     assert (await rig.fleet.reconcile()).started == []  # one pod per trip
 
 
 async def test_a_trip_further_out_gets_a_short_check_every_6_hours(rig: Rig) -> None:
     await rig.add_trip(FAR)
-    assert (await rig.fleet.reconcile()).started == [f"fw-{FAR.id}-g1"]
+    assert (await rig.fleet.reconcile()).started == [f"wl-{FAR.id}-g1"]
     (runtime,) = await rig.run("SELECT mode, next_check_at FROM trip_runtime")
     assert runtime["mode"] == "short_check"
     assert 6 * 3600 * 0.85 <= runtime["next_check_at"].timestamp() - NOW <= 6 * 3600 * 1.15
-    rig.cluster.set_phase(f"fw-{FAR.id}-g1", "Succeeded", "short_check_done -")  # it checked and left
+    rig.cluster.set_phase(f"wl-{FAR.id}-g1", "Succeeded", "short_check_done -")  # it checked and left
     report = await rig.fleet.reconcile()
-    assert report.deleted == [f"fw-{FAR.id}-g1"]
+    assert report.deleted == [f"wl-{FAR.id}-g1"]
     assert report.started == []  # not due again for 6 hours
     assert [(r["phase"], r["end_reason"]) for r in await rig.pods()] == [("gone", "short_check_done")]
 
@@ -168,15 +172,15 @@ async def test_a_pod_that_never_starts_is_replaced(rig: Rig) -> None:
     await rig.fleet.reconcile()
     rig.advance(STARTUP_TIMEOUT_S + 1)
     report = await rig.fleet.reconcile()
-    assert report.deleted == [f"fw-{NEAR.id}-g1"]
-    assert report.started == [f"fw-{NEAR.id}-g2"]  # a fresh generation
+    assert report.deleted == [f"wl-{NEAR.id}-g1"]
+    assert report.started == [f"wl-{NEAR.id}-g2"]  # a fresh generation
     assert (await rig.run("SELECT failures FROM trip_runtime"))[0]["failures"] == 1
 
 
 async def test_a_silent_watching_pod_is_replaced(rig: Rig) -> None:
     await rig.add_trip(NEAR)
     await rig.fleet.reconcile()
-    name = f"fw-{NEAR.id}-g1"
+    name = f"wl-{NEAR.id}-g1"
     await rig.run("UPDATE browser_pods SET phase = 'watching'")
     rig.hub.heard[name] = NOW
     rig.advance(SILENCE_S - 1)
@@ -188,12 +192,12 @@ async def test_a_silent_watching_pod_is_replaced(rig: Rig) -> None:
 async def test_failed_pods_are_kept_for_a_post_mortem_then_swept(rig: Rig) -> None:
     await rig.add_trip(NEAR)
     await rig.fleet.reconcile()
-    name = f"fw-{NEAR.id}-g1"
+    name = f"wl-{NEAR.id}-g1"
     rig.cluster.set_phase(name, "Failed", "fatal markup_changed")
     rig.advance(30)  # a user's starts are 20 s apart
     report = await rig.fleet.reconcile()
     assert name in rig.cluster.pods  # kept: it never held a cart or had a viewer
-    assert report.started == [f"fw-{NEAR.id}-g2"]
+    assert report.started == [f"wl-{NEAR.id}-g2"]
     rig.advance(FAILED_RETENTION_S + 1)
     assert name in (await rig.fleet.reconcile()).deleted
 
@@ -202,7 +206,7 @@ async def test_three_failures_back_off(rig: Rig) -> None:
     await rig.add_trip(NEAR)
     for gen in (1, 2, 3):
         await rig.fleet.reconcile()
-        rig.cluster.set_phase(f"fw-{NEAR.id}-g{gen}", "Failed", "fatal -")
+        rig.cluster.set_phase(f"wl-{NEAR.id}-g{gen}", "Failed", "fatal -")
         rig.advance(30)
     report = await rig.fleet.reconcile()
     assert report.started == []
@@ -212,10 +216,10 @@ async def test_three_failures_back_off(rig: Rig) -> None:
 
 
 async def test_strangers_are_swept_after_a_grace(rig: Rig) -> None:
-    rig.cluster.pods["fw-ffffffffffffffff-g1"] = ObservedPod("fw-ffffffffffffffff-g1", "u", created=NOW)
+    rig.cluster.pods["wl-ffffffffffffffff-g1"] = ObservedPod("wl-ffffffffffffffff-g1", "u", created=NOW)
     assert (await rig.fleet.reconcile()).deleted == []
     rig.advance(ORPHAN_GRACE_S + 1)
-    assert (await rig.fleet.reconcile()).deleted == ["fw-ffffffffffffffff-g1"]
+    assert (await rig.fleet.reconcile()).deleted == ["wl-ffffffffffffffff-g1"]
 
 
 # ---- holds
@@ -235,7 +239,7 @@ async def hold(rig: Rig, name: str) -> None:
 async def test_a_held_cart_opens_egress_and_closes_it_after(rig: Rig) -> None:
     await rig.add_trip(NEAR)
     await rig.fleet.reconcile()
-    name = f"fw-{NEAR.id}-g1"
+    name = f"wl-{NEAR.id}-g1"
     rig.hub.heard[name] = NOW
     await hold(rig, name)
     report = await rig.fleet.reconcile()
@@ -248,7 +252,7 @@ async def test_a_held_cart_opens_egress_and_closes_it_after(rig: Rig) -> None:
 async def test_a_pod_whose_egress_won_t_close_is_deleted(rig: Rig) -> None:
     await rig.add_trip(NEAR)
     await rig.fleet.reconcile()
-    name = f"fw-{NEAR.id}-g1"
+    name = f"wl-{NEAR.id}-g1"
     await hold(rig, name)
     await rig.fleet.reconcile()
     await rig.run("UPDATE browser_pods SET phase = 'watching'")
@@ -263,7 +267,7 @@ async def test_a_pod_whose_egress_won_t_close_is_deleted(rig: Rig) -> None:
 async def test_a_holding_pod_is_never_reaped_for_silence_only_by_the_backstop(rig: Rig) -> None:
     await rig.add_trip(NEAR)
     await rig.fleet.reconcile()
-    name = f"fw-{NEAR.id}-g1"
+    name = f"wl-{NEAR.id}-g1"
     await hold(rig, name)
     rig.advance(3600)  # an hour of silence: fine while holding
     assert name not in (await rig.fleet.reconcile()).deleted
@@ -277,7 +281,7 @@ async def test_a_holding_pod_is_never_reaped_for_silence_only_by_the_backstop(ri
 async def test_a_paused_trip_s_pod_is_drained(rig: Rig) -> None:
     await rig.add_trip(NEAR)
     await rig.fleet.reconcile()
-    name = f"fw-{NEAR.id}-g1"
+    name = f"wl-{NEAR.id}-g1"
     await rig.run("UPDATE browser_pods SET phase = 'watching'")
     rig.hub.connected.add(name)
     rig.hub.heard[name] = NOW
@@ -288,13 +292,13 @@ async def test_a_paused_trip_s_pod_is_drained(rig: Rig) -> None:
 
 
 async def test_the_old_account_pause_stops_everything_until_moved(rig: Rig) -> None:
-    """A "Pause all" from a ferry-web before 0004 (users.paused) still stops the user's trips until ferry-web
+    """A "Pause all" from a waitlist-web before 0004 (users.paused) still stops the user's trips until waitlist-web
     moves it onto each trip."""
     await rig.add_trip(NEAR)
-    await rig.run("UPDATE users SET paused = true")  # as a ferry-web from before 0004 could still set it
+    await rig.run("UPDATE users SET paused = true")  # as a waitlist-web from before 0004 could still set it
     assert (await rig.fleet.reconcile()).started == []
     await rig.run("UPDATE users SET paused = false")
-    assert (await rig.fleet.reconcile()).started == [f"fw-{NEAR.id}-g1"]
+    assert (await rig.fleet.reconcile()).started == [f"wl-{NEAR.id}-g1"]
 
 
 async def test_quiet_hours_stop_a_users_browsers_until_lifted(rig: Rig) -> None:
@@ -308,7 +312,7 @@ async def test_quiet_hours_stop_a_users_browsers_until_lifted(rig: Rig) -> None:
 
     assert (await rig.fleet.reconcile()).started == []  # Ann's quiet hours: nothing is checked
     await lift("hold_requested_until")  # "Hold it for me"
-    name = f"fw-{NEAR.id}-g1"
+    name = f"wl-{NEAR.id}-g1"
     assert (await rig.fleet.reconcile()).started == [name]
     await rig.run("UPDATE browser_pods SET phase = 'watching'")
     rig.hub.connected.add(name)
@@ -318,26 +322,26 @@ async def test_quiet_hours_stop_a_users_browsers_until_lifted(rig: Rig) -> None:
     assert rig.hub.commands == [(name, "drain", "paused")]
     rig.cluster.set_phase(name, "Succeeded", "drained -")
     await lift("quiet_lifted_until")  # a manual check
-    assert (await rig.fleet.reconcile()).started == [f"fw-{NEAR.id}-g2"]
+    assert (await rig.fleet.reconcile()).started == [f"wl-{NEAR.id}-g2"]
 
 
 @pytest.mark.parametrize("stored_off", [False, True])
 async def test_without_quiet_hours_of_their_own_a_user_has_the_default(rig: Rig, stored_off: bool) -> None:
     """10 pm to 5 am: Ann never changed hers, so her trips aren't checked overnight. A row without times (what a
-    0.6.3 ferry-web stores for "off" during the rollout) is the default too."""
+    0.6.3 waitlist-web stores for "off" during the rollout) is the default too."""
     await rig.add_trip(NEAR)
     if stored_off:
         await rig.run("INSERT INTO user_settings (user_id, quiet_start, quiet_end) VALUES ($1, NULL, NULL)", ANN)
     rig.clock[0] = datetime(2026, 10, 12, 23, 0, tzinfo=PACIFIC).timestamp()
     assert (await rig.fleet.reconcile()).started == []
     rig.clock[0] = datetime(2026, 10, 13, 12, 0, tzinfo=PACIFIC).timestamp()
-    assert (await rig.fleet.reconcile()).started == [f"fw-{NEAR.id}-g1"]
+    assert (await rig.fleet.reconcile()).started == [f"wl-{NEAR.id}-g1"]
 
 
 async def test_a_disconnected_pod_is_deleted_instead(rig: Rig) -> None:
     await rig.add_trip(NEAR)
     await rig.fleet.reconcile()
-    name = f"fw-{NEAR.id}-g1"
+    name = f"wl-{NEAR.id}-g1"
     await rig.run("UPDATE trips SET enabled = false")
     report = await rig.fleet.reconcile()
     assert name in report.deleted  # its own SIGTERM drain empties any cart
@@ -346,7 +350,7 @@ async def test_a_disconnected_pod_is_deleted_instead(rig: Rig) -> None:
 async def test_removing_a_trip_drains_its_pod_even_while_holding(rig: Rig) -> None:
     await rig.add_trip(NEAR)
     await rig.fleet.reconcile()
-    name = f"fw-{NEAR.id}-g1"
+    name = f"wl-{NEAR.id}-g1"
     await hold(rig, name)
     rig.hub.connected.add(name)
     rig.hub.heard[name] = NOW
@@ -357,10 +361,10 @@ async def test_removing_a_trip_drains_its_pod_even_while_holding(rig: Rig) -> No
 
 
 async def test_a_held_cart_is_kept_when_its_trip_can_t_be_read(rig: Rig) -> None:
-    """A trip ferry-control can't read (a field from a newer ferry-web, mid-rollout) wasn't removed."""
+    """A trip waitlist-control can't read (a field from a newer waitlist-web, mid-rollout) wasn't removed."""
     await rig.add_trip(NEAR)
     await rig.fleet.reconcile()
-    name = f"fw-{NEAR.id}-g1"
+    name = f"wl-{NEAR.id}-g1"
     await hold(rig, name)
     rig.hub.connected.add(name)
     rig.hub.heard[name] = NOW
@@ -373,7 +377,7 @@ async def test_a_nearer_trip_takes_the_warm_browser(rig: Rig) -> None:
     later = Trip(id="3" * 16, origin="SWB", destination="TSA", date=date(2026, 10, 17))
     await rig.add_trip(later)
     await rig.fleet.reconcile()
-    old = f"fw-{later.id}-g1"
+    old = f"wl-{later.id}-g1"
     await rig.run("UPDATE browser_pods SET phase = 'watching'")
     rig.hub.connected.add(old)
     rig.hub.heard[old] = NOW
@@ -426,3 +430,27 @@ async def test_short_checks_waiting_for_room_are_overdue(rig: Rig) -> None:
     report = await rig.fleet.reconcile()
     assert len(report.started) == 2  # at most two starting at once
     assert report.summary["short_checks"] == {"due": 3, "overdue": 1}
+
+
+# ---- other providers
+
+
+async def test_another_providers_watch_never_reaches_the_fleet(rig: Rig, caplog: pytest.LogCaptureFixture) -> None:
+    """The parenthesisation guard (docs/waitlist/design.md §2.4): a live Buntzen watch, due now, is never one of the
+    fleet's trips, while a removed BC Ferries trip whose pod still lives still is."""
+    await rig.add_trip(NEAR)
+    assert (await rig.fleet.reconcile()).started == [f"wl-{NEAR.id}-g1"]
+    await rig.run("UPDATE trips SET archived_at = now() WHERE id = $1", NEAR.id)
+    watch = "b" * 16
+    spec = {"date": "2026-10-13", "passes": ["morning"], "release_reminder": True}
+    await rig.run(
+        "INSERT INTO trips (id, user_id, provider, spec) VALUES ($1, $2, 'buntzen', $3)", watch, ANN, json.dumps(spec)
+    )
+    await rig.run("INSERT INTO trip_runtime (trip_id) VALUES ($1)", watch)  # due as soon as anything looks
+    with caplog.at_level(logging.DEBUG, logger="waitlist.control.fleet"):
+        _, trips, _, _ = await rig.fleet._inputs(NOW)
+        report = await rig.fleet.reconcile()
+    assert [(t.trip.id, t.archived) for t in trips] == [(NEAR.id, True)]
+    assert not [r for r in caplog.records if r.exc_info or r.levelno >= logging.ERROR]
+    assert report.started == []
+    assert [r["trip_id"] for r in await rig.pods()] == [NEAR.id]

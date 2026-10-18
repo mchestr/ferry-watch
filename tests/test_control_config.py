@@ -7,16 +7,16 @@ from typing import Any
 
 import pytest
 
-from ferry_watch.control.config import ConfigError, duration, load
-from ferry_watch.control.configure import Allowance, Switches, cart_gate
-from ferry_watch.models import PACIFIC, Trip
+from waitlist.control.config import ConfigError, duration, load
+from waitlist.control.configure import Allowance, Switches, cart_gate
+from waitlist.models import PACIFIC, Trip
 
 MINIMAL: dict[str, Any] = {
     "pod": {
-        "image": "ghcr.io/mchestr/ferry-watch-browser@sha256:" + "b" * 64,
-        "hubUrl": "ws://ferry-control.ferry-watch.svc.cluster.local.:8766/agent/v1",
+        "image": "ghcr.io/mchestr/waitlist-browser@sha256:" + "b" * 64,
+        "hubUrl": "ws://waitlist-control.waitlist.svc.cluster.local.:8766/agent/v1",
         "vncPubkeys": "k1:AAAA",
-        "vncOrigin": "https://ferry-checkout.chestr.dev",
+        "vncOrigin": "https://waitlist-checkout.chestr.dev",
     }
 }
 
@@ -36,7 +36,7 @@ def test_defaults_are_the_documented_ones(tmp_path: Path) -> None:
     assert settings.policy.short_check_interval == timedelta(hours=6)
     assert config.user_limits().value("maxTrips", {}) == 3
     assert config.fleet.max_browsers_total == 7
-    assert config.pod_params().namespace == "ferry-watch-browsers"
+    assert config.pod_params().namespace == "waitlist-browsers"
     assert settings.stream_viewer == "off"  # the streamed viewer's kill switch is on until a deployment says
 
 
@@ -89,13 +89,72 @@ def test_the_old_fleet_wide_quiet_hours_still_parse(tmp_path: Path) -> None:
         {"surprise": True},
         # Only the three values; YAML reads a bare `off` as false, which must stop startup, not mean anything.
         *({"checkout": {"streamViewer": value}} for value in ("on", "Admins", False, None)),
-        {"checkout": {"streamViewer": "off", "origin": "https://ferry-checkout.chestr.dev"}},  # ferry-web's key
-        {"pod": MINIMAL["pod"] | {"image": "ghcr.io/mchestr/ferry-watch-browser:latest"}},
+        {"checkout": {"streamViewer": "off", "origin": "https://waitlist-checkout.chestr.dev"}},  # waitlist-web's key
+        {"pod": MINIMAL["pod"] | {"image": "ghcr.io/mchestr/waitlist-browser:latest"}},
     ],
 )
 def test_bad_values_stop_startup(tmp_path: Path, change: dict[str, Any]) -> None:
     with pytest.raises(ConfigError):
         load(write(tmp_path, MINIMAL | change))
+
+
+FETCHER = {"url": "http://waitlist-fetcher.waitlist.svc.cluster.local.:8767", "timeoutSeconds": 20}
+
+
+def test_http_checks_are_off_by_default(tmp_path: Path) -> None:
+    config = load(write(tmp_path, MINIMAL))
+    assert config.fetcher is None
+    assert config.http_checks == {}
+    assert config.http_rates() == {}  # the check loop doesn't start; BC Ferries runs as before
+
+
+def test_http_checks_parse_as_rendered(tmp_path: Path) -> None:
+    config = load(write(tmp_path, MINIMAL | {"fetcher": FETCHER, "httpChecks": {"buntzen": {"requestsPerMinute": 12}}}))
+    assert config.fetcher is not None
+    assert (config.fetcher.url, config.fetcher.timeout_seconds) == (FETCHER["url"], 20)
+    assert config.http_rates() == {"buntzen": 12}
+
+
+def test_a_provider_without_a_rate_gets_its_budgets_default(tmp_path: Path) -> None:
+    config = load(write(tmp_path, MINIMAL | {"fetcher": {"url": "http://fetcher:8767"}, "httpChecks": {"buntzen": {}}}))
+    assert config.http_rates() == {"buntzen": 12}  # buntzen.meta.BUDGET.default_per_minute
+    assert config.fetcher is not None
+    assert config.fetcher.timeout_seconds == 20
+
+
+def test_a_fetcher_alone_checks_nothing(tmp_path: Path) -> None:
+    assert load(write(tmp_path, MINIMAL | {"fetcher": FETCHER})).http_rates() == {}
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"fetcher": FETCHER, "httpChecks": {"bcferries": {}}},  # browser-checked: not here
+        {"fetcher": FETCHER, "httpChecks": {"bcparks": {}}},  # not a provider this build knows
+        {"fetcher": FETCHER, "httpChecks": {"buntzen": {"requestsPerMinute": 31}}},  # past Buntzen's ceiling (30)
+        {"fetcher": FETCHER, "httpChecks": {"buntzen": {"requestsPerMinute": 0}}},
+        {"fetcher": FETCHER, "httpChecks": {"buntzen": {"requestsPerMinute": 61}}},
+        {"httpChecks": {"buntzen": {}}},  # without a fetcher to run them
+        {"fetcher": {"url": "http://fetcher:8767/v1"}},  # an origin only
+        {"fetcher": {"url": "ftp://fetcher"}},
+        {"fetcher": {"url": "http://Fetcher:8767"}},
+        {"fetcher": FETCHER | {"timeoutSeconds": 61}},
+        {"fetcher": FETCHER | {"surprise": 1}},
+        {"fetcher": FETCHER, "httpChecks": {"buntzen": {"requestsPerMinute": 12, "maxPerMinute": 30}}},
+    ],
+)
+def test_bad_http_checks_stop_startup(tmp_path: Path, change: dict[str, Any]) -> None:
+    with pytest.raises(ConfigError):
+        load(write(tmp_path, MINIMAL | change))
+
+
+def test_alert_only_watches_are_a_limit(tmp_path: Path) -> None:
+    config = load(write(tmp_path, MINIMAL | {"limits": {"defaults": {"maxAlertOnlyWatches": 4}}}))
+    assert config.user_limits().value("maxAlertOnlyWatches", {}) == 4
+    assert load(write(tmp_path, MINIMAL)).user_limits().value("maxAlertOnlyWatches", {}) == 6
+    assert load(write(tmp_path, MINIMAL)).user_limits().value("maxAlertOnlyWatches", {"maxAlertOnlyWatches": 99}) == 20
+    with pytest.raises(ConfigError):
+        load(write(tmp_path, MINIMAL | {"limits": {"defaults": {"maxAlertOnlyWatches": 21}}}))
 
 
 def test_durations() -> None:

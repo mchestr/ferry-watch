@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { makeSettings } from "@/test/fixtures";
 import { CheckoutSchema, DEFAULT_QUIET_HOURS, MyStateSchema } from "./schema";
 
-/** /api/state as ferry-web 0.6.2 sent it: one global quiet hours, me.paused, no settings. */
+/** /api/state as waitlist-web 0.6.2 sent it: one global quiet hours, me.paused, no settings. */
 function older(): Record<string, unknown> {
   return {
     me: { id: "u1", username: "ann", display: null, is_admin: false, paused: false },
@@ -95,7 +95,7 @@ describe("the checkout viewer", () => {
   });
 
   it("is what the checkout link says it opens, classic from a server before the beta", () => {
-    const url = "https://ferry-checkout.chestr.dev/t/3f9c0a1b2c3d4e5f/g/2/#ticket";
+    const url = "https://waitlist-checkout.chestr.dev/t/3f9c0a1b2c3d4e5f/g/2/#ticket";
     expect(CheckoutSchema.parse({ url, ttl: 60 }).viewer).toBe("classic");
     expect(CheckoutSchema.parse({ url, ttl: 60, viewer: "stream" }).viewer).toBe("stream");
     expect(CheckoutSchema.parse({ url, ttl: 60, viewer: "other" }).viewer).toBe("classic");

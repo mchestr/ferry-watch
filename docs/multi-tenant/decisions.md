@@ -1,5 +1,29 @@
 # Ferry Watch multi-tenant: owner decisions and constraints
 
+> **Naming note (October 2026).** This was written when the product was called Ferry Watch. It is now
+> Waitlist, and nothing below has been renamed, so read the old names as the new ones. The single-container
+> app it mentions was removed after the 2026-10-13 cutover. BC Ferries' own names (`bcferries/`, `BCF_*`) and
+> "trip" are unchanged.
+>
+> | Written here | Now |
+> |---|---|
+> | Ferry Watch; the repo `mchestr/ferry-watch`; the distribution `ferry-watch` | Waitlist; `mchestr/waitlist`; `waitlist` |
+> | the package `ferry_watch`, `src/ferry_watch/x.py` | `waitlist`, `src/waitlist/x.py` |
+> | `ferry-web`, `ferry-control`, `ferry-watch-agent`, the `ferry-db` hook Job | `waitlist-web`, `waitlist-control`, `waitlist-agent`, `waitlist-db` |
+> | images `ghcr.io/mchestr/ferry-watch-control`, `-browser`, `-vnc-edge` | `ghcr.io/mchestr/waitlist-control`, `-browser`, `-vnc-edge` |
+> | namespaces `ferry-watch`, `ferry-watch-browsers`; `ferry-browser` (pod label, ServiceAccount, PriorityClass) | `waitlist`, `waitlist-browsers`; `waitlist-browser` |
+> | env vars `FW_*`, `FERRY_WATCH_*` | `WL_*`, `WAITLIST_*` |
+> | label and annotation keys `ferry-watch.io/*` | `waitlist.chestr.dev/*` |
+> | every `fw-`, `fw_`, `fw.` and `fw:` name: pods `fw-<trip>-g<gen>`, policies `fw-browser-pod`, `fw-browser-pod-lock`, `fw-ns-objects`, tickets `fw1.…`, the `fw.cast1` subprotocol, `fw.n1.`/`fw.t1.` offers, `fw_user` | `wl-`, `wl_`, `wl.`, `wl:`: `wl-<trip>-g<gen>`, `wl-browser-pod`, …, `wl1.…`, `wl.cast1`, `wl.n1.`/`wl.t1.`, `wl_user` |
+> | vnc-edge's `site/fw/` and `/fw/…` URLs | `site/wl/`, `/wl/…` |
+> | database `ferrywatch`, roles `ferrywatch_web`, `ferrywatch_control` | `waitlist`, `waitlist_web`, `waitlist_control` |
+> | `ferry.chestr.dev`, `ferry-checkout.chestr.dev` | `waitlist.chestr.dev`, `waitlist-checkout.chestr.dev` |
+> | helm values `ferry.*` (`ferry.control.pod.vncPubkeys`, `ferry.web.*`, …) | `waitlist.*` |
+> | the OIDC client, Authelia policy and lldap group `ferry-watch`; the 1Password item `ferry-watch` | `waitlist`; `waitlist` |
+>
+> Kept on purpose: user ids hash `"fw/v1|iss|sub"` (every stored id depends on it), and migrations 0001 to
+> 0006 are as they were (0007 lets `browser_pods.name` be `fw-` or `wl-`).
+
 The decision log collected while planning (October 2026): the owner's requests and answers, plus the
 cluster facts verified in `mchestr/home-cluster`. The plan ([README.md](README.md)) and the design
 reference ([design-reference.md](design-reference.md)) treat these as fixed. Items marked

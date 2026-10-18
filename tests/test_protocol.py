@@ -7,10 +7,10 @@ from typing import Any, get_args
 import msgspec
 import pytest
 
-from ferry_watch import protocol
-from ferry_watch.bcferries import errors
-from ferry_watch.models import FarePreference, Trip, Vehicle
-from ferry_watch.protocol import (
+from waitlist import protocol
+from waitlist.bcferries import errors
+from waitlist.models import FarePreference, Trip, Vehicle
+from waitlist.protocol import (
     MAX_FRAME_BYTES,
     Ack,
     Alert,
@@ -82,7 +82,7 @@ def test_agent_messages_round_trip() -> None:
             **ENVELOPE,
             proto=[1],
             agent_version="0.6.0",
-            pod_name="fw-3f9c0a1b2c3d4e5f-g7",
+            pod_name="wl-3f9c0a1b2c3d4e5f-g7",
             gen=7,
             applied_rev=2,
             snapshot=held,
@@ -153,7 +153,7 @@ def test_configure_outside_the_contract_is_refused(change: dict[str, Any]) -> No
 def test_the_streamed_viewer_is_off_unless_the_operator_says_so() -> None:
     assert configure().cast_allowed is False
     shaped_064 = json.loads(encode(configure()))
-    del shaped_064["cast_allowed"]  # what a 0.6.4 ferry-control sends
+    del shaped_064["cast_allowed"]  # what a 0.6.4 waitlist-control sends
     decoded = decode_control_message(frame(shaped_064))
     assert isinstance(decoded, Configure)
     assert decoded.cast_allowed is False

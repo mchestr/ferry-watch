@@ -1,4 +1,4 @@
-"""The fw.cast1 conformance pack is well formed (tests/fixtures/cast1/README.md).
+"""The wl.cast1 conformance pack is well formed (tests/fixtures/cast1/README.md).
 
 Only the files' shape is checked here: the agent's and the viewer's own tests run the cases.
 """
@@ -130,7 +130,7 @@ SCHEMAS: dict[str, dict[str, dict[str, Check]]] = {
             "outcome": one_of("ok", "invalid", "close"),
             "code?": one_of(4400, 1009),
         },
-        "offers": {"offered": list_of(text), "cast_allowed": boolean, "result": one_of("binary", "fw.cast1", 400, 403)},
+        "offers": {"offered": list_of(text), "cast_allowed": boolean, "result": one_of("binary", "wl.cast1", 400, 403)},
         "viewer_offers": {
             "record": nullable(obj),
             "ticket": nullable(obj),
@@ -243,7 +243,7 @@ def test_the_pack_has_exactly_the_described_files() -> None:
 @pytest.mark.parametrize("name", sorted(SCHEMAS))
 def test_cases_match_the_readme(name: str) -> None:
     doc = load(name)
-    assert doc.pop("protocol") == "fw.cast1"
+    assert doc.pop("protocol") == "wl.cast1"
     assert set(doc) == set(SCHEMAS[name]) | SHARED.get(name, set())
     known, ids = sections(), set()
     for array, fields in SCHEMAS[name].items():

@@ -1,0 +1,1581 @@
+{
+  "AgentMessage": {
+    "$defs": {
+      "Alert": {
+        "additionalProperties": false,
+        "description": "Something the user should hear about. The operator writes the words and the links.",
+        "properties": {
+          "boot": {
+            "pattern": "^[a-f0-9]{8,32}$",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "bookable",
+              "cart_expired",
+              "cart_failed",
+              "cart_held",
+              "cart_lost",
+              "checkout_blocked",
+              "failing",
+              "hold_ending",
+              "hold_reminder",
+              "release_unverified"
+            ]
+          },
+          "params": {
+            "$ref": "#/$defs/AlertParams"
+          },
+          "rev": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "seq": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "trip": {
+            "pattern": "^[a-z0-9]{1,32}$",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "alert"
+            ]
+          },
+          "v": {
+            "default": 1,
+            "enum": [
+              1
+            ]
+          }
+        },
+        "required": [
+          "type",
+          "seq",
+          "trip",
+          "boot",
+          "rev",
+          "kind"
+        ],
+        "title": "Alert",
+        "type": "object"
+      },
+      "AlertParams": {
+        "additionalProperties": false,
+        "properties": {
+          "by_site": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "departures": {
+            "default": [],
+            "items": {
+              "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+              "type": "string"
+            },
+            "maxItems": 10,
+            "type": "array"
+          },
+          "error_class": {
+            "anyOf": [
+              {
+                "enum": [
+                  "booking",
+                  "cart_mismatch",
+                  "login_failed",
+                  "markup_changed",
+                  "not_bookable",
+                  "queue_timeout",
+                  "route_rejected",
+                  "session_expired",
+                  "timeout",
+                  "unexpected"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "fare": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "minutes": {
+            "anyOf": [
+              {
+                "maximum": 10000000,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "price": {
+            "anyOf": [
+              {
+                "maxLength": 24,
+                "pattern": "^[\\w$.,\\- ]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [],
+        "title": "AlertParams",
+        "type": "object"
+      },
+      "Bye": {
+        "additionalProperties": false,
+        "description": "The agent's last word before it exits.",
+        "properties": {
+          "boot": {
+            "pattern": "^[a-f0-9]{8,32}$",
+            "type": "string"
+          },
+          "cart_emptied": {
+            "default": false,
+            "type": "boolean"
+          },
+          "outcome": {
+            "default": "none",
+            "enum": [
+              "booked",
+              "expired",
+              "expired_by_site",
+              "none",
+              "payment_left_to_site",
+              "released"
+            ]
+          },
+          "reason": {
+            "enum": [
+              "deadline",
+              "drained",
+              "fatal",
+              "hold_ended",
+              "lockdown_failed",
+              "recycle",
+              "short_check_done",
+              "smoke_done",
+              "startup_failed"
+            ]
+          },
+          "release_check": {
+            "default": "none",
+            "enum": [
+              "cart_empty",
+              "landing_url",
+              "none"
+            ]
+          },
+          "rev": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "seq": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "trip": {
+            "pattern": "^[a-z0-9]{1,32}$",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "bye"
+            ]
+          },
+          "v": {
+            "default": 1,
+            "enum": [
+              1
+            ]
+          },
+          "viewer_was_connected": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "type",
+          "seq",
+          "trip",
+          "boot",
+          "rev",
+          "reason"
+        ],
+        "title": "Bye",
+        "type": "object"
+      },
+      "CartClaim": {
+        "additionalProperties": false,
+        "description": "May this pod cart now? Asked before every add_to_cart, so a user holds one cart at a time.",
+        "properties": {
+          "boot": {
+            "pattern": "^[a-f0-9]{8,32}$",
+            "type": "string"
+          },
+          "depart": {
+            "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+            "type": "string"
+          },
+          "fare": {
+            "enum": [
+              "cheapest",
+              "prepaid",
+              "reservation",
+              "saver"
+            ]
+          },
+          "rev": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "seq": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "trip": {
+            "pattern": "^[a-z0-9]{1,32}$",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "cart_claim"
+            ]
+          },
+          "v": {
+            "default": 1,
+            "enum": [
+              1
+            ]
+          }
+        },
+        "required": [
+          "type",
+          "seq",
+          "trip",
+          "boot",
+          "rev",
+          "depart",
+          "fare"
+        ],
+        "title": "CartClaim",
+        "type": "object"
+      },
+      "CartInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "depart": {
+            "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+            "type": "string"
+          },
+          "fare": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "hard_deadline": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "id": {
+            "pattern": "^[a-z0-9]{1,32}$",
+            "type": "string"
+          },
+          "payment_in_progress": {
+            "default": false,
+            "type": "boolean"
+          },
+          "price": {
+            "anyOf": [
+              {
+                "maxLength": 24,
+                "pattern": "^[\\w$.,\\- ]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "ready_at": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "session_deadline": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "status": {
+            "enum": [
+              "adding",
+              "failed",
+              "ready"
+            ]
+          },
+          "unclaimed_deadline": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "depart"
+        ],
+        "title": "CartInfo",
+        "type": "object"
+      },
+      "ErrorInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "class": {
+            "enum": [
+              "booking",
+              "cart_mismatch",
+              "login_failed",
+              "markup_changed",
+              "not_bookable",
+              "queue_timeout",
+              "route_rejected",
+              "session_expired",
+              "timeout",
+              "unexpected"
+            ]
+          },
+          "text": {
+            "maxLength": 300,
+            "type": "string"
+          }
+        },
+        "required": [
+          "class",
+          "text"
+        ],
+        "title": "ErrorInfo",
+        "type": "object"
+      },
+      "Event": {
+        "additionalProperties": false,
+        "description": "A typed activity entry. No free text and no hostnames.",
+        "properties": {
+          "boot": {
+            "pattern": "^[a-f0-9]{8,32}$",
+            "type": "string"
+          },
+          "code": {
+            "enum": [
+              "booking_confirmed",
+              "cart_added",
+              "cart_expired_by_site",
+              "cart_released",
+              "check_failed",
+              "checkout_host_blocked",
+              "checkout_login_seen",
+              "opening_gone",
+              "opening_seen",
+              "session_opened",
+              "sold_out_again",
+              "viewer_connected",
+              "viewer_disconnected"
+            ]
+          },
+          "params": {
+            "$ref": "#/$defs/EventParams"
+          },
+          "rev": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "seq": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "trip": {
+            "pattern": "^[a-z0-9]{1,32}$",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "event"
+            ]
+          },
+          "v": {
+            "default": 1,
+            "enum": [
+              1
+            ]
+          }
+        },
+        "required": [
+          "type",
+          "seq",
+          "trip",
+          "boot",
+          "rev",
+          "code"
+        ],
+        "title": "Event",
+        "type": "object"
+      },
+      "EventParams": {
+        "additionalProperties": false,
+        "properties": {
+          "class": {
+            "anyOf": [
+              {
+                "enum": [
+                  "booking",
+                  "cart_mismatch",
+                  "login_failed",
+                  "markup_changed",
+                  "not_bookable",
+                  "queue_timeout",
+                  "route_rejected",
+                  "session_expired",
+                  "timeout",
+                  "unexpected"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "depart": {
+            "anyOf": [
+              {
+                "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "fare": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "forced": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "minutes": {
+            "anyOf": [
+              {
+                "maximum": 10000000,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "seconds": {
+            "anyOf": [
+              {
+                "maximum": 10000000,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [],
+        "title": "EventParams",
+        "type": "object"
+      },
+      "FareInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "maxLength": 32,
+            "type": "string"
+          },
+          "price": {
+            "anyOf": [
+              {
+                "maxLength": 24,
+                "pattern": "^[\\w$.,\\- ]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "selectable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "selectable"
+        ],
+        "title": "FareInfo",
+        "type": "object"
+      },
+      "Hello": {
+        "additionalProperties": false,
+        "description": "The first message on every connection: who this is, and what hasn't been acknowledged yet.",
+        "properties": {
+          "agent_version": {
+            "maxLength": 64,
+            "pattern": "^[\\w.+-]+$",
+            "type": "string"
+          },
+          "applied_rev": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "boot": {
+            "pattern": "^[a-f0-9]{8,32}$",
+            "type": "string"
+          },
+          "gen": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "pod_name": {
+            "pattern": "^wl-[a-z0-9]{1,32}-g\\d{1,6}$",
+            "type": "string"
+          },
+          "proto": {
+            "items": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "maxItems": 4,
+            "minItems": 1,
+            "type": "array"
+          },
+          "rev": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "seq": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "snapshot": {
+            "$ref": "#/$defs/State"
+          },
+          "trip": {
+            "pattern": "^[a-z0-9]{1,32}$",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "hello"
+            ]
+          },
+          "unacked": {
+            "default": [],
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Event"
+                },
+                {
+                  "$ref": "#/$defs/Alert"
+                },
+                {
+                  "$ref": "#/$defs/Bye"
+                }
+              ],
+              "discriminator": {
+                "mapping": {
+                  "alert": "#/$defs/Alert",
+                  "bye": "#/$defs/Bye",
+                  "event": "#/$defs/Event"
+                },
+                "propertyName": "type"
+              }
+            },
+            "maxItems": 200,
+            "type": "array"
+          },
+          "v": {
+            "default": 1,
+            "enum": [
+              1
+            ]
+          }
+        },
+        "required": [
+          "type",
+          "seq",
+          "trip",
+          "boot",
+          "rev",
+          "proto",
+          "agent_version",
+          "pod_name",
+          "gen",
+          "applied_rev",
+          "snapshot"
+        ],
+        "title": "Hello",
+        "type": "object"
+      },
+      "Navigations": {
+        "additionalProperties": false,
+        "description": "Page loads since the last state message, by purpose (feeds the fleet's request budget).",
+        "properties": {
+          "cart": {
+            "default": 0,
+            "maximum": 10000000,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "empty": {
+            "default": 0,
+            "maximum": 10000000,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "refresh": {
+            "default": 0,
+            "maximum": 10000000,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "route_info": {
+            "default": 0,
+            "maximum": 10000000,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "search": {
+            "default": 0,
+            "maximum": 10000000,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [],
+        "title": "Navigations",
+        "type": "object"
+      },
+      "SailingInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "arrive": {
+            "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+            "type": "string"
+          },
+          "depart": {
+            "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+            "type": "string"
+          },
+          "fares": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/FareInfo"
+            },
+            "maxItems": 6,
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "available",
+              "sold_out",
+              "unavailable"
+            ]
+          },
+          "vessel": {
+            "maxLength": 64,
+            "type": "string"
+          }
+        },
+        "required": [
+          "depart",
+          "arrive",
+          "vessel",
+          "status"
+        ],
+        "title": "SailingInfo",
+        "type": "object"
+      },
+      "State": {
+        "additionalProperties": false,
+        "description": "Everything the dashboard shows about the trip; sent on change and at least every 15 s.",
+        "properties": {
+          "alerted": {
+            "default": [],
+            "items": {
+              "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+              "type": "string"
+            },
+            "maxItems": 100,
+            "type": "array"
+          },
+          "boot": {
+            "pattern": "^[a-f0-9]{8,32}$",
+            "type": "string"
+          },
+          "bucket": {
+            "default": 0.0,
+            "maximum": 100,
+            "minimum": 0,
+            "type": "number"
+          },
+          "cart": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/CartInfo"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "checked_at": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "checking": {
+            "default": false,
+            "type": "boolean"
+          },
+          "consecutive_errors": {
+            "default": 0,
+            "maximum": 10000000,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "effective_interval": {
+            "anyOf": [
+              {
+                "minimum": 30,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ErrorInfo"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "lockdown_ok": {
+            "default": false,
+            "type": "boolean"
+          },
+          "navs": {
+            "$ref": "#/$defs/Navigations"
+          },
+          "next_due": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "offered": {
+            "default": [],
+            "items": {
+              "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+              "type": "string"
+            },
+            "maxItems": 100,
+            "type": "array"
+          },
+          "phase": {
+            "enum": [
+              "draining",
+              "holding",
+              "starting",
+              "watching"
+            ]
+          },
+          "queue_detours": {
+            "default": 0,
+            "maximum": 10000000,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "retry_at": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "rev": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sailings": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/SailingInfo"
+            },
+            "maxItems": 60,
+            "type": "array"
+          },
+          "seq": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "trip": {
+            "pattern": "^[a-z0-9]{1,32}$",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "state"
+            ]
+          },
+          "v": {
+            "default": 1,
+            "enum": [
+              1
+            ]
+          },
+          "viewer": {
+            "$ref": "#/$defs/ViewerInfo"
+          },
+          "working_set_mb": {
+            "default": 0,
+            "maximum": 10000000,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "type",
+          "seq",
+          "trip",
+          "boot",
+          "rev",
+          "phase"
+        ],
+        "title": "State",
+        "type": "object"
+      },
+      "ViewerInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "connected": {
+            "default": false,
+            "type": "boolean"
+          },
+          "first_at": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "seconds": {
+            "default": 0,
+            "maximum": 10000000,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [],
+        "title": "ViewerInfo",
+        "type": "object"
+      }
+    },
+    "anyOf": [
+      {
+        "$ref": "#/$defs/Hello"
+      },
+      {
+        "$ref": "#/$defs/State"
+      },
+      {
+        "$ref": "#/$defs/Event"
+      },
+      {
+        "$ref": "#/$defs/Alert"
+      },
+      {
+        "$ref": "#/$defs/Bye"
+      },
+      {
+        "$ref": "#/$defs/CartClaim"
+      }
+    ],
+    "discriminator": {
+      "mapping": {
+        "alert": "#/$defs/Alert",
+        "bye": "#/$defs/Bye",
+        "cart_claim": "#/$defs/CartClaim",
+        "event": "#/$defs/Event",
+        "hello": "#/$defs/Hello",
+        "state": "#/$defs/State"
+      },
+      "propertyName": "type"
+    }
+  },
+  "ControlMessage": {
+    "$defs": {
+      "Ack": {
+        "additionalProperties": false,
+        "properties": {
+          "acked": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "boot": {
+            "pattern": "^[a-f0-9]{8,32}$",
+            "type": "string"
+          },
+          "rev": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "seq": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "trip": {
+            "pattern": "^[a-z0-9]{1,32}$",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "ack"
+            ]
+          },
+          "v": {
+            "default": 1,
+            "enum": [
+              1
+            ]
+          }
+        },
+        "required": [
+          "type",
+          "seq",
+          "trip",
+          "boot",
+          "rev",
+          "acked"
+        ],
+        "title": "Ack",
+        "type": "object"
+      },
+      "Brake": {
+        "additionalProperties": false,
+        "properties": {
+          "multiplier": {
+            "default": 1.0,
+            "maximum": 8,
+            "minimum": 1,
+            "type": "number"
+          },
+          "paused": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "required": [],
+        "title": "Brake",
+        "type": "object"
+      },
+      "CartClaimResult": {
+        "additionalProperties": false,
+        "properties": {
+          "boot": {
+            "pattern": "^[a-f0-9]{8,32}$",
+            "type": "string"
+          },
+          "claim": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "granted": {
+            "type": "boolean"
+          },
+          "reason": {
+            "enum": [
+              "carting_paused",
+              "holding_elsewhere",
+              "limit",
+              "no_holds_left",
+              "ok",
+              "quiet_hours"
+            ]
+          },
+          "rev": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "seq": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "trip": {
+            "pattern": "^[a-z0-9]{1,32}$",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "cart_claim_result"
+            ]
+          },
+          "v": {
+            "default": 1,
+            "enum": [
+              1
+            ]
+          }
+        },
+        "required": [
+          "type",
+          "seq",
+          "trip",
+          "boot",
+          "rev",
+          "claim",
+          "granted",
+          "reason"
+        ],
+        "title": "CartClaimResult",
+        "type": "object"
+      },
+      "Command": {
+        "additionalProperties": false,
+        "properties": {
+          "boot": {
+            "pattern": "^[a-f0-9]{8,32}$",
+            "type": "string"
+          },
+          "cart_id": {
+            "anyOf": [
+              {
+                "pattern": "^[a-z0-9]{1,32}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "id": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "op": {
+            "enum": [
+              "check_now",
+              "dismiss",
+              "drain",
+              "release",
+              "vnc_revoke"
+            ]
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "deleted",
+                  "hold_ended",
+                  "limit",
+                  "maintenance",
+                  "past",
+                  "paused",
+                  "recycle",
+                  "superseded",
+                  "suspended"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "rev": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "seq": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "trip": {
+            "pattern": "^[a-z0-9]{1,32}$",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "command"
+            ]
+          },
+          "v": {
+            "default": 1,
+            "enum": [
+              1
+            ]
+          }
+        },
+        "required": [
+          "type",
+          "seq",
+          "trip",
+          "boot",
+          "rev",
+          "id",
+          "op"
+        ],
+        "title": "Command",
+        "type": "object"
+      },
+      "Configure": {
+        "additionalProperties": false,
+        "description": "The trip and the limits to run it under. Idempotent; the latest revision wins.",
+        "properties": {
+          "active": {
+            "type": "boolean"
+          },
+          "alerted": {
+            "default": [],
+            "items": {
+              "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+              "type": "string"
+            },
+            "maxItems": 100,
+            "type": "array"
+          },
+          "auto_cart": {
+            "type": "boolean"
+          },
+          "boot": {
+            "pattern": "^[a-f0-9]{8,32}$",
+            "type": "string"
+          },
+          "brake": {
+            "$ref": "#/$defs/Brake"
+          },
+          "breaker": {
+            "default": "closed",
+            "enum": [
+              "closed",
+              "open"
+            ]
+          },
+          "cast_allowed": {
+            "default": false,
+            "type": "boolean"
+          },
+          "checkout_mode": {
+            "default": "guest",
+            "enum": [
+              "guest"
+            ]
+          },
+          "hold": {
+            "$ref": "#/$defs/HoldLimits"
+          },
+          "interval_s": {
+            "maximum": 3600,
+            "minimum": 30,
+            "type": "integer"
+          },
+          "mode": {
+            "default": "warm",
+            "enum": [
+              "short_check",
+              "warm"
+            ]
+          },
+          "offered": {
+            "default": [],
+            "items": {
+              "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+              "type": "string"
+            },
+            "maxItems": 100,
+            "type": "array"
+          },
+          "rev": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "seq": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "trip": {
+            "pattern": "^[a-z0-9]{1,32}$",
+            "type": "string"
+          },
+          "trip_spec": {
+            "$ref": "#/$defs/TripSpec"
+          },
+          "type": {
+            "enum": [
+              "configure"
+            ]
+          },
+          "v": {
+            "default": 1,
+            "enum": [
+              1
+            ]
+          },
+          "vnc_allowed": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "type",
+          "seq",
+          "trip",
+          "boot",
+          "rev",
+          "trip_spec",
+          "active",
+          "interval_s",
+          "auto_cart",
+          "hold"
+        ],
+        "title": "Configure",
+        "type": "object"
+      },
+      "HelloAck": {
+        "additionalProperties": false,
+        "properties": {
+          "accepted_proto": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "boot": {
+            "pattern": "^[a-f0-9]{8,32}$",
+            "type": "string"
+          },
+          "resend_from": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "rev": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "seq": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "server_time": {
+            "minimum": 0,
+            "type": "number"
+          },
+          "trip": {
+            "pattern": "^[a-z0-9]{1,32}$",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "hello_ack"
+            ]
+          },
+          "v": {
+            "default": 1,
+            "enum": [
+              1
+            ]
+          }
+        },
+        "required": [
+          "type",
+          "seq",
+          "trip",
+          "boot",
+          "rev",
+          "server_time",
+          "accepted_proto",
+          "resend_from"
+        ],
+        "title": "HelloAck",
+        "type": "object"
+      },
+      "HoldLimits": {
+        "additionalProperties": false,
+        "properties": {
+          "hard_s": {
+            "exclusiveMinimum": 0,
+            "maximum": 5400,
+            "type": "integer"
+          },
+          "session_s": {
+            "exclusiveMinimum": 0,
+            "maximum": 2700,
+            "type": "integer"
+          },
+          "unclaimed_s": {
+            "exclusiveMinimum": 0,
+            "maximum": 2700,
+            "type": "integer"
+          },
+          "viewer_gone_s": {
+            "exclusiveMinimum": 0,
+            "maximum": 900,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "unclaimed_s",
+          "session_s",
+          "viewer_gone_s",
+          "hard_s"
+        ],
+        "title": "HoldLimits",
+        "type": "object"
+      },
+      "TripSpec": {
+        "additionalProperties": false,
+        "description": "A trip as Trip.to_json writes it. The agent re-validates it with Trip.from_json.",
+        "properties": {
+          "adults": {
+            "maximum": 9,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "auto_cart": {
+            "type": "boolean"
+          },
+          "children": {
+            "maximum": 9,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "date": {
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "type": "string"
+          },
+          "earliest": {
+            "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "fare": {
+            "enum": [
+              "cheapest",
+              "prepaid",
+              "reservation",
+              "saver"
+            ]
+          },
+          "from": {
+            "pattern": "^[A-Z]{3}$",
+            "type": "string"
+          },
+          "height_ft": {
+            "maximum": 20,
+            "minimum": 0,
+            "type": "number"
+          },
+          "id": {
+            "pattern": "^[a-z0-9]{1,32}$",
+            "type": "string"
+          },
+          "infants": {
+            "maximum": 9,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "latest": {
+            "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+            "type": "string"
+          },
+          "seniors": {
+            "maximum": 9,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "to": {
+            "pattern": "^[A-Z]{3}$",
+            "type": "string"
+          },
+          "vehicle": {
+            "enum": [
+              "none",
+              "standard",
+              "tall"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "enabled",
+          "from",
+          "to",
+          "date",
+          "adults",
+          "children",
+          "infants",
+          "seniors",
+          "vehicle",
+          "height_ft",
+          "earliest",
+          "latest",
+          "auto_cart",
+          "fare"
+        ],
+        "title": "TripSpec",
+        "type": "object"
+      }
+    },
+    "anyOf": [
+      {
+        "$ref": "#/$defs/HelloAck"
+      },
+      {
+        "$ref": "#/$defs/Configure"
+      },
+      {
+        "$ref": "#/$defs/Command"
+      },
+      {
+        "$ref": "#/$defs/CartClaimResult"
+      },
+      {
+        "$ref": "#/$defs/Ack"
+      }
+    ],
+    "discriminator": {
+      "mapping": {
+        "ack": "#/$defs/Ack",
+        "cart_claim_result": "#/$defs/CartClaimResult",
+        "command": "#/$defs/Command",
+        "configure": "#/$defs/Configure",
+        "hello_ack": "#/$defs/HelloAck"
+      },
+      "propertyName": "type"
+    }
+  }
+}

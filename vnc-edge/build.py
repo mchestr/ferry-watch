@@ -1,14 +1,14 @@
 """Assemble vnc-edge's static site from KasmVNC's stock web client (docs/multi-tenant/design-reference.md §7.9).
 
-    python build.py <kasmvnc www dir> <out dir> --checkout-host ferry-checkout.chestr.dev \
-        --app-origin https://ferry.chestr.dev
+    python build.py <kasmvnc www dir> <out dir> --checkout-host waitlist-checkout.chestr.dev \
+        --app-origin https://waitlist.chestr.dev
 
-Writes ``<out>/www`` (served as /usr/share/fw-vnc) and ``<out>/default.conf`` (nginx). KasmVNC's files are
+Writes ``<out>/www`` (served as /usr/share/wl-vnc) and ``<out>/default.conf`` (nginx). KasmVNC's files are
 copied unmodified apart from one line inserted in vnc.html, which loads the shim before the client. The
 Content-Security-Policy allows vnc.html's one inline script by its hash, computed here from the shipped file,
 so a KasmVNC upgrade that changes the page fails the build instead of shipping a policy that doesn't fit.
 
-The streamed checkout viewer, fw/viewer.html, has a policy of its own that allows no inline script or style at
+The streamed checkout viewer, wl/viewer.html, has a policy of its own that allows no inline script or style at
 all (docs/multi-tenant/streamed-viewer/DESIGN.md §9). The build checks its markup fits it, and that the escape
 hatch to the classic viewer is in it, so that a change to the page can't ship a viewer the policy breaks.
 """
@@ -26,21 +26,21 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-SHIM = '<script src="/fw/shim.js"></script>'
-# fw/session.js in front of each classic script a page of ours loads, served as one file: fw/shim.js, vnc.html's
-# one inserted script, and fw/landing.js, the landing page's. A page and its script can come from different
+SHIM = '<script src="/wl/shim.js"></script>'
+# wl/session.js in front of each classic script a page of ours loads, served as one file: wl/shim.js, vnc.html's
+# one inserted script, and wl/landing.js, the landing page's. A page and its script can come from different
 # replicas during a rolling update (or a rollback), so neither may need another file of its own version.
 # session.js is also served on its own, for viewer.html.
-BUNDLES = {name: ("fw/session.js", name) for name in ("fw/shim.js", "fw/landing.js")}
+BUNDLES = {name: ("wl/session.js", name) for name in ("wl/shim.js", "wl/landing.js")}
 CLIENT_DIRS = ("assets", "app", "core")  # what nginx serves from KasmVNC, besides vnc.html
 _HOST = re.compile(r"[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?")
 _ORIGIN = re.compile(r"https://[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?")
 _MODULE_SCRIPT = re.compile(r'<script type="module"[^>]*></script>')
 _INLINE_SCRIPT = re.compile(r"<script>(.*?)</script>", re.DOTALL)
-_PLACEHOLDER = re.compile(r"__FW_[A-Z_]+__")
-VIEWER = "fw/viewer.html"
+_PLACEHOLDER = re.compile(r"__WL_[A-Z_]+__")
+VIEWER = "wl/viewer.html"
 # What viewer.html must hold for the escape hatch to work however broken its modules are (PROTOCOL.md §8.10).
-ESCAPE_IDS = ("fw-escape", "fw-escape-classic")
+ESCAPE_IDS = ("wl-escape", "wl-escape-classic")
 
 
 class BuildError(Exception):
@@ -138,14 +138,14 @@ class _Markup(HTMLParser):
 
 def check_viewer_html(html: str) -> None:
     """Fails unless viewer.html fits its policy (no inline script or style, no event handler attributes, no
-    javascript: URL) and holds the escape hatch, with fw/session.js, which runs it, as a classic script."""
+    javascript: URL) and holds the escape hatch, with wl/session.js, which runs it, as a classic script."""
     markup = _Markup()
     markup.feed(html)
     markup.close()
     problems = list(markup.problems)
     problems.extend(f"no #{name}" for name in ESCAPE_IDS if name not in markup.ids)
-    if "/fw/session.js" not in markup.classic_scripts:
-        problems.append("no classic <script src=/fw/session.js>")
+    if "/wl/session.js" not in markup.classic_scripts:
+        problems.append("no classic <script src=/wl/session.js>")
     if problems:
         raise BuildError(f"{VIEWER} doesn't fit its Content-Security-Policy: {'; '.join(problems)}")
 
@@ -164,7 +164,7 @@ def build(kasmvnc_www: Path, out: Path, *, checkout_host: str, app_origin: str) 
     for name in CLIENT_DIRS:
         shutil.copytree(kasmvnc_www / name, www / name, symlinks=False)
     check_viewer_html((HERE / "site" / VIEWER).read_text())
-    values = {"__FW_APP_ORIGIN__": app_origin}
+    values = {"__WL_APP_ORIGIN__": app_origin}
     for source in sorted((HERE / "site").rglob("*")):
         target = www / source.relative_to(HERE / "site")
         if source.is_dir():
@@ -178,7 +178,7 @@ def build(kasmvnc_www: Path, out: Path, *, checkout_host: str, app_origin: str) 
     policy = csp(script_hash, checkout_host)
     viewer_policy = viewer_csp(checkout_host)
     conf = out / "default.conf"
-    policies = {"__FW_CSP__": policy, "__FW_VIEWER_CSP__": viewer_policy}
+    policies = {"__WL_CSP__": policy, "__WL_VIEWER_CSP__": viewer_policy}
     conf.write_text(_fill((HERE / "default.conf.in").read_text(), policies, conf.name))
     return Built(www, conf, policy, viewer_policy)
 

@@ -1,80 +1,41 @@
-import { QueryClientProvider } from "@tanstack/react-query";
-import { act, renderHook, screen, waitFor } from "@testing-library/react";
+import { focusManager, QueryClientProvider } from "@tanstack/react-query";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { Toaster } from "sonner";
-import { describe, expect, it } from "vitest";
-import { makeState } from "@/test/fixtures";
-import { createTestQueryClient, deferred, jsonResponse, mockFetch, opaqueRedirect } from "@/test/render";
-import { api } from "./api";
-import { useStateMutation } from "./hooks";
-import { STATE_KEY, readSnapshot, writeState } from "./state";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { TERMINALS } from "@/test/fixtures";
+import { jsonResponse, mockFetch } from "@/test/render";
+import { TERMINALS_STALE_MS, useTerminals } from "./hooks";
+import { createQueryClient } from "./query";
 
-function setup() {
-  const qc = createTestQueryClient();
-  const wrapper = ({ children }: { children: ReactNode }) => (
-    <QueryClientProvider client={qc}>
-      {children}
-      <Toaster />
-    </QueryClientProvider>
-  );
-  return { qc, wrapper };
-}
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
 
-describe("useStateMutation", () => {
-  it("writes the response through the seq rule and toasts", async () => {
-    const { qc, wrapper } = setup();
-    writeState(qc, makeState({ seq: 9 }));
-    mockFetch(() => jsonResponse(makeState({ seq: 8, enabled: false })));
-    const { result } = renderHook(() => useStateMutation(() => api.checkNow(), { success: "Checking now…" }), {
-      wrapper,
-    });
-    act(() => result.current.mutate());
-    expect(await screen.findByText("Checking now…")).toBeInTheDocument();
-    // The response was older than what a push had already delivered, so it was dropped.
-    expect(readSnapshot(qc)?.state.seq).toBe(9);
-  });
+describe("the terminal list", () => {
+  it("is fetched again when the app comes back into focus an hour later, not before", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const { requests } = mockFetch(() => jsonResponse({ terminals: TERMINALS }));
+    const queryClient = createQueryClient();
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(() => useTerminals(), { wrapper });
+    await waitFor(() => expect(result.current.data).toEqual(TERMINALS));
+    const fetched = () => requests.filter((r) => r.url === "/api/terminals").length;
+    expect(fetched()).toBe(1);
 
-  it("sends one request at a time, even when triggered twice before re-rendering", async () => {
-    const { wrapper } = setup();
-    const response = deferred<Response>();
-    const { requests } = mockFetch(() => response.promise);
-    const { result } = renderHook(() => useStateMutation(() => api.testAlert()), { wrapper });
-    act(() => {
-      result.current.mutate();
-      result.current.mutate();
-    });
-    await waitFor(() => expect(requests).toHaveLength(1));
-    response.resolve(jsonResponse(makeState()));
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(requests).toHaveLength(1);
-
-    mockFetch(() => jsonResponse(makeState()));
-    act(() => result.current.mutate());
-    await waitFor(() => expect(result.current.isPending).toBe(false));
-    expect(result.current.isSuccess).toBe(true);
-  });
-
-  it("toasts the server's message on failure, unless the caller handles it", async () => {
-    const { wrapper } = setup();
-    mockFetch(() => jsonResponse({ error: "Test alert sent too recently", field: null }, 429));
-    const { result } = renderHook(() => useStateMutation(() => api.testAlert()), { wrapper });
-    act(() => result.current.mutate());
-    expect(await screen.findByText("Test alert sent too recently")).toBeInTheDocument();
-
-    const handled = renderHook(() => useStateMutation(() => api.testAlert(), { onError: () => true }), { wrapper });
-    act(() => handled.result.current.mutate());
-    await waitFor(() => expect(handled.result.current.isError).toBe(true));
-    expect(screen.getAllByText("Test alert sent too recently")).toHaveLength(1);
-  });
-
-  it("answers an expired sign-in by refetching the state (which raises the banner), not with a toast", async () => {
-    const { qc, wrapper } = setup();
-    writeState(qc, makeState());
-    mockFetch(() => opaqueRedirect());
-    const { result } = renderHook(() => useStateMutation(() => api.checkNow()), { wrapper });
-    act(() => result.current.mutate());
-    await waitFor(() => expect(result.current.isError).toBe(true));
-    expect(qc.getQueryState(STATE_KEY)?.isInvalidated).toBe(true);
-    expect(screen.queryByText("Your sign-in expired")).not.toBeInTheDocument();
+    const refocus = () =>
+      act(() => {
+        focusManager.setFocused(false);
+        focusManager.setFocused(true);
+      });
+    vi.setSystemTime(Date.now() + TERMINALS_STALE_MS - 1_000);
+    refocus();
+    expect(fetched()).toBe(1);
+    vi.setSystemTime(Date.now() + 2_000);
+    refocus();
+    await waitFor(() => expect(fetched()).toBe(2));
+    focusManager.setFocused(undefined);
   });
 });

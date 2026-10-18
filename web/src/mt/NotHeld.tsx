@@ -28,12 +28,12 @@ export function NotHeld({ trip }: { trip: MyTrip }) {
       qc.setQueryData(MY_STATE_KEY, state);
       toast.success("Trying to hold it");
     },
-    onError: (error) => reportError(qc, error),
+    onError: (error) => reportError(error),
   });
   const dismiss = useMutation({
     mutationFn: () => myApi.dismiss(trip.trip.id, failed?.id ?? ""),
     onSuccess: (state) => qc.setQueryData(MY_STATE_KEY, state),
-    onError: (error) => reportError(qc, error),
+    onError: (error) => reportError(error),
   });
   // Asked, and no check since has acted on it: it's on its way (a new pod may still be starting, with no
   // sailings yet). After that check, no cart means it couldn't, and the reason and the button come back.

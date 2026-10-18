@@ -1,4 +1,4 @@
-// fw/session.js, the classic script both viewers share: its subprotocol offer against messages.json
+// wl/session.js, the classic script both viewers share: its subprotocol offer against messages.json
 // viewer_offers, and the URLs and checkout names it reads and writes.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -7,18 +7,18 @@ import vm from "node:vm";
 
 import { pack } from "./pack.mjs";
 
-const source = readFileSync(new URL("../site/fw/session.js", import.meta.url), "utf8");
+const source = readFileSync(new URL("../site/wl/session.js", import.meta.url), "utf8");
 const { viewer_offers: offers } = pack("messages.json");
 const TRIP = "3f9c0a1b2c3d4e5f";
 
-/** FwSession as a page at `pathname` gets it; plain values out, as JSON (the script runs in its own realm). */
+/** WlSession as a page at `pathname` gets it; plain values out, as JSON (the script runs in its own realm). */
 function load({ pathname = "/", maxTouchPoints = 0 } = {}) {
   const window = {};
   const context = { window, location: { pathname, hash: "" }, navigator: { maxTouchPoints }, crypto, btoa };
   vm.runInNewContext(source, context);
   const plain = (value) => (value === undefined ? undefined : JSON.parse(JSON.stringify(value)));
   return Object.fromEntries(
-    Object.entries(window.FwSession).map(([name, f]) => [name, (...args) => plain(f(...args))]),
+    Object.entries(window.WlSession).map(([name, f]) => [name, (...args) => plain(f(...args))]),
   );
 }
 
@@ -26,7 +26,7 @@ describe("the streamed viewer's offer (messages.json viewer_offers)", () => {
   const session = load();
   for (const c of offers) {
     test(c.id, () => {
-      assert.deepEqual(session.offer(c.record, c.ticket, "fw.cast1", c.now * 1000), c.offer);
+      assert.deepEqual(session.offer(c.record, c.ticket, "wl.cast1", c.now * 1000), c.offer);
     });
   }
 
@@ -63,7 +63,7 @@ describe("which checkout a page is for", () => {
   });
 
   test("the viewers' URLs", () => {
-    assert.equal(session.streamUrl(TRIP, "4"), `/fw/viewer.html#t=${TRIP}&g=4`);
+    assert.equal(session.streamUrl(TRIP, "4"), `/wl/viewer.html#t=${TRIP}&g=4`);
     const settings = `path=t/${TRIP}/g/4/ws&autoconnect=1&reconnect=1&reconnect_delay=1000&idle_disconnect=120&anti_aliasing=1`;
     assert.equal(session.classicUrl(TRIP, "4"), `/vnc.html#${settings}`);
     assert.equal(load({ maxTouchPoints: 5 }).classicUrl(TRIP, "4"), `/vnc.html#${settings}&virtual_keyboard_visible=1`);

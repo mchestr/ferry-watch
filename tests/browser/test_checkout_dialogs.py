@@ -23,13 +23,13 @@ import pytest
 from aiohttp.test_utils import TestServer, unused_port
 from playwright.async_api import Page
 
-from ferry_watch.agent.dialogs import DialogKeeper
-from ferry_watch.agent.gate import Gate, GateSettings
-from ferry_watch.agent.screen import Screen
-from ferry_watch.agent.stream import ClassicScreen
 from tests.browser import test_checkout_edge as edge
 from tests.browser import test_checkout_screen as screen
 from tests.browser import test_checkout_stream as stream
+from waitlist.agent.dialogs import DialogKeeper
+from waitlist.agent.gate import Gate, GateSettings
+from waitlist.agent.screen import Screen
+from waitlist.agent.stream import ClassicScreen
 
 pytestmark = pytest.mark.browser
 
@@ -166,8 +166,8 @@ async def connect(viewer: Page, landing: str, pod: stream.Pod) -> None:
 
 
 async def shot(viewer: Page, name: str) -> None:
-    """Keep what the viewer showed, when FW_TEST_SHOTS names a directory (to look at by eye)."""
-    directory = os.environ.get("FW_TEST_SHOTS")
+    """Keep what the viewer showed, when WL_TEST_SHOTS names a directory (to look at by eye)."""
+    directory = os.environ.get("WL_TEST_SHOTS")
     if directory:
         await viewer.screenshot(path=Path(directory) / f"{name}.png")
 

@@ -1,5 +1,6 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { fail } from "@/test/fixtures";
 import { jsonResponse, mockFetch, renderWithProviders, type RecordedRequest } from "@/test/render";
 import { browserVersions, quantityGiB, type Overview, type People, type Unmatched } from "./admin";
 import { AdminPage } from "./AdminPage";
@@ -66,11 +67,11 @@ function overview(): Overview {
       {
         user: BEA,
         trip: TRIP,
-        pod: "fw-3f9c0a1b2c3d4e5f-2",
+        pod: "wl-3f9c0a1b2c3d4e5f-2",
         since: Date.now() / 1000 - 120,
         cart: { status: "ready", depart: "09:00", hard_deadline: Date.now() / 1000 + 25 * 60 },
       },
-      { user: DEE, trip: "0a0b0c0d0e0f0102", pod: "fw-0a0b0c0d0e0f0102-1", since: 0, cart: { status: "failed" } },
+      { user: DEE, trip: "0a0b0c0d0e0f0102", pod: "wl-0a0b0c0d0e0f0102-1", since: 0, cart: { status: "failed" } },
     ],
     switches: { maintenance: false, pause_carting: true, breaker: "closed" },
     outcomes_7d: { booked: 4, released: 1 },
@@ -180,7 +181,7 @@ describe("fleet", () => {
     expect(screen.getByText(line)).toBeInTheDocument();
   });
 
-  it("offers a reload when ferry-web is newer than this page", async () => {
+  it("offers a reload when waitlist-web is newer than this page", async () => {
     const reload = vi.fn();
     vi.stubGlobal("location", { ...window.location, reload });
     api((r) =>
@@ -206,10 +207,10 @@ describe("fleet", () => {
     expect(screen.queryByRole("button", { name: "Reload to update" })).toBeNull();
   });
 
-  it("reports capacity and budget from ferry-control's last pass", async () => {
+  it("reports capacity and budget from waitlist-control's last pass", async () => {
     api();
     renderWithProviders(<AdminPage meId={ME} />);
-    expect(await screen.findByText("ferry-control last reported 1 min ago")).toBeInTheDocument();
+    expect(await screen.findByText("waitlist-control last reported 1 min ago")).toBeInTheDocument();
     expect(fact("Browsers running")).toBe("3 of 7");
     expect(fact("Memory requested")).toBe("3 GiB of 7 GiB");
     expect(fact("Queued")).toBe("3");
@@ -222,7 +223,7 @@ describe("fleet", () => {
     expect(screen.queryByRole("button", { name: "Close the breaker" })).toBeNull();
   });
 
-  it("warns when ferry-control is late or has never reported", async () => {
+  it("warns when waitlist-control is late or has never reported", async () => {
     let seen: number | null = Date.now() / 1000 - 5 * 60;
     api((r) =>
       r.url === "/api/admin/overview"
@@ -230,10 +231,10 @@ describe("fleet", () => {
         : undefined,
     );
     const { queryClient } = renderWithProviders(<AdminPage meId={ME} />);
-    expect(await screen.findByText("ferry-control last reported 5 min ago. Is it running?")).toBeInTheDocument();
+    expect(await screen.findByText("waitlist-control last reported 5 min ago. Is it running?")).toBeInTheDocument();
     seen = null;
     await queryClient.invalidateQueries({ queryKey: ["admin"] });
-    expect(await screen.findByText("ferry-control hasn't reported. Is it running?")).toBeInTheDocument();
+    expect(await screen.findByText("waitlist-control hasn't reported. Is it running?")).toBeInTheDocument();
     expect(fact("Last report")).toBe("None yet");
   });
 
@@ -275,7 +276,7 @@ describe("fleet", () => {
 
     await user.click(screen.getByRole("button", { name: "Recycle bea's browser" }));
     dialog = await screen.findByRole("dialog", { name: "Recycle bea's browser?" });
-    expect(dialog).toHaveTextContent("Restarts their browser (fw-3f9c0a1b2c3d4e5f-2).");
+    expect(dialog).toHaveTextContent("Restarts their browser (wl-3f9c0a1b2c3d4e5f-2).");
     await user.type(within(dialog).getByLabelText("Reason"), "frozen page");
     await user.click(within(dialog).getByRole("button", { name: "Recycle" }));
     await waitFor(() =>
@@ -288,11 +289,11 @@ describe("fleet", () => {
   it("offers release only for a cart that's held and not being paid for", async () => {
     const holds: Overview["holds"] = [
       ...overview().holds,
-      { user: CY, trip: "1a1b1c1d1e1f1011", pod: "fw-1a1b1c1d1e1f1011-g1", since: 0, cart: { status: "adding" } },
+      { user: CY, trip: "1a1b1c1d1e1f1011", pod: "wl-1a1b1c1d1e1f1011-g1", since: 0, cart: { status: "adding" } },
       {
         user: ME,
         trip: "2a2b2c2d2e2f2021",
-        pod: "fw-2a2b2c2d2e2f2021-g1",
+        pod: "wl-2a2b2c2d2e2f2021-g1",
         since: 0,
         cart: { status: "ready", payment_in_progress: true },
       },
@@ -551,5 +552,159 @@ describe("browserVersions", () => {
       ]),
     ).toBe("0.6.3 ×3, 0.6.2 ×1, unknown ×1");
     expect(browserVersions([])).toBe("");
+  });
+});
+
+describe("providers checked over HTTP", () => {
+  const now = () => Date.now() / 1000;
+  function withProviders(paused = false): Overview {
+    return {
+      ...overview(),
+      switches: { ...overview().switches, paused_providers: paused ? ["buntzen"] : [] },
+      attention: [
+        { kind: "site_changed", trip: null, user: ME, at: now() - 60, detail: null },
+        { kind: "checker_down", trip: null, user: ME, at: now() - 120, detail: null },
+      ],
+      providers: [{ id: "buntzen", name: "Buntzen Lake", offer: "admins", paused }],
+      checks: {
+        at: now() - 20,
+        version: "1.0.0",
+        providers: {
+          buntzen: {
+            running: !paused,
+            paused,
+            fetcher: "down",
+            fetcher_down_since: now() - 240,
+            budget_per_minute: 12,
+            demand_per_minute: 4,
+            fetches_last_hour: 118,
+            errors_last_hour: 2,
+            last_ok_at: now() - 330,
+            last_error: "site_changed",
+            last_error_at: now() - 90,
+            cooldown_until: now() + 600,
+            watches: 3,
+            checking: 2,
+            deferred: 0,
+          },
+        },
+      },
+    };
+  }
+  const serve = (paused = false) =>
+    api((r) => (r.url === "/api/admin/overview" ? jsonResponse(withProviders(paused)) : undefined));
+
+  it("shows each provider's offer, checks, fetcher, budget, last hour, cooldown and watches", async () => {
+    serve();
+    renderWithProviders(<AdminPage meId={ME} />);
+    const panel = row(await screen.findByText("Offered to admins"));
+    expect(within(panel).getByText("Buntzen Lake")).toBeInTheDocument();
+    expect(within(panel).getByText("Running")).toBeInTheDocument();
+    expect(fact("Fetcher")).toMatch(/^Down since \d{1,2}:\d{2} [ap]m$/);
+    expect(fact("Budget")).toBe("4 of 12 requests a minute");
+    expect(fact("Last hour")).toBe("118 fetches · 2 errors");
+    expect(fact("Last success")).toBe("5 min ago");
+    expect(fact("Last error")).toBe("site changed, 1 min ago");
+    expect(fact("Cooldown")).toMatch(/^Until /);
+    expect(fact("Watches")).toBe("3 · 2 checking · 0 deferred");
+  });
+
+  it("pauses a provider's checks with a reason, and resumes them", async () => {
+    const { requests } = serve();
+    const { user } = renderWithProviders(<AdminPage meId={ME} />);
+    const pause = await screen.findByRole("switch", { name: "Pause checks" });
+    expect(pause).not.toBeChecked();
+    await user.click(pause);
+    const dialog = await screen.findByRole("dialog", { name: "Pause Buntzen Lake checks?" });
+    await user.type(within(dialog).getByLabelText("Reason"), "Yodel asked");
+    await user.click(within(dialog).getByRole("button", { name: "Pause checks" }));
+    await waitFor(() =>
+      expect(requests.find((r) => r.url === "/api/admin/switches")?.body).toEqual({
+        switch: "pause_provider",
+        provider: "buntzen",
+        on: true,
+        reason: "Yodel asked",
+      }),
+    );
+    expect(await screen.findByText("Buntzen Lake checks are paused")).toBeInTheDocument();
+  });
+
+  it("offers Resume checks for a paused provider", async () => {
+    serve(true);
+    const { user } = renderWithProviders(<AdminPage meId={ME} />);
+    const pause = await screen.findByRole("switch", { name: "Pause checks" });
+    expect(pause).toBeChecked();
+    expect(within(row(pause)).getByText("Paused")).toBeInTheDocument();
+    await user.click(pause);
+    expect(await screen.findByRole("dialog", { name: "Resume Buntzen Lake checks?" })).toBeInTheDocument();
+  });
+
+  it("lists a provider's alerts in the attention list, in their own words", async () => {
+    serve();
+    renderWithProviders(<AdminPage meId={ME} />);
+    expect(await screen.findByText("A provider's site changed shape; its checks are failing")).toBeInTheDocument();
+    expect(screen.getByText("waitlist-fetcher isn't answering; HTTP checks are on hold")).toBeInTheDocument();
+  });
+
+  it("says a provider's alert once, though waitlist-web sends its words as the detail too", async () => {
+    // GET /api/admin/overview: admin.ATTENTION_ALERTS gives these kinds' detail, the very words the list leads with.
+    const site = "A provider's site changed shape; its checks are failing";
+    const fetcher = "waitlist-fetcher isn't answering; HTTP checks are on hold";
+    api((r) =>
+      r.url === "/api/admin/overview"
+        ? jsonResponse({
+            ...withProviders(),
+            attention: [
+              { kind: "site_changed", trip: null, user: ME, at: now() - 60, detail: site },
+              { kind: "checker_down", trip: null, user: ME, at: now() - 120, detail: fetcher },
+            ],
+          })
+        : undefined,
+    );
+    renderWithProviders(<AdminPage meId={ME} />);
+    const list = (await screen.findByText(site)).closest("ul") ?? fail("the attention list");
+    const times = (words: string) => (list.textContent ?? "").split(words).length - 1;
+    expect([times(site), times(fetcher)]).toEqual([1, 1]);
+    expect(within(list).getByText("1 min ago")).toBeInTheDocument();
+  });
+
+  it("warns when the check loop's report is old", async () => {
+    api((r) =>
+      r.url === "/api/admin/overview"
+        ? jsonResponse({ ...withProviders(), checks: { ...withProviders().checks, at: now() - 600 } })
+        : undefined,
+    );
+    renderWithProviders(<AdminPage meId={ME} />);
+    expect(await screen.findByText(/The check loop's report is old/)).toBeInTheDocument();
+  });
+
+  it("shows nothing for an older server that lists no providers", async () => {
+    api();
+    renderWithProviders(<AdminPage meId={ME} />);
+    expect(await screen.findByText("3 queued")).toBeInTheDocument();
+    expect(screen.queryByText("Providers")).toBeNull();
+  });
+
+  it("shows each person's watches by provider, and labels the alert-only limit", async () => {
+    api((r) => {
+      if (r.url === "/api/admin/overview") return jsonResponse(withProviders());
+      if (r.url !== "/api/admin/users") return undefined;
+      const list = people();
+      list.users = list.users.map((u) =>
+        u.id === BEA
+          ? {
+              ...u,
+              watches: { bcferries: 1, buntzen: 2 },
+              limits: { ...u.limits, maxAlertOnlyWatches: { value: 6, source: "default" } },
+            }
+          : u,
+      );
+      return jsonResponse(list);
+    });
+    const { user } = renderWithProviders(<AdminPage meId={ME} />);
+    await user.click(await screen.findByRole("button", { name: "People" }));
+    expect(await screen.findByText(/1 trip · 2 Buntzen Lake watches/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Limits for bea" }));
+    expect(screen.getByRole("textbox", { name: "Alert-only watches" })).toHaveValue("6");
   });
 });

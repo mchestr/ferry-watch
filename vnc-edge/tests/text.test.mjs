@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { check } from "../site/fw/viewer/core/protocol.js";
+import { check } from "../site/wl/viewer/core/protocol.js";
 import {
   backspaced,
   composeMessages,
@@ -12,7 +12,7 @@ import {
   split,
   tail,
   textMessages,
-} from "../site/fw/viewer/core/text.js";
+} from "../site/wl/viewer/core/text.js";
 import { forViewer, pack } from "./pack.mjs";
 
 const { cases } = pack("text.json");

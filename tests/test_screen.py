@@ -21,8 +21,8 @@ from typing import Any
 
 import pytest
 
-from ferry_watch.agent.screen import MAX_MODES, Screen, ScreenError
-from ferry_watch.agent.settings import AgentSettings
+from waitlist.agent.screen import MAX_MODES, Screen, ScreenError
+from waitlist.agent.settings import AgentSettings
 
 # The X server as Xvnc starts it: its own mode of the pod's size, on its one output and in use.
 LAUNCH: dict[str, Any] = {"modes": {"1280x1000": [1280, 1000]}, "output": ["1280x1000"], "current": "1280x1000"}
@@ -33,7 +33,7 @@ XRANDR = f"""#!{sys.executable} -I
 import json, os, sys, time
 from pathlib import Path
 
-root = Path(os.environ["FW_TEST_DIR"])
+root = Path(os.environ["WL_TEST_DIR"])
 config = root / "xsettings" / "xsettingsd.conf"
 dpi = config.read_text().strip() if config.exists() else ""
 args = sys.argv[1:]
@@ -89,7 +89,7 @@ path.write_text(json.dumps(state))
 """
 
 XSETTINGSD = """#!/bin/sh
-log="$FW_TEST_DIR/log"
+log="$WL_TEST_DIR/log"
 echo "xsettingsd $* | dpi=$(cat "$2")" >> "$log"
 trap 'echo "xsettingsd hup | dpi=$(cat "$2")" >> "$log"' HUP
 trap 'echo "xsettingsd term" >> "$log"; exit 0' TERM
@@ -124,7 +124,7 @@ class Tools:
         return state
 
     def ours(self) -> list[str]:
-        return [name for name in self.x_server()["modes"] if name.startswith("fw")]
+        return [name for name in self.x_server()["modes"] if name.startswith("wl")]
 
     def kasmvnc(self, width: int, height: int) -> None:
         """A classic viewer resizes the screen to its own size, as Xvnc does it (measured): a mode named for the
@@ -149,7 +149,7 @@ async def tools(tmp_path: Path) -> AsyncIterator[Tools]:
         path = bin_dir / name
         path.write_text(script)
         path.chmod(path.stat().st_mode | stat.S_IXUSR)
-    env = {"PATH": f"{bin_dir}:{os.environ['PATH']}", "FW_TEST_DIR": str(tmp_path)}
+    env = {"PATH": f"{bin_dir}:{os.environ['PATH']}", "WL_TEST_DIR": str(tmp_path)}
     screen = Screen(":99", (1280, 1000), tmp_path / "xsettings", env)
     yield Tools(tmp_path, screen)
     await screen.close()
@@ -172,7 +172,7 @@ async def until(check: Callable[[], bool]) -> None:
 
 def test_xsettingsd_keeps_its_config_in_the_pods_memory_backed_tmp() -> None:
     settings = AgentSettings(
-        trip_id="t", pod_name="fw-t-g1", gen=1, owner="u", deadline_at=0, hub_url="ws://x", vnc_origin="https://x",
+        trip_id="t", pod_name="wl-t-g1", gen=1, owner="u", deadline_at=0, hub_url="ws://x", vnc_origin="https://x",
         vnc_keys={},
     )  # fmt: skip
     assert settings.xsettings_dir == Path("/tmp/xsettings")
@@ -185,9 +185,9 @@ async def test_a_phone_gets_its_size_at_2x_dpi_first(tools: Tools) -> None:
     xrandr = [c for c in calls if c.startswith("xrandr")]
     assert xrandr == [
         "xrandr --query",
-        "xrandr --newmode fw780x1328 60 780 780 780 780 1328 1328 1328 1328",
-        "xrandr --addmode VNC-0 fw780x1328",
-        "xrandr --output VNC-0 --mode fw780x1328",
+        "xrandr --newmode wl780x1328 60 780 780 780 780 1328 1328 1328 1328",
+        "xrandr --addmode VNC-0 wl780x1328",
+        "xrandr --output VNC-0 --mode wl780x1328",
     ]
     output = next(line for line in tools.lines() if "--output" in line)
     assert output.endswith("dpi=Xft/DPI 196608")  # the DPI was there before the mode changed
@@ -213,13 +213,13 @@ async def test_another_size_at_the_same_scale_is_one_mode_change(tools: Tools) -
     tools.forget()
     assert await tools.screen.apply(664, 390, 2)  # rotated
     assert tools.calls() == [
-        "xrandr --newmode fw1328x780 60 1328 1328 1328 1328 780 780 780 780",
-        "xrandr --addmode VNC-0 fw1328x780",
-        "xrandr --output VNC-0 --mode fw1328x780",
+        "xrandr --newmode wl1328x780 60 1328 1328 1328 1328 780 780 780 780",
+        "xrandr --addmode VNC-0 wl1328x780",
+        "xrandr --output VNC-0 --mode wl1328x780",
     ]
     tools.forget()
     assert await tools.screen.apply(390, 664, 2)  # and back: the mode is there already
-    assert tools.calls() == ["xrandr --output VNC-0 --mode fw780x1328"]
+    assert tools.calls() == ["xrandr --output VNC-0 --mode wl780x1328"]
 
 
 async def test_a_desktop_at_1x_stops_xsettingsd_before_the_mode(tools: Tools) -> None:
@@ -228,15 +228,15 @@ async def test_a_desktop_at_1x_stops_xsettingsd_before_the_mode(tools: Tools) ->
     tools.forget()
     assert await tools.screen.apply(1280, 800, 1)
     assert tools.calls() == [
-        "xrandr --newmode fw1280x800 60 1280 1280 1280 1280 800 800 800 800",
-        "xrandr --addmode VNC-0 fw1280x800",
+        "xrandr --newmode wl1280x800 60 1280 1280 1280 1280 800 800 800 800",
+        "xrandr --addmode VNC-0 wl1280x800",
         "xsettingsd term",
-        "xrandr --output VNC-0 --mode fw1280x800",
+        "xrandr --output VNC-0 --mode wl1280x800",
     ]
     tools.forget()
     assert await tools.screen.apply(390, 664, 2)  # a phone again: xsettingsd starts again
     await until(lambda: any(line.startswith("xsettingsd -c") for line in tools.lines()))
-    assert [c for c in tools.calls() if c.startswith("xrandr")] == ["xrandr --output VNC-0 --mode fw780x1328"]
+    assert [c for c in tools.calls() if c.startswith("xrandr")] == ["xrandr --output VNC-0 --mode wl780x1328"]
 
 
 async def test_restore_puts_back_the_pods_own_screen(tools: Tools) -> None:
@@ -257,10 +257,10 @@ async def test_restore_puts_back_the_pods_own_screen(tools: Tools) -> None:
         "xrandr --query",  # Xvnc's own mode of the pod's size is still there
         "xsettingsd term",
         "xrandr --output VNC-0 --mode 1280x1000",
-        "xrandr --delmode VNC-0 fw1280x800",  # least recently used first
-        "xrandr --rmmode fw1280x800",
-        "xrandr --delmode VNC-0 fw780x1328",
-        "xrandr --rmmode fw780x1328",
+        "xrandr --delmode VNC-0 wl1280x800",  # least recently used first
+        "xrandr --rmmode wl1280x800",
+        "xrandr --delmode VNC-0 wl780x1328",
+        "xrandr --rmmode wl780x1328",
     ]
     assert tools.screen.current is None
     changed.append(tools.screen.changed)
@@ -270,7 +270,7 @@ async def test_restore_puts_back_the_pods_own_screen(tools: Tools) -> None:
     assert tools.calls() == []
     tools.forget()
     assert await tools.screen.apply(390, 664, 2)  # the next stream starts from the pod's own screen again
-    assert "xrandr --newmode fw780x1328 60 780 780 780 780 1328 1328 1328 1328" in tools.calls()
+    assert "xrandr --newmode wl780x1328 60 780 780 780 780 1328 1328 1328 1328" in tools.calls()
 
 
 async def test_restore_is_bounded_and_never_raises(tools: Tools) -> None:
@@ -293,8 +293,8 @@ async def test_restore_is_bounded_and_never_raises(tools: Tools) -> None:
     assert tools.calls() == [
         "xrandr --query",
         "xrandr --output VNC-0 --mode 1280x1000",
-        "xrandr --delmode VNC-0 fw780x1328",
-        "xrandr --rmmode fw780x1328",
+        "xrandr --delmode VNC-0 wl780x1328",
+        "xrandr --rmmode wl780x1328",
     ]
 
 
@@ -310,15 +310,15 @@ async def test_restore_makes_the_pods_own_mode_once_a_classic_viewer_has_had_its
     await tools.screen.restore()
     assert tools.calls() == [
         "xrandr --query",
-        "xrandr --newmode fw1280x1000 60 1280 1280 1280 1280 1000 1000 1000 1000",
-        "xrandr --addmode VNC-0 fw1280x1000",
+        "xrandr --newmode wl1280x1000 60 1280 1280 1280 1280 1000 1000 1000 1000",
+        "xrandr --addmode VNC-0 wl1280x1000",
         "xsettingsd term",
-        "xrandr --output VNC-0 --mode fw1280x1000",
-        "xrandr --delmode VNC-0 fw780x1328",
-        "xrandr --rmmode fw780x1328",
+        "xrandr --output VNC-0 --mode wl1280x1000",
+        "xrandr --delmode VNC-0 wl780x1328",
+        "xrandr --rmmode wl780x1328",
     ]
-    assert tools.x_server()["current"] == "fw1280x1000"
-    assert tools.ours() == ["fw1280x1000"]
+    assert tools.x_server()["current"] == "wl1280x1000"
+    assert tools.ours() == ["wl1280x1000"]
     assert not tools.screen.changed
     assert "Couldn't restore" not in caplog.text
 
@@ -332,9 +332,9 @@ async def test_restore_makes_the_pods_own_mode_once_a_classic_viewer_has_had_its
     assert tools.calls() == [
         "xrandr --query",
         "xsettingsd term",
-        "xrandr --output VNC-0 --mode fw1280x1000",
-        "xrandr --delmode VNC-0 fw780x1328",
-        "xrandr --rmmode fw780x1328",
+        "xrandr --output VNC-0 --mode wl1280x1000",
+        "xrandr --delmode VNC-0 wl780x1328",
+        "xrandr --rmmode wl780x1328",
     ]
     assert not tools.screen.changed
 
@@ -349,19 +349,19 @@ async def test_a_restore_that_cant_switch_still_removes_our_other_modes(
     await tools.screen.restore()
     assert tools.calls()[-3:] == [
         "xrandr --output VNC-0 --mode 1280x1000",
-        "xrandr --delmode VNC-0 fw1280x800",
-        "xrandr --rmmode fw1280x800",
+        "xrandr --delmode VNC-0 wl1280x800",
+        "xrandr --rmmode wl1280x800",
     ]
-    assert tools.ours() == ["fw780x1328"]  # the one on the screen stays
+    assert tools.ours() == ["wl780x1328"]  # the one on the screen stays
     assert "Couldn't restore the pod's screen: ScreenError" in caplog.text
     assert tools.screen.changed  # to be tried again
 
 
 WIDEN = [
     "xrandr --query",
-    "xrandr --newmode fw500x664 60 500 500 500 500 664 664 664 664",
-    "xrandr --addmode VNC-0 fw500x664",
-    "xrandr --output VNC-0 --mode fw500x664",
+    "xrandr --newmode wl500x664 60 500 500 500 500 664 664 664 664",
+    "xrandr --addmode VNC-0 wl500x664",
+    "xrandr --output VNC-0 --mode wl500x664",
 ]
 
 
@@ -378,8 +378,8 @@ async def test_a_dialog_gets_room_on_a_phones_classic_screen_and_gives_it_back(t
     assert tools.calls() == [
         "xrandr --query",
         "xrandr --output VNC-0 --mode 390x664",  # KasmVNC's own, 1:1 on the phone again
-        "xrandr --delmode VNC-0 fw500x664",
-        "xrandr --rmmode fw500x664",
+        "xrandr --delmode VNC-0 wl500x664",
+        "xrandr --rmmode wl500x664",
     ]
     assert tools.x_server()["current"] == "390x664"
     assert tools.ours() == []
@@ -404,7 +404,7 @@ async def test_a_phone_turned_while_widened_keeps_its_new_size(tools: Tools) -> 
     tools.kasmvnc(664, 390)  # KasmVNC resized the screen: wide enough for the dialog now
     tools.forget()
     await tools.screen.widen()
-    assert tools.calls() == ["xrandr --query", "xrandr --delmode VNC-0 fw500x664", "xrandr --rmmode fw500x664"]
+    assert tools.calls() == ["xrandr --query", "xrandr --delmode VNC-0 wl500x664", "xrandr --rmmode wl500x664"]
     tools.kasmvnc(390, 664)  # and back
     tools.forget()
     await tools.screen.widen()
@@ -412,7 +412,7 @@ async def test_a_phone_turned_while_widened_keeps_its_new_size(tools: Tools) -> 
     tools.kasmvnc(414, 700)  # another turn of the phone, then the dialog goes
     tools.forget()
     await tools.screen.narrow()
-    assert tools.calls() == ["xrandr --query", "xrandr --delmode VNC-0 fw500x664", "xrandr --rmmode fw500x664"]
+    assert tools.calls() == ["xrandr --query", "xrandr --delmode VNC-0 wl500x664", "xrandr --rmmode wl500x664"]
     assert tools.x_server()["current"] == "414x700"
 
 
@@ -427,11 +427,11 @@ async def test_room_not_given_back_is_left_for_the_restore(tools: Tools, caplog:
     await tools.screen.restore()  # before the next classic viewer
     assert tools.calls() == [
         "xrandr --query",
-        "xrandr --newmode fw1280x1000 60 1280 1280 1280 1280 1000 1000 1000 1000",
-        "xrandr --addmode VNC-0 fw1280x1000",
-        "xrandr --output VNC-0 --mode fw1280x1000",
-        "xrandr --delmode VNC-0 fw500x664",
-        "xrandr --rmmode fw500x664",
+        "xrandr --newmode wl1280x1000 60 1280 1280 1280 1280 1000 1000 1000 1000",
+        "xrandr --addmode VNC-0 wl1280x1000",
+        "xrandr --output VNC-0 --mode wl1280x1000",
+        "xrandr --delmode VNC-0 wl500x664",
+        "xrandr --rmmode wl500x664",
     ]
     tools.forget()
     await tools.screen.narrow()
@@ -446,7 +446,7 @@ async def test_a_failed_apply_raises_and_is_tried_again(tools: Tools) -> None:
     (tools.root / "fail").unlink()
     tools.forget()
     assert await tools.screen.apply(390, 664, 2)
-    assert "xrandr --output VNC-0 --mode fw780x1328" in tools.calls()
+    assert "xrandr --output VNC-0 --mode wl780x1328" in tools.calls()
 
 
 async def test_any_number_of_sizes_with_at_most_16_modes_the_oldest_making_room(tools: Tools) -> None:
@@ -457,21 +457,21 @@ async def test_any_number_of_sizes_with_at_most_16_modes_the_oldest_making_room(
     assert len(tools.ours()) == MAX_MODES
     tools.forget()
     assert await tools.screen.apply(400, 700, 1)  # the first size again: used now, so not the one to go
-    assert tools.calls() == ["xrandr --output VNC-0 --mode fw400x700"]
+    assert tools.calls() == ["xrandr --output VNC-0 --mode wl400x700"]
     tools.forget()
     assert await tools.screen.apply(500, 700, 1)
     assert tools.calls() == [
-        "xrandr --delmode VNC-0 fw401x700",
-        "xrandr --rmmode fw401x700",
-        "xrandr --newmode fw500x700 60 500 500 500 500 700 700 700 700",
-        "xrandr --addmode VNC-0 fw500x700",
-        "xrandr --output VNC-0 --mode fw500x700",
+        "xrandr --delmode VNC-0 wl401x700",
+        "xrandr --rmmode wl401x700",
+        "xrandr --newmode wl500x700 60 500 500 500 500 700 700 700 700",
+        "xrandr --addmode VNC-0 wl500x700",
+        "xrandr --output VNC-0 --mode wl500x700",
     ]
     for i in range(24):  # and on and on, at 1x and 2x
         assert await tools.screen.apply(600 + i, 700 + i % 3, 1 + i % 2)
         assert tools.screen.current == (600 + i, 700 + i % 3, 1 + i % 2)
         assert len(tools.ours()) <= MAX_MODES
-        assert tools.x_server()["current"] == f"fw{(600 + i) * (1 + i % 2)}x{(700 + i % 3) * (1 + i % 2)}"
+        assert tools.x_server()["current"] == f"wl{(600 + i) * (1 + i % 2)}x{(700 + i % 3) * (1 + i % 2)}"
     await tools.screen.restore()
     assert tools.ours() == []
 

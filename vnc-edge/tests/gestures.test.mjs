@@ -2,9 +2,9 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { Gestures } from "../site/fw/viewer/core/gestures.js";
-import { box } from "../site/fw/viewer/core/layout.js";
-import { Prediction } from "../site/fw/viewer/core/predict.js";
+import { Gestures } from "../site/wl/viewer/core/gestures.js";
+import { box } from "../site/wl/viewer/core/layout.js";
+import { Prediction } from "../site/wl/viewer/core/predict.js";
 import { forViewer, pack } from "./pack.mjs";
 
 const { cases } = pack("gestures.json");

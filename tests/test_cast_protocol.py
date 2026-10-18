@@ -10,7 +10,8 @@ import random
 import msgspec
 import pytest
 
-from ferry_watch.agent.cast_protocol import (
+from tests.cast1 import load
+from waitlist.agent.cast_protocol import (
     MAX_DIALOG_MESSAGE,
     MAX_OUTBOUND_BYTES,
     MAX_PROMPT_DEFAULT,
@@ -36,7 +37,6 @@ from ferry_watch.agent.cast_protocol import (
     strip_credential_tokens,
     typed_text_ok,
 )
-from tests.cast1 import load
 
 CASES = load("messages")["cases"]
 CORPUS = [c["raw"] if "raw" in c else json.dumps(c["msg"]) for c in CASES if "hex" not in c and "pad_to" not in c]

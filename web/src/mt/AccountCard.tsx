@@ -15,7 +15,8 @@ import { parseTimeOfDay, timeLabel } from "@/lib/time";
 import { MY_STATE_KEY, myApi } from "./api";
 import { signOut } from "./auth";
 import { pushSupported, subscribe } from "./push";
-import type { CheckoutViewer, MyState, QuietHours } from "./schema";
+import type { CheckoutViewer, QuietHours } from "./schema";
+import type { WaitlistState } from "./watch-schema";
 
 /**
  * The user's quiet hours. Everyone has them, 10 pm to 5 am unless they change them; changed times wait for Save.
@@ -36,7 +37,7 @@ function QuietHoursSetting({ saved }: { saved: QuietHours }) {
       qc.setQueryData(MY_STATE_KEY, next);
       toast.success(`Quiet hours: ${timeLabel(quiet.start)} to ${timeLabel(quiet.end)}`);
     },
-    onError: (error) => reportError(qc, error),
+    onError: (error) => reportError(error),
   });
   const blank = parseTimeOfDay(draft.start) === null || parseTimeOfDay(draft.end) === null;
   const error = blank
@@ -98,7 +99,7 @@ function CheckoutViewerSetting({ saved }: { saved: CheckoutViewer }) {
       qc.setQueryData(MY_STATE_KEY, next);
       toast.success(viewer === "stream" ? "Checkouts open in the new viewer" : "Checkouts open in the classic viewer");
     },
-    onError: (error) => reportError(qc, error),
+    onError: (error) => reportError(error),
   });
   const viewer = save.isPending ? save.variables : saved;
   return (
@@ -123,9 +124,9 @@ function CheckoutViewerSetting({ saved }: { saved: CheckoutViewer }) {
   );
 }
 
-export function AccountCard({ state }: { state: MyState }) {
+export function AccountCard({ state }: { state: WaitlistState }) {
   const qc = useQueryClient();
-  const onError = (error: unknown) => reportError(qc, error);
+  const onError = (error: unknown) => reportError(error);
   const enable = useMutation({
     mutationFn: async () => {
       const key = state.push.key;
@@ -164,8 +165,9 @@ export function AccountCard({ state }: { state: MyState }) {
       <QuietHoursSetting saved={state.settings.quiet_hours} />
       {state.settings.stream_viewer_offered && <CheckoutViewerSetting saved={state.settings.checkout_viewer} />}
       <p className="text-xs text-muted-foreground">
-        Your nearest trip within a week is watched closely, every 5 minutes a week out down to every 30 seconds in the
-        last 6 hours. Other trips are checked every 6 hours.
+        BC Ferries: your nearest trip within a week is watched closely, every 5 minutes a week out down to every 30
+        seconds in the last 6 hours. Other trips are checked every 6 hours. Buntzen Lake: from 7:00 am the day before,
+        every 30 seconds for 20 minutes, then every minute.
       </p>
       <div className="flex flex-wrap gap-2">
         <Button size="sm" variant="ghost" onClick={() => void signOut()}>
