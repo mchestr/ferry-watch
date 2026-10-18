@@ -2343,6 +2343,11 @@ narrow, validated input protocol.
 
 ### 7.10 Deployment layout and the home-cluster split
 
+> **Superseded (2026-10-18).** The app repo no longer keeps a copy of the HelmRelease: `deploy/`,
+> `tests/deploy.py`, `tests/test_deploy.py` and `tests/apiserver/` were removed. home-cluster's
+> `kubernetes/apps/waitlist/waitlist/app/helmrelease.yaml` is the only copy. Nothing tests the browser-pod
+> admission policies and RBAC on a real API server now.
+
 There is no Ferry Watch chart (owner, after M1's build: "use app-template to deploy, not a custom chart").
 home-cluster deploys it with the app-template it uses everywhere, as one HelmRelease. This repo keeps a copy at
 `deploy/helmrelease.yaml`, renders it in CI the way helm-controller does (`tests/deploy.py`, app-template 5.3.0),

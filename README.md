@@ -124,9 +124,8 @@ CI builds three images and pushes them from `main` and version tags:
 | `ghcr.io/mchestr/waitlist-vnc-edge` (`vnc-edge/Dockerfile`) | The checkout host: stock nginx with KasmVNC's web client |
 
 They're deployed with app-template as one HelmRelease in home-cluster
-(`kubernetes/apps/waitlist/waitlist/`, whose README is the runbook). `deploy/helmrelease.yaml` and
-`deploy/externalsecret.yaml` are copies of it: CI renders the copy, runs kubeconform on it, and proves its
-admission policies and RBAC against a real API server (`tests/apiserver`), so change both copies together.
+(`kubernetes/apps/waitlist/waitlist/`, whose README is the runbook). That HelmRelease is the only copy: this
+repo has no Helm or Kubernetes files, and home-cluster's CI renders and checks it.
 The release runs waitlist-web, waitlist-control, waitlist-fetcher and vnc-edge as Deployments, and
 `waitlist-control migrate` as the db hook Job, which creates and migrates the `waitlist` database.
 
@@ -145,7 +144,7 @@ is set once, at the top of `waitlist.*`; the render refuses it written into one 
 All three take `WL_LOG_LEVEL`. A browser pod's environment (`WL_TRIP_ID`, `WL_OWNER`, `WL_HUB_URL`, ...) is
 set by waitlist-control and pinned by the admission policy, never by hand.
 
-The values a deployment chooses (`deploy/helmrelease.yaml` documents each):
+The values a deployment chooses (home-cluster's `app/helmrelease.yaml` documents each):
 
 - `waitlist.hosts`: the dashboard (`waitlist.chestr.dev`) and checkout (`waitlist-checkout.chestr.dev`) hosts.
 - `waitlist.browserImage` and each controller's image: every tag pins its digest (`<version>@sha256:<digest>`).
@@ -157,7 +156,7 @@ The values a deployment chooses (`deploy/helmrelease.yaml` documents each):
 - `waitlist.control.*` (the browser pods, the fleet, hold clocks, polling, limits) and `waitlist.web.*` (sign-in,
   invitations, links, email).
 
-The secrets come from 1Password through `deploy/externalsecret.yaml`: `WAITLIST_CHECKOUT_KEY` and
+The secrets come from 1Password through home-cluster's `app/externalsecret.yaml`: `WAITLIST_CHECKOUT_KEY` and
 `WAITLIST_VAPID_KEY` from the `waitlist` item, `WAITLIST_OAUTH_CLIENT_ID` and `WAITLIST_OAUTH_CLIENT_SECRET`
 from `authelia`, and the two database passwords from `cloudnative-pg`. `waitlist-web keys` prints a fresh
 `WAITLIST_CHECKOUT_KEY=` and `WAITLIST_VAPID_KEY=` for setting up a deployment; `waitlist.control.pod.vncPubkeys`
@@ -174,10 +173,8 @@ screenshot.
 ```sh
 uv sync --locked            # Python 3.12 environment from uv.lock
 uv run ruff format --check && uv run ruff check && uv run mypy && uv run lint-imports
-uv run pytest -m "not browser and not apiserver"
+uv run pytest -m "not browser"
 uv run pytest -m browser    # Chromium (and KasmVNC for the checkout tests; see below)
-uv run pytest -m apiserver  # envtest's API server, helm and app-template
-uv run python -m tests.deploy > rendered.yaml   # the deploy copy, rendered as CI renders it for kubeconform
 uv run python scripts/capture_yodel.py --dry-run  # the exact Yodel request, sent nowhere
 node --test vnc-edge/tests/*.test.mjs             # the streamed viewer's DOM-free modules
 
@@ -192,11 +189,6 @@ npm run lint && npm run typecheck && npm test && npm run format:check && npm run
 - `pytest -m browser` runs the browser contract tests in Chromium; the checkout tests also need KasmVNC
   (`WL_KASMVNC_WWW` pointing at its `www` directory, and `Xvnc`, `matchbox-window-manager`, `xrandr` and
   `xsettingsd` on the path).
-- `pytest -m apiserver` and `tests.deploy` need helm (`WL_HELM`) and app-template, fetched by helm or taken
-  from a local chart (`WL_APP_TEMPLATE`); `pytest -m apiserver` also needs envtest's binaries
-  (`WL_ENVTEST_BIN`). CI's workflow shows how it installs each, and the kubeconform flags it uses.
-- `WL_HOME_CLUSTER`, pointed at a home-cluster checkout, adds the check that its HelmRelease and ExternalSecret
-  are this repo's copies.
 
 Tests never touch bcferries.com or Yodel:
 - The parsers are tested against saved copies of their pages and answers (`tests/fixtures`).

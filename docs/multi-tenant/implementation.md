@@ -115,11 +115,11 @@ and from a phone-sized touch viewer.
 CI builds each, smoke-tests it read-only and unprivileged, and pushes it from `main` and tags. The browser
 image's smoke test runs the agent with no network and the lockdown self-test against a real Chromium.
 
-### The deployment (`deploy/helmrelease.yaml`, home-cluster's copy)
+### The deployment (home-cluster's HelmRelease)
 
 There is no chart: home-cluster deploys Waitlist with app-template, as one HelmRelease
-(`kubernetes/apps/waitlist/waitlist/app/helmrelease.yaml` once home-cluster is renamed too; design §7.10). This
-repo keeps a copy.
+(`kubernetes/apps/waitlist/waitlist/app/helmrelease.yaml`; design §7.10). Since 2026-10-18 this repo keeps no
+copy of it.
 
 | Part | What |
 |---|---|
@@ -127,14 +127,11 @@ repo keeps a copy.
 | `controllers`, `service`, `route`, `networkpolicies` | ferry-web, ferry-control (Recreate: one holds the lock), vnc-edge (two, rolling), the db hook Job (postgres-init, then `ferry-control migrate`), their Services, the two HTTPRoutes, default deny and per-workload policies. |
 | `rawResources` | The browser namespace (PSA restricted, kept on uninstall), `ferry-browser`, the headless `browsers` Service, the policy params, the three quotas, the LimitRange, default deny and the two Cilium policies; ferry-control's Role and ClusterRoles; PriorityClass `ferry-browser`; `fw-browser-pod`, `fw-browser-pod-lock` and `fw-ns-objects`. |
 
-`tests/deploy.py` renders the copy through app-template 5.3.0 as helm-controller would (and refuses anything
-Flux's substitution would change). CI's `deploy` job runs kubeconform on the render. `tests/apiserver/`
-(marker `apiserver`) checks what the render refuses, then starts envtest's etcd and kube-apiserver 1.36 and
-applies the render. It checks that:
-- the pod `pods.py` builds from the rendered config is admitted;
-- 39 different changes to it are refused;
-- only ferry-control moves the egress label, and nobody gets a shell;
-- no ferry identity holds a verb outside §7.3.
+Until 2026-10-18 this repo kept a copy (`deploy/helmrelease.yaml`). `tests/deploy.py` rendered it through
+app-template 5.3.0, CI's `deploy` job ran kubeconform on the render, and `tests/apiserver/` applied it to
+envtest's kube-apiserver 1.36. Those tests checked that the pod `pods.py` builds was admitted, that 39 changes
+to it were refused, that only ferry-control moved the egress label, that nobody got a shell, and that no ferry
+identity held a verb outside §7.3. They were removed with the copy, and nothing replaces them yet.
 
 ## Where the build departs from the plan's wording
 
