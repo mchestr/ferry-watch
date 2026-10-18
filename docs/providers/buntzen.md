@@ -34,11 +34,12 @@ waitlist-control decides when; waitlist-fetcher makes the request (it holds no s
   estimate of May 1 to Sep 30 until BC Hydro's dates are added to `KNOWN_SEASONS` in
   `src/waitlist/providers/buntzen/policy.py`. Out of season there is no reminder.
 
-Identical queries (one place on one date) are shared by every user's watches. Control spends at most 12 distinct
-requests a minute on Buntzen (`httpChecks.buntzen.requestsPerMinute`), and the fetcher refuses more than 30
-(`providers.buntzen.maxPerMinute`) whatever control asks. At most four distinct queries are ever checkable at once
-(two places, today and tomorrow), so the real peak is about 6 a minute; the owner's Home Assistant automation made
-up to 4.
+Identical queries (one place on one date) due in the same round are fetched once for every user's watches.
+Control spends at most 12 requests a minute on Buntzen (`httpChecks.buntzen.requestsPerMinute`), and the fetcher
+refuses more than 30 (`providers.buntzen.maxPerMinute`) whatever control asks. Each watch is spaced on its own
+(design.md Amendment 5), so watches sharing a query can fetch it less than 30 s apart, and a busy release minute
+can reach the 12-request budget; lower `requestsPerMinute` to cap it. The owner's Home Assistant automation made
+up to 4 a minute.
 
 The request is the one that automation sent for years:
 

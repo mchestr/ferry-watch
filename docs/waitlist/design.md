@@ -150,7 +150,7 @@ card's Check now is now enabled for `quiet` as well.
   offset, `max(1rem, env(safe-area-inset-bottom))`, plus 4rem, so scrolled to the end the last card's actions
   sit above the button on a phone with a home indicator too.
 
-### Amendment 6 (review round 7): a failure no wanted pass needed
+### Amendment 6 (review round 7): a failure no wanted pass needed, and the real request peak
 
 - **A failed query that leaves no wanted option `unchecked` is no error of the watch's.** A watch's queries
   don't depend on the time (§2.3), so after noon a watch on the all-day and morning passes still asks for the
@@ -162,6 +162,11 @@ card's Check now is now enabled for `quiet` as well.
   site's 429 or 401/403 still cools the provider down, and `site_changed` still tells an admin. The query is
   still fetched until `closes_at`; giving `queries` the tick's `now` would drop it, but changes §2.3's protocol
   for every provider, so it is left for later.
+- **The Buntzen request peak is the budget, not "about 6".** §5.6's "the peak is about 6 requests a minute"
+  held under Amendment 4's per-query spacing. With Amendment 5's per-watch spacing, watches sharing a query can
+  fetch it less than `MIN_INTERVAL_S` apart, so a busy release minute can reach the 12-request budget
+  (`httpChecks.buntzen.requestsPerMinute`), which still bounds every fetch, as the fetcher's 30 bounds control.
+  Identical queries due in the same round are still fetched once.
 
 ---
 
