@@ -36,7 +36,7 @@ dev = [
   "asyncpg-stubs==0.31.3",
   "import-linter==2.15",
   "mypy==1.13.0",
-  "pytest==8.3.3",
+  "pytest==8.4.2",
   "pytest-aiohttp==1.0.5",
   "pytest-asyncio==0.24.0",
   "pytest-cov==6.0.0",
