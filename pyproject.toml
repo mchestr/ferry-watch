@@ -15,7 +15,7 @@ dependencies = [
 # without it, so its image carries no Playwright or Chromium.
 browser = [
   # Must match the browsers in the mcr.microsoft.com/playwright/python base image.
-  "playwright==1.56.0",
+  "playwright==1.63.0",
   "selectolax==0.4.13",
 ]
 # What the control plane (waitlist-control, waitlist-web) needs beyond the core: Postgres.
