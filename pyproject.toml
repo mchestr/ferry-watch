@@ -20,7 +20,7 @@ browser = [
 ]
 # What the control plane (waitlist-control, waitlist-web) needs beyond the core: Postgres.
 control = [
-  "asyncpg==0.31.0",
+  "asyncpg==0.32.0",
   "PyJWT==2.15.1",  # waitlist-web's OIDC id_token checks
 ]
 
