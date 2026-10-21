@@ -3,6 +3,10 @@
   extends: ["config:recommended", "helpers:pinGitHubActionDigests", ":semanticCommits"],
   // Give upstream a couple of weeks to find problems before we pick a release up.
   minimumReleaseAge: "14 days",
+  // Merge every mchesterbot PR once all of its CI checks pass. Renovate merges it on its next run, not GitHub's
+  // auto-merge: main has no required checks, so GitHub would merge before CI finishes.
+  automerge: true,
+  platformAutomerge: false,
   lockFileMaintenance: { enabled: true, schedule: ["before 6am on monday"] },
   packageRules: [
     {
