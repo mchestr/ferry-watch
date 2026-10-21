@@ -35,7 +35,7 @@ dev = [
   "waitlist[browser,control]",
   "asyncpg-stubs==0.31.3",
   "import-linter==2.15",
-  "mypy==1.13.0",
+  "mypy==1.20.2",
   "pytest==8.4.2",
   "pytest-aiohttp==1.0.5",
   "pytest-asyncio==0.26.0",
