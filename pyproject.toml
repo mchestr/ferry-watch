@@ -33,7 +33,7 @@ waitlist-fetcher = "waitlist.fetcher.main:main"
 [dependency-groups]
 dev = [
   "waitlist[browser,control]",
-  "asyncpg-stubs==0.31.3",
+  "asyncpg-stubs==0.32.0",
   "import-linter==2.15",
   "mypy==1.13.0",
   "pytest==8.4.2",
